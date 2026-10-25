@@ -33,7 +33,7 @@ test('discovery skips dependency folders and reports bounded scans',async t=>{
 });
 test('authentication, unsafe ownership and missing Git errors are not hidden as non-repositories',async()=>{
   for(const [exitCode,stderr] of [[128,'fatal: detected dubious ownership in repository'],[127,'git: command not found']] as const){
-    const workspace={...localWorkspace('/tmp'),run:async()=>({exitCode,stdout:'',stderr})};
+    const workspace={...localWorkspace('/tmp'),runGit:async()=>({exitCode,stdout:'',stderr})};
     await assert.rejects(discoverGitRepositories(workspace),new RegExp(stderr));
   }
 });
@@ -66,7 +66,7 @@ test('cancelling a scan stops pending native directory reads and never starts la
   let started!:()=>void,release!:(entries:[])=>void,received:AbortSignal|undefined,calls=0;
   const listing=new Promise<void>(resolve=>{started=resolve});
   const workspace={...localWorkspace('/tmp'),listForGit:undefined,
-    run:async()=>({exitCode:128,stdout:'',stderr:'not a git repository'}),
+    runGit:async()=>({exitCode:128,stdout:'',stderr:'not a git repository'}),
     list:async(_path:string,signal?:AbortSignal):Promise<[]>=>{
       calls++;received=signal;started();return new Promise(resolve=>{release=resolve});
     },
@@ -104,7 +104,7 @@ test('a symlink to a repository root keeps the repository in scope',async t=>{
 test('entry budgets bound concurrent enumeration and report incomplete scans',async()=>{
   let read=0,peakLimit=0
   const workspace={...localWorkspace('/tmp'),
-    run:async()=>({exitCode:128,stdout:'',stderr:'not a git repository'}),
+    runGit:async()=>({exitCode:128,stdout:'',stderr:'not a git repository'}),
     list:async()=>{throw new Error('unbounded listing must not run')},
     listForGit:async(path:string,limit:number)=>{
       peakLimit=Math.max(peakLimit,limit)
@@ -122,7 +122,7 @@ test('entry budgets bound concurrent enumeration and report incomplete scans',as
 test('a discovery deadline stops a stalled listing while preserving discovered repositories',async()=>{
   let signal:AbortSignal|undefined
   const workspace={...localWorkspace('/tmp'),
-    run:async()=>({exitCode:0,stdout:'/tmp\n',stderr:''}),
+    runGit:async()=>({exitCode:0,stdout:'/tmp\n',stderr:''}),
     listForGit:async(_path:string,_limit:number,received?:AbortSignal)=>{signal=received;return new Promise<never>(()=>{})},
   }
   const result=await discoverGitRepositories(workspace,{maxDurationMs:20})

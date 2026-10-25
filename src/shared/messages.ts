@@ -1,5 +1,18 @@
 /** English translations keyed by the original Chinese UI text. */
 export const englishMessages: Record<string,string> = {
+    "查找和替换": "Find and Replace",
+    "查找": "Find",
+    "替换": "Replace",
+    "替换为": "Replace with",
+    "全部替换": "Replace All",
+    "区分大小写": "Match Case",
+    "全字匹配": "Match Whole Word",
+    "正则表达式": "Regular Expression",
+    "无效的正则表达式": "Invalid regular expression",
+    "上一个匹配": "Previous Match",
+    "下一个匹配": "Next Match",
+    "关闭搜索": "Close Find",
+    "匹配超过 10000 项，请缩小搜索范围后替换": "More than 10000 matches. Narrow your search before replacing all.",
     "再次保存将用本地内容覆盖远端文件，是否继续？": "Saving again will overwrite the remote file with local content. Continue?",
     "再次保存": "Save again",
     "上次保存尚未确认，请先核对或重新加载远端文件": "The previous save is unconfirmed. Verify or reload the remote file first",
@@ -560,5 +573,9 @@ export const englishMessages: Record<string,string> = {
     "文件在读取时发生变化，请重新打开": "File changed while being read. Reopen it",
     "文件不是有效的 UTF-8": "File is not valid UTF-8",
     "关闭终端模式，恢复普通转发": "Disable terminal mode and restore normal forwarding",
-    "开启终端模式：在原终端执行 Agent 命令": "Enable terminal mode: run Agent commands in the original terminal"
+    "开启终端模式：在原终端执行 Agent 命令": "Enable terminal mode: run Agent commands in the original terminal",
+    "正在等待 SSH 连接到 ": "Waiting for SSH connection to ",
+    "已重新等待 SSH 连接：": "Waiting for the SSH connection again: ",
+    "等待原 SSH 会话": "Waiting for the original SSH session",
+    "重新等待": "Wait again"
 }

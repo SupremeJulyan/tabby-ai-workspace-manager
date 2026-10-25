@@ -1,7 +1,7 @@
 import { t } from '../shared/i18n'
 import { openAdjacentTab } from '../shared/open-adjacent-tab'
-import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, Injector, ViewChild } from '@angular/core'
-import { AppService, BaseTabComponent, PlatformService } from 'tabby-core'
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, Injector, ViewChild } from '@angular/core'
+import { AppService, BaseTabComponent, PlatformService, type RecoveryToken } from 'tabby-core'
 import { join } from 'node:path'
 import type { Workspace } from './workspace'
 import { remoteWorkspaceSession } from '../adapters/remote-workspace'
@@ -11,6 +11,8 @@ import type { PdfDocument, PdfLoading } from './preview/pdf-engine'
 import { PREVIEW_TEMPLATE, PREVIEW_STYLES } from './preview.view'
 import * as UTIF from 'utif'
 import { registerOpenedWorkspaceFile } from '../services/opened-files.service'
+import { fileWorkspaceToken, resolveFileWorkspace } from './file-recovery'
+import { TextSearch } from './text-search'
 
 @Component({selector:'arw-preview',template:PREVIEW_TEMPLATE,styles:[PREVIEW_STYLES]})
 export class ArwPreviewComponent extends BaseTabComponent implements AfterViewInit {
@@ -56,16 +58,26 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     private app:AppService
     private detector:ChangeDetectorRef
     @ViewChild('pdfCanvasHost') pdfCanvasHost?:ElementRef<HTMLElement>
+    @ViewChild('textPreview') textPreview?:ElementRef<HTMLTextAreaElement>
+    @ViewChild('findInput') findInput?:ElementRef<HTMLInputElement>
+    readonly search=new TextSearch(()=>this.text,()=>{},()=>this.textPreview?.nativeElement,
+        ()=>this.findInput?.nativeElement,()=>false,()=>{this.source=true},()=>this.edit(true))
+    @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(this.isText&&!this.loading&&!this.error)this.search.key(event)}
     constructor(injector:Injector){super(injector);this.platform=injector.get(PlatformService);this.app=injector.get(AppService);this.detector=injector.get(ChangeDetectorRef)}
     get kind(){return previewKind(this.filePath)}
     get isText(){return this.kind==='markdown'||this.kind==='csv'}
     get canEdit(){return this.isText&&this.encoding==='UTF-8'&&this.byteLength<=10*1024*1024&&!this.loading&&!this.error}
+    get waitingForConnection(){return Boolean(this.workspace?.waitForConnection)}
+    get connectionStatus(){return this.workspace?.connectionStatus}
     get imageIndex(){return this.imagePaths.indexOf(this.filePath)}
     get csvHeaders(){return Array.from({length:this.csv.columns},(_,index)=>this.csvHeader?(this.csv.rows[0]?.[index]||t`列 ${index+1}`):t`列 ${index+1}`)}
     get csvPages(){return Math.max(1,Math.ceil(this.csvFiltered.length/100))}
     get csvPageRows(){return this.csvFiltered.slice((this.csvPage-1)*100,this.csvPage*100)}
     private render(){if(this.viewReady&&!this.closed)this.detector.detectChanges()}
     async ngOnInit():Promise<void>{
+        this.setTitle(t`预览 · ${this.filePath}`)
+        try{this.workspace=await resolveFileWorkspace(this.workspace,this.controller.signal)}
+        catch(error){if(!this.closed){this.error=String(error);this.loading=false;this.render()}return}
         const remote=remoteWorkspaceSession(this.workspace)
         if(remote?.open){remote.ref();const closed=remote.willDestroy$.subscribe(()=>this.controller.abort());this.releaseRemote=()=>{closed.unsubscribe();remote.unref()}}
         if(!this.imagePaths.includes(this.filePath))this.imagePaths=[this.filePath]
@@ -73,6 +85,10 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         if(this.isText&&!this.closed)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:async()=>{if(!this.loading&&!this.closed)await this.load()}})
     }
     ngAfterViewInit():void{this.viewReady=true;if(this.pdfDocument)void this.renderPdf()}
+    async getRecoveryToken():Promise<RecoveryToken|null>{
+        const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
+        return workspace?{type:'arw-preview',workspace,filePath:this.filePath,state:{imagePaths:this.imagePaths}}:null
+    }
     private async bytes(path:string,maxBytes:number):Promise<Uint8Array>{
         if(this.workspace.readBytes){
             try{return await this.workspace.readBytes(path,maxBytes,this.controller.signal)}
@@ -122,7 +138,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
                 else {
                     const assets=new Map<string,string>();let total=0
                     for(const href of markdownImages(this.text)){
-                        const asset=relativePreviewAsset(path,href)
+                        const asset=relativePreviewAsset(path,href,this.workspace.kind)
                         if(!asset||!imageMime(asset)||imageMime(asset)==='image/tiff')continue
                         try{
                             const bytes=await this.bytes(asset,4*1024*1024);total+=bytes.length
@@ -160,7 +176,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         this.csvPage=1
     }
     changeCsvPage(delta:number):void{this.csvPage=Math.max(1,Math.min(this.csvPages,this.csvPage+delta))}
-    edit():void{if(this.canEdit)openAdjacentTab(this.app,{type:ArwEditorComponent,inputs:{workspace:this.workspace,filePath:this.filePath}})}
+    edit(replace=false):void{if(this.canEdit)openAdjacentTab(this.app,{type:ArwEditorComponent,inputs:{workspace:this.workspace,filePath:this.filePath,...(replace?{initialFind:{...this.search.state,replaceVisible:true}}:{})}})}
     markdownClick(event:MouseEvent):void{
         const anchor=(event.target as Element)?.closest?.('a');if(!anchor)return
         event.preventDefault();const href=anchor.getAttribute('href')??''
@@ -192,6 +208,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         finally{page?.cleanup();this.renderTask=undefined;this.pdfRendering=false;this.render()}
     }
     ngOnDestroy():void{
+        this.search.destroy()
         this.closed=true;this.version++;this.controller.abort();this.renderTask?.cancel();this.unregisterFile?.()
         void this.pdfLoading?.destroy().catch(()=>undefined)
         if(this.imageUrl)URL.revokeObjectURL(this.imageUrl)

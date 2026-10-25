@@ -21,7 +21,7 @@ Verified with Tabby 1.0.238, Node.js 22+, npm, and Git. Install and sign in to y
 
 3. Fully quit and restart Tabby.
 
-On Linux/macOS, installation or first plugin load creates `~/.local/bin/arw` and configures PATH for Bash, Zsh, and fish if needed; open a new terminal to apply it. Uninstalling through Tabby removes the owned link and PATH configuration. Before a manual command-line uninstall, run `npm run uninstall:cli` from the installed plugin directory.
+On Linux/macOS, installation or first plugin load creates `~/.local/bin/arw` and configures PATH for Bash, Zsh, and fish if needed, including existing Bash login profiles. On Windows, it creates `arw.cmd` in `%USERPROFILE%\.tabby-ai-workspace-manager\bin` and adds that directory to the current user's PATH when needed; no administrator or symlink privileges are required. Restart Tabby and open a new terminal to apply it. Uninstalling through Tabby removes only owned commands and PATH changes and preserves foreign commands. Before a manual command-line uninstall, run `npm run uninstall:cli` from the installed plugin directory.
 
 ## Quick start
 
@@ -39,6 +39,10 @@ On Linux/macOS, installation or first plugin load creates `~/.local/bin/arw` and
 - Plugin operations update the file tree immediately. Local monitoring watches visible directories; remote metadata checks run every five seconds. Background checks are bounded, so refresh manually for changes in unopened subdirectories.
 
 UTF-8 editing supports files up to 10 MiB. Saves detect external changes and write in place, preserving permissions, ACLs, and extended attributes. Remote editing rejects symbolic links and hard links and requires GNU `realpath`, `stat`, `sha256sum`, and standard file tools.
+
+Text tabs support find and replace: `Ctrl/Cmd+F` to find, `Ctrl/Cmd+H` to replace, `F3` / `Shift+F3` to navigate, and `Esc` to close. Case-sensitive, whole-word, and regular-expression searches are supported. Searching Markdown/CSV previews switches to source; replacing opens an editor. Replacements stay in the buffer until you save. Replace All is disabled above 10000 matches.
+
+With Tabby's tab recovery enabled, editor, preview, and Diff tabs restore without the workspace sidebar. Remote files use a file-session pool isolated by the original SSH profile, host, port, and user: authenticated connections are reused and concurrent connection requests share one handshake. A restored, not-yet-visible SSH terminal can establish a file session through Tabby's authentication flow without switching to the terminal. File contents prefer SFTP; text reads fall back to SSH shell when SFTP is unavailable. Path boundary and save-conflict checks remain enforced. Closing a waiting file cancels that view's wait without disconnecting other views. Old blank tabs without file paths must be reopened. Unsaved edits remain in local tab state and retain conflict checks.
 
 Failed, timed-out, or disconnected remote saves retain local edits and show an unconfirmed-save marker; the remote file may contain partial content. Verify or reload the remote file before proceeding; an overwrite retry requires confirmation. Unmodified open files can refresh automatically; unsaved edits are preserved.
 
@@ -99,11 +103,14 @@ ARW checks remote path boundaries and blocks high-risk commands. Audit records a
 ```sh
 npm ci
 npm run check          # Build and run all tests
+npm run test:portable  # Run portable host tests after building
 npm run pack:plugin    # Generate artifacts/tabby-ai-workspace-manager-0.1.0.tgz
 npm run dev -- /opt/Tabby/tabby
 ```
 
 Development mode uses separate userData and plugin directories. See the [architecture documentation (Chinese)](docs/architecture.md) for implementation details.
+
+CI covers Linux, macOS, and Windows with Node.js 22 and 24. Linux runs the full suite; all three hosts run native Git, path, CLI lifecycle, IPC, file recovery, search/replace, packaging, and preview tests. GNU/Linux remote-shell fixtures run on Linux only; local Windows Git is not tested through Git Bash. This matrix targets the local Tabby host, not Windows SSH servers. A configured workflow is not evidence of a successful native run until CI executes.
 
 ## License
 

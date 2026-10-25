@@ -1,6 +1,6 @@
-import { posix, join, relative, isAbsolute, sep } from 'node:path';
+import { posix, join, relative, isAbsolute, sep, resolve } from 'node:path';
 import type { Workspace } from '../workspace';
-import { gitCommand } from './remote-git';
+import { runWorkspaceGit } from './workspace-git';
 
 const ignored = new Set(['.git', 'node_modules', '.venv', 'venv', 'vendor', 'dist', 'build', 'target', '.next', '.cache']);
 const notRepository = /not a git repository|不是\s*git\s*仓库/i;
@@ -46,10 +46,10 @@ export async function discoverGitRepositories(workspace: Workspace,
     };
     const probe = async (path: string, ownRepository=false) => {
       options.signal?.throwIfAborted();
-      const result = await cancellable(()=>workspace.run(gitCommand(['-C', absolute(path), 'rev-parse', '--show-toplevel']), options.signal),options.signal);
+      const result = await cancellable(()=>runWorkspaceGit(workspace,['-C', absolute(path), 'rev-parse', '--show-toplevel'],options.signal),options.signal);
       options.signal?.throwIfAborted();
       if (result.truncated) throw new Error('Git repository path exceeded capture limit');
-      if (result.exitCode === 0) { const root = result.stdout.trim(); if(root&&(ownRepository||withinScope(root)))publish(root); return root; }
+      if (result.exitCode === 0) { const output=result.stdout.trim(),root=output&&workspace.kind==='local'?resolve(output):output; if(root&&(ownRepository||withinScope(root)))publish(root); return root; }
       if (result.exitCode === 128 && notRepository.test(result.stderr + result.stdout)) return;
       throw new Error(result.stderr.trim() || result.stdout.trim() || `Git failed (${result.exitCode})`);
     };

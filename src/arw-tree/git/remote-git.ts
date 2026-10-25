@@ -11,6 +11,7 @@ export interface GitResult {
   truncated?: boolean;
 }
 export type GitRunner = (command: string) => Promise<GitResult>;
+export interface GitArgumentRunner {run(args:string[]):Promise<GitResult>}
 export interface GitChange { index: string; working: string; path: string; originalPath?: string }
 
 /** Porcelain -z preserves whitespace, newlines, Unicode and literal pathspec characters. */
@@ -39,10 +40,13 @@ export function gitCommand(args: string[]): string {
 
 export class RemoteGit {
   private readonly runner: GitRunner;
-  constructor(runner: GitRunner, log?: (message: string) => void) {
+  private readonly argumentRunner?:GitArgumentRunner;
+  constructor(runner: GitRunner|GitArgumentRunner, log?: (message: string) => void) {
+    if(typeof runner!=='function')this.argumentRunner=runner;
     this.runner = async command => {
       const started = performance.now();
       try {
+        if(typeof runner!=='function')throw new Error('Native Git does not accept shell commands');
         const result = await runner(command);
         operationMetric(log, 'git.remote.command', started,
           Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr));
@@ -53,9 +57,21 @@ export class RemoteGit {
       }
     };
   }
+  private execute(args:string[]):Promise<GitResult>{
+    return this.argumentRunner?this.argumentRunner.run(args):this.runner(gitCommand(args));
+  }
   /** Frame read-only command results in one SSH exec, preserving each exit status and NUL data. */
   async batch(commands: string[][]): Promise<GitResult[]> {
     if (!commands.length) return [];
+    if(this.argumentRunner){
+      const results:GitResult[]=[];
+      for(const args of commands){
+        const result=await this.execute(args);
+        if(result.truncated)throw new Error('Git output exceeded the capture limit; result was not used.');
+        results.push(result);
+      }
+      return results;
+    }
     const marker = `ARW_GIT_${randomBytes(16).toString('hex')}`;
     const script = commands.map(args =>
       `${gitCommand(args)}; printf '\\000${marker}:%s\\000' "$?"`
@@ -84,20 +100,20 @@ export class RemoteGit {
     });
   }
   async run(args: string[]): Promise<string> {
-    const result = await this.runner(gitCommand(args));
+    const result = await this.execute(args);
     if (result.truncated) throw new Error('Git output exceeded the capture limit; result was not used.');
     if (result.exitCode !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || `Git failed (${result.exitCode})`);
     return result.stdout;
   }
   async config(key: string): Promise<string | undefined> {
-    const result = await this.runner(gitCommand(['config', '--get', key]));
+    const result = await this.execute(['config', '--get', key]);
     if (result.exitCode === 1 && !result.truncated) return undefined;
     if (result.exitCode !== 0 || result.truncated) throw new Error(result.stderr.trim() || 'Cannot read Git configuration');
     return result.stdout.replace(/\r?\n$/, '');
   }
   /** 允许"不存在"的探测（`rev-parse --verify --quiet`）：退出码 1 返回 undefined，其它错误照抛。 */
   async probe(args: string[]): Promise<string | undefined> {
-    const result = await this.runner(gitCommand(args));
+    const result = await this.execute(args);
     if (result.truncated) throw new Error('Git output exceeded the capture limit; result was not used.');
     if (result.exitCode === 1) return undefined;
     if (result.exitCode !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || `Git failed (${result.exitCode})`);
@@ -173,7 +189,7 @@ export class RemoteGit {
   }
   async workingChangeCount(signal?: AbortSignal): Promise<number> {
     signal?.throwIfAborted();
-    const result = await this.runner(gitCommand(['status', '--porcelain=v1', '-z', '--untracked-files=no']));
+    const result = await this.execute(['status', '--porcelain=v1', '-z', '--untracked-files=no']);
     signal?.throwIfAborted();
     if (result.truncated) throw new Error('Git status exceeded the capture limit');
     if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Git failed (${result.exitCode})`);

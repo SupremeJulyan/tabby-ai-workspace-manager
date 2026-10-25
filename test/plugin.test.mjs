@@ -12,8 +12,9 @@ class TabContextMenuItemProvider {}
 class ConfigProvider {}
 class SettingsTabProvider {}
 class ToolbarButtonProvider {}
+class TabRecoveryProvider {}
 class TerminalDecorator { detach() {} }
-const core = { BaseTabComponent, TabContextMenuItemProvider, ConfigProvider, ToolbarButtonProvider,
+const core = { BaseTabComponent, TabContextMenuItemProvider, ConfigProvider, ToolbarButtonProvider, TabRecoveryProvider,
     TabsService:class{},
     AppService:class{}, ProfilesService:class{},ConfigService:class{},
     NotificationsService: class {}, PlatformService: class {}, PromptModalComponent: class {}, LogService: class {} }
@@ -23,12 +24,13 @@ function load(ssh = { SSHTabComponent }, dom = {}) {
     reflect.metadata = (key, value) => target => { target[key] = value }
     runInNewContext(readFileSync(new URL('../dist/index.js', import.meta.url), 'utf8'), {
         module, exports: module.exports, Buffer, process, console, setTimeout, clearTimeout, setInterval, clearInterval, AbortController,
-        __dirname: new URL('../dist/',import.meta.url).pathname, ...dom, crypto: globalThis.crypto, Event, EventTarget, global: globalThis, Reflect: reflect, URL, Blob, URLSearchParams, Request, Response, Headers, TextEncoder, TextDecoder,
+        __dirname: new URL('../dist/',import.meta.url).pathname, ...dom, crypto: globalThis.crypto, Event, KeyboardEvent:class extends Event{}, EventTarget, global: globalThis, Reflect: reflect, URL, Blob, URLSearchParams, Request, Response, Headers, TextEncoder, TextDecoder,
         ReadableStream, WritableStream, TransformStream, AbortSignal, fetch, performance, setImmediate, clearImmediate,
         require(name) {
             if (name === '@angular/core') return {
                 NgZone: class {}, Injector: class {}, ApplicationRef:class{},ComponentFactoryResolver:class{},ChangeDetectorRef:class{},ElementRef:class{},
                 ViewChild:()=>()=>{},
+                HostListener:()=>()=>{},
                 Pipe: metadata => target => { target.pipe = metadata },
                 Component: metadata => target => { target.component = metadata },
                 Injectable: () => target => target,
@@ -55,8 +57,268 @@ function load(ssh = { SSHTabComponent }, dom = {}) {
         TreeComponent:module.exports.default.ngModule.declarations[0],
         EditorComponent:module.exports.default.ngModule.declarations[1],
         PreviewComponent:module.exports.default.ngModule.declarations[3],
+        FileRecoveryProvider:module.exports.default.ngModule.providers.find(provider=>provider.provide===TabRecoveryProvider).useClass,
         ArwContextMenuProvider: menu.useClass, exports: Object.keys(module.exports) }
 }
+test('editor, preview and Diff tabs round-trip through JSON recovery with file identity and edit conflicts intact',async()=>{
+    const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const root=await fs.mkdtemp(join(tmpdir(),'arw-file-recovery-'))
+    const plugin=load(),provider=new plugin.FileRecoveryProvider({tabs:[]})
+    const create=async(token)=>{
+        const params=await provider.recover(JSON.parse(JSON.stringify(token)))
+        const instance=new params.type({get:()=>({detectChanges(){}})})
+        instance.setTitle=()=>{}
+        Object.assign(instance,params.inputs)
+        await instance.ngOnInit()
+        return instance
+    }
+    const instances=[]
+    try{
+        await fs.writeFile(join(root,'notes.md'),'# Original')
+        const editor=new plugin.EditorComponent({get:()=>({})});editor.setTitle=()=>{}
+        editor.workspace=localWorkspace(root);editor.filePath='notes.md';await editor.ngOnInit();instances.push(editor)
+        editor.content='# Unsaved'
+        const token=await editor.getRecoveryToken({includeState:true})
+        assert.equal(await provider.applicableTo(token),true)
+        assert.equal(await provider.applicableTo({type:'other'}),false)
+        assert.equal((await editor.getRecoveryToken({includeState:false})).state.recoveredEdit,undefined)
+        await fs.writeFile(join(root,'notes.md'),'# External change')
+        const restored=await create(token);instances.push(restored)
+        assert.equal(restored.content,'# Unsaved');assert.equal(restored.original,'# Original');assert.equal(restored.dirty,true)
+        await restored.save()
+        assert.ok(restored.error,'restored edits keep the original conflict hash')
+        assert.equal(await fs.readFile(join(root,'notes.md'),'utf8'),'# External change')
+        const preview=await create({type:'arw-preview',workspace:token.workspace,filePath:'notes.md',state:{imagePaths:[]}});instances.push(preview)
+        assert.equal(preview.error,'');assert.match(preview.markdown,/External change/)
+        const previewToken=await preview.getRecoveryToken()
+        assert.equal(previewToken.type,'arw-preview');assert.equal(previewToken.filePath,'notes.md')
+        const diff=await create({type:'arw-editor',workspace:token.workspace,filePath:'notes.md',state:{diffPatch:'--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old\n+new\n',diffLabel:'Saved diff',diffMode:'unified'}});instances.push(diff)
+        assert.equal(diff.isDiff,true);assert.equal(diff.readonly,true);assert.equal(diff.diff.added,1);assert.equal(diff.diffMode,'unified')
+        assert.equal((await diff.getRecoveryToken()).state.diffLabel,'Saved diff')
+        await assert.rejects(provider.recover({type:'arw-editor',filePath:'notes.md'}),/Invalid/)
+    }finally{for(const instance of instances)instance.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
+})
+
+test('remote file recovery waits for the exact SSH identity and closing a waiting preview cancels recovery',async()=>{
+    const plugin=load(),app={tabs:[]},provider=new plugin.FileRecoveryProvider(app)
+    const workspace={kind:'remote',root:'/project/sub',host:'example.test',port:2222,user:'alice',profileId:'original'}
+    const editorParams=await provider.recover({type:'arw-editor',workspace,filePath:'file.txt',state:{initialContent:'snapshot'}})
+    const editor=new editorParams.type({get:()=>({})});editor.setTitle=()=>{};Object.assign(editor,editorParams.inputs)
+    const loading=editor.ngOnInit()
+    const wrong=new SSHTabComponent()
+    wrong.sshSession={open:true,profile:{id:'original',options:{host:'example.test',port:2222,user:'bob'}}}
+    app.tabs=[{getAllTabs:()=>[wrong]}]
+    await new Promise(resolve=>setTimeout(resolve,130))
+    assert.equal(editor.loading,true,'another account cannot satisfy recovery')
+    const correct=new SSHTabComponent()
+    correct.sshSession={open:true,authUsername:'alice',profile:{id:'original',options:{host:'example.test',port:2222,user:'alice'}},ref(){},unref(){},
+        willDestroy$:{subscribe:()=>({unsubscribe(){}})}}
+    app.tabs=[{getAllTabs:()=>[wrong,correct]}]
+    await loading
+    assert.equal(editor.error,'');assert.equal(editor.content,'snapshot');assert.equal(editor.workspace.root,'/project/sub')
+    const token=await editor.getRecoveryToken()
+    assert.equal(token.workspace.user,'alice');assert.equal(token.workspace.port,2222);assert.equal(token.workspace.profileId,'original')
+    editor.ngOnDestroy()
+    app.tabs=[]
+    const previewParams=await provider.recover({type:'arw-preview',workspace,filePath:'image.png'})
+    const preview=new previewParams.type({get:()=>({detectChanges(){}})});preview.setTitle=()=>{};Object.assign(preview,previewParams.inputs)
+    const pending=preview.ngOnInit()
+    assert.equal((await preview.getRecoveryToken()).workspace.profileId,'original')
+    preview.ngOnDestroy()
+    await pending
+    assert.equal(preview.closed,true)
+
+})
+
+test('restored remote files wait without a deadline until their lazily connected SSH tab is ready',async()=>{
+    const plugin=load(),app={tabs:[]},provider=new plugin.FileRecoveryProvider(app)
+    const workspace={kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'}
+    const preview=new (await provider.recover({type:'arw-preview',workspace,filePath:'notes.txt'})).type({get:()=>({detectChanges(){}})})
+    preview.setTitle=()=>{}
+    Object.assign(preview,await provider.recover({type:'arw-preview',workspace,filePath:'notes.txt'}).then(params=>params.inputs))
+    const pending=preview.ngOnInit()
+    assert.equal(preview.waitingForConnection,true)
+    assert.match(preview.connectionStatus,/example\.test/)
+    await new Promise(resolve=>setTimeout(resolve,250))
+    assert.equal(preview.waitingForConnection,true,'an unopened SSH terminal must not fail recovery')
+    const session={open:true,authUsername:'alice',profile:{id:'profile',options:{host:'example.test',port:22,user:'alice'}},ref(){},unref(){},
+        willDestroy$:{subscribe:()=>({unsubscribe(){}})},
+        openSFTP:async()=>({stat:async()=>({size:5,isDirectory:false}),readdir:async()=>[],open:async()=>({read:async()=>Buffer.alloc(0),close:async()=>{}})})}
+    const tab=new SSHTabComponent();tab.sshSession=session
+    app.tabs=[{getAllTabs:()=>[tab]}]
+    await pending
+    assert.equal(preview.waitingForConnection,false)
+    assert.equal(preview.workspace.host,'example.test')
+    preview.ngOnDestroy()
+})
+
+test('an editor still loading is not labelled as a Diff, while a failed read becomes read-only',async()=>{
+    const plugin=load(),{localWorkspace}=require('../.build/arw-tree/workspace.js')
+    let releaseRead,signalRead
+    const readStarted=new Promise(resolve=>{signalRead=resolve})
+    const readGate=new Promise(resolve=>{releaseRead=resolve})
+    const editor=new plugin.EditorComponent({get:()=>({})})
+    editor.setTitle=title=>{editor.shownTitle=title}
+    editor.workspace={...localWorkspace('/project'),read:async(path)=>{signalRead();await readGate;throw new Error(`remote read failed: ${path}`)}}
+    editor.filePath='notes.txt'
+    const pending=editor.ngOnInit()
+    await readStarted
+    assert.equal(editor.loading,true)
+    assert.equal(editor.shownTitle,'Edit · notes.txt')
+    editor.ngDoCheck();assert.equal(editor.shownTitle,'Edit · notes.txt')
+    releaseRead()
+    await pending
+    assert.match(editor.error,/remote read failed: notes\.txt/)
+    assert.equal(editor.readonly,true)
+    editor.ngDoCheck();assert.equal(editor.shownTitle,'Read-only · notes.txt')
+    editor.ngOnDestroy()
+})
+
+test('restored remote files expose a visible wait state and closing cancels waiting',async()=>{
+    const plugin=load(),provider=new plugin.FileRecoveryProvider({tabs:[]})
+    const workspace={kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'}
+    const previewParams=await provider.recover({type:'arw-preview',workspace,filePath:'image.png'})
+    const preview=new previewParams.type({get:()=>({detectChanges(){}})})
+    preview.setTitle=()=>{};Object.assign(preview,previewParams.inputs)
+    const loading=preview.ngOnInit()
+    assert.equal(preview.waitingForConnection,true)
+    assert.match(preview.connectionStatus,/example\.test/)
+    assert.equal(preview.waitingForConnection,true)
+    preview.ngOnDestroy()
+    await loading
+})
+
+
+test('file recovery acquires one pooled session before terminal activation and reads actual SFTP content',async()=>{
+    const {Subject}=await import('rxjs'),plugin=load(),terminal=new SSHTabComponent()
+    const profile={id:'profile',options:{host:'example.test',port:22,user:'alice'}}
+    const app={tabs:[{getAllTabs:()=>[terminal]}]},provider=new plugin.FileRecoveryProvider(app,{})
+    const workspace={kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'}
+    let connections=0,references=0,reads=0
+    const content='print("restored through SFTP")\n'
+    const session={open:true,authUsername:'alice',profile,ref(){references++},unref(){references--},
+        willDestroy$:new Subject(),ssh:{async openSessionChannel(){return 1},async activateChannel(){
+            const data$=new Subject(),extendedData$=new Subject(),closed$=new Subject()
+            return {data$,extendedData$,closed$,async requestExec(command){
+                const marker=command.match(/ARW_EXIT_[a-f0-9]+/)[0]
+                data$.next(Buffer.from(`/project\n/project/notes.py\n\0${marker}:0\0`));closed$.next()
+            },async eof(){},async close(){}}
+        }},async openSFTP(){return {async stat(){return {size:Buffer.byteLength(content)}},async open(){
+            let sent=false
+            return {async read(){reads++;if(sent)return Buffer.alloc(0);sent=true;return Buffer.from(content)},async close(){}}
+        }}}}
+    terminal.profile=profile;terminal.frontendIsReady=false
+    terminal.setupOneSession=async()=>{connections++;await new Promise(resolve=>setTimeout(resolve,10));return session}
+    const editors=[]
+    try{
+        const create=async()=>{
+            const params=await provider.recover({type:'arw-editor',workspace,filePath:'notes.py',state:{readonly:true}})
+            const editor=new params.type({get:()=>({})});editor.setTitle=()=>{};Object.assign(editor,params.inputs);editors.push(editor)
+            await editor.ngOnInit();return editor
+        }
+        const [first,second]=await Promise.all([create(),create()])
+        assert.equal(connections,1,'concurrent file tabs share the authentication handshake')
+        assert.equal(terminal.sshSession,undefined,'files do not require a visible terminal shell')
+        assert.equal(first.content,content);assert.equal(second.content,content)
+        assert.equal(first.error,'');assert.equal(first.loading,false);assert.equal(first.waitingForConnection,false)
+        assert.equal(first.readonly,false,'a previous recovery failure must not persist read-only mode')
+        assert.ok(reads>=4);assert.equal(references,1)
+        const third=await create();assert.equal(third.content,content);assert.equal(connections,1)
+    }finally{editors.forEach(editor=>editor.ngOnDestroy());provider.ngOnDestroy()}
+    assert.equal(references,0)
+})
+
+test('closing a recovered file cancels its wait without cancelling shared authentication',async()=>{
+    const plugin=load(),terminal=new SSHTabComponent(),profile={id:'profile',options:{host:'example.test',port:22,user:'alice'}}
+    const app={tabs:[terminal]},provider=new plugin.FileRecoveryProvider(app,{})
+    let finish,refs=0,connections=0
+    const session={open:true,authUsername:'alice',profile,ref(){refs++},unref(){refs--}}
+    terminal.profile=profile;terminal.frontendIsReady=false
+    terminal.setupOneSession=()=>{connections++;return new Promise(resolve=>{finish=()=>resolve(session)})}
+    const params=await provider.recover({type:'arw-editor',workspace:{kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'},filePath:'file.py'})
+    const editor=new params.type({get:()=>({})});editor.setTitle=()=>{};Object.assign(editor,params.inputs)
+    const loading=editor.ngOnInit()
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(connections,1)
+    editor.ngOnDestroy()
+    await loading
+    assert.equal(editor.loading,false);assert.equal(editor.content,'')
+    finish()
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(refs,1,'a cancelled view must not cancel a shared connection')
+    provider.ngOnDestroy();assert.equal(refs,0)
+})
+
+test('preview replacement opens an editor with find options and changes stay buffered until save',async()=>{
+    const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js'),root=await fs.mkdtemp(join(tmpdir(),'arw-find-ui-'))
+    const plugin=load(),opened=[],api={detectChanges(){},openNewTab:params=>opened.push(params)}
+    const preview=new plugin.PreviewComponent({get:()=>api});preview.setTitle=()=>{}
+    const editor=new plugin.EditorComponent({get:()=>api});editor.setTitle=()=>{}
+    try{
+        await fs.writeFile(join(root,'notes.md'),'foo Foo food')
+        preview.workspace=localWorkspace(root);preview.filePath='notes.md';await preview.ngOnInit()
+        preview.search.query='foo';preview.search.wholeWord=true;preview.search.open()
+        assert.equal(preview.source,true);assert.equal(preview.search.matches.length,2)
+        preview.search.open(true)
+        assert.equal(opened.length,1);assert.equal(opened[0].type,plugin.EditorComponent)
+        assert.equal(opened[0].inputs.initialFind.query,'foo');assert.equal(opened[0].inputs.initialFind.wholeWord,true)
+        Object.assign(editor,opened[0].inputs);await editor.ngOnInit()
+        assert.equal(editor.search.visible,true);assert.equal(editor.search.replaceVisible,true)
+        editor.search.replacement='bar';editor.search.replaceAll()
+        assert.equal(editor.content,'bar bar food');assert.equal(editor.dirty,true)
+        assert.equal(await fs.readFile(join(root,'notes.md'),'utf8'),'foo Foo food')
+        await editor.save();assert.equal(await fs.readFile(join(root,'notes.md'),'utf8'),'bar bar food')
+        editor.readonly=true;editor.search.query='bar';editor.search.replacement='blocked';editor.search.replaceAll()
+        assert.equal(editor.content,'bar bar food')
+    }finally{preview.ngOnDestroy();editor.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
+})
+
+test('file tabs hide the sidebar and release its width without changing the terminal preference',()=>{
+    const {SidebarService,EditorComponent,PreviewComponent}=load()
+    const listeners=[]
+    const app={activeTab:null,activeTabChange$:{subscribe(callback){listeners.push(callback);return {unsubscribe(){}}}},ready$:{subscribe(){}}}
+    const sidebar=new SidebarService(app)
+    sidebar.component={}
+    sidebar.host={style:{}}
+    const classes=new Set()
+    sidebar.container={classList:{toggle(name,enabled){if(enabled)classes.add(name);else classes.delete(name)}}}
+    sidebar.install()
+    const activate=tab=>{app.activeTab=tab;listeners.forEach(callback=>callback(tab))}
+    activate(new BaseTabComponent())
+    assert.equal(sidebar.host.style.display,'')
+    assert.equal(classes.has('arw-tree-layout'),true)
+    for(const Component of [EditorComponent,PreviewComponent]){
+        activate(Object.create(Component.prototype))
+        assert.equal(sidebar.host.style.display,'none')
+        assert.equal(classes.has('arw-tree-layout'),false)
+    }
+    activate(new BaseTabComponent())
+    assert.equal(sidebar.host.style.display,'')
+    sidebar.toggle()
+    activate(Object.create(EditorComponent.prototype))
+    activate(new BaseTabComponent())
+    assert.equal(sidebar.host.style.display,'none')
+    sidebar.toggle()
+    assert.equal(sidebar.host.style.display,'')
+    activate({getFocusedTab:()=>Object.create(PreviewComponent.prototype)})
+    assert.equal(sidebar.host.style.display,'none')
+    let focused,focusChanged,unsubscribed=false
+    const editor=Object.create(EditorComponent.prototype)
+    activate({getFocusedTab:()=>focused,getAllTabs:()=>[editor],focusChanged$:{subscribe(callback){focusChanged=callback;return {unsubscribe(){unsubscribed=true}}}}})
+    assert.equal(sidebar.host.style.display,'none','new file split is hidden before its focus is initialized')
+    assert.equal(classes.has('arw-tree-layout'),false)
+    focused=new BaseTabComponent()
+    focusChanged()
+    assert.equal(sidebar.host.style.display,'')
+    focused=editor
+    focusChanged()
+    assert.equal(sidebar.host.style.display,'none')
+    activate(new BaseTabComponent())
+    assert.equal(unsubscribed,true)
+    assert.equal(sidebar.host.style.display,'')
+})
 function fixture() {
     const plugin = load(), messages = []
     const destroyListeners = new Set()
@@ -1567,7 +1829,7 @@ test('Git scans start in the background without opening Git and cancellation kee
     const {localWorkspace}=require('../.build/arw-tree/workspace.js'),root=await fs.mkdtemp(join(tmpdir(),'arw-background-git-'))
     const base=localWorkspace(root),plugin=load(),terminal={}
     let commands=0,block=false,release,scanSignal
-    const workspace={...base,listForGit:undefined,async run(...args){commands++;return base.run(...args)},async list(path,signal){
+    const workspace={...base,listForGit:undefined,async runGit(...args){commands++;return base.runGit(...args)},async list(path,signal){
         if(block){scanSignal=signal;return new Promise(resolve=>{release=resolve})}
         return base.list(path,signal)
     }}

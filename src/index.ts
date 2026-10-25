@@ -25,6 +25,8 @@ import { WorkspacesService } from './services/workspaces.service'
 import { GitTasksService } from './services/git-tasks.service'
 import { installUserCli, attachCliUninstall } from './arw-ai-cli/cli-lifecycle'
 import { ProjectStore } from './arw-tree/project.store'
+import { TabRecoveryProvider } from 'tabby-core'
+import { FileRecoveryProvider } from './providers/file-recovery.provider'
 
 @NgModule({
     imports:[CommonModule,FormsModule],
@@ -45,6 +47,7 @@ import { ProjectStore } from './arw-tree/project.store'
         { provide:ConfigProvider,useClass:ArwConfigProvider,multi:true },
         { provide:ToolbarButtonProvider,useClass:WorkspaceToolbarProvider,multi:true },
         { provide:SettingsTabProvider,useClass:ArwSettingsTabProvider,multi:true },
+        { provide:TabRecoveryProvider,useClass:FileRecoveryProvider,multi:true },
     ],
 })
 export default class ArwModule {
