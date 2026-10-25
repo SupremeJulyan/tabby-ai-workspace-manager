@@ -23,6 +23,7 @@ export interface ForwardingBackend {
   terminalOnly?():boolean;
   currentFile?(): unknown;
   onRequestFinished?(operation:string,error?:unknown):void;
+  git?(direction:'pull'|'push',path:string,signal:AbortSignal):Promise<unknown>;
   copy?(args: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
   validateCommand?(command: string, signal: AbortSignal): Promise<void>;
 }
@@ -165,13 +166,23 @@ export class ForwardingServer {
     if(this.backend.terminalOnly?.()&&!['run_remote_command','remote_output'].includes(String(input.name)))throw new CommandPolicyError('Terminal mode only supports arw exec; file, search, transfer and batch operations are disabled');
     const spec = Object.values(commands).find(command => command.tool === input.name);
     if (!spec) throw new Error('Unsupported CLI operation');
-    const fields = input.name === 'remote_cp' ? ['action', 'path', 'transferId', 'data'] : spec.fields;
+    const fields = ['remote_upload','remote_download'].includes(String(input.name)) ? ['action', 'path', 'transferId', 'data'] : spec.fields;
     if (Object.keys(values).some(key => key !== 'workspaceId' && !fields.includes(key))) throw new Error('Unsupported argument for this CLI operation');
     const signal = this.controller.signal;
     switch (input.name) {
-      case 'remote_cp': {
+      case 'remote_upload':
+      case 'remote_download': {
         if (!this.backend.copy) throw new Error('SFTP copy is unavailable for this workspace');
+        const actions=input.name==='remote_upload'?['stat','mkdir','open-write','write','close','cancel']:['stat','open-read','read','close','cancel'];
+        if(!actions.includes(text(values.action,'action')))throw new Error('Unsupported transfer action');
         return this.backend.copy(values, signal);
+      }
+      case 'remote_git_pull':
+      case 'remote_git_push': {
+        const action=input.name==='remote_git_pull'?'pull':'push';
+        const path=text(values.path??'.','path');
+        if(!this.backend.git)throw new Error('Local Git relay is unavailable for this workspace');
+        return this.backend.git(action,path,signal);
       }
       case 'current_remote_file': return {file: this.backend.currentFile?.() ?? null};
       case 'remote_output': {
@@ -187,7 +198,7 @@ export class ForwardingServer {
         const operations = values.operations.map(value => {
           const operation = object(value), verb = text(operation.command, 'command');
           const command = Object.hasOwn(commands, verb) ? commands[verb] : undefined;
-          if (!command || ['arw_cli_batch', 'list_remote_workspaces', 'remote_cp'].includes(command.tool)) throw new Error('Unsupported batch command');
+          if (!command || ['arw_cli_batch', 'list_remote_workspaces', 'remote_upload', 'remote_download', 'remote_git_pull', 'remote_git_push'].includes(command.tool)) throw new Error('Unsupported batch command');
           if (Object.keys(operation).some(key => !['command', 'arguments'].includes(key))) throw new Error('Unsupported batch field');
           const args = object(operation.arguments ?? {});
           if (Object.keys(args).some(key => !command.fields.includes(key))) throw new Error('Unsupported batch argument');

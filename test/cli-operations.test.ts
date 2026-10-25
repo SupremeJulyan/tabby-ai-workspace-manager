@@ -17,7 +17,12 @@ const execute = promisify(execFile);
 test('expanded CLI performs structured reads, searches, edits, file management and ordered batches', async t => {
   const root = await mkdtemp(join(tmpdir(), 'arw-operations-'));
   const workspace = localWorkspace(root);
+  const gitCalls: {direction:string,path:string}[] = [];
   const server = new ForwardingServer({workspace: {id: 'fixture', root, host: 'localhost'},
+    git: async (direction, path, signal) => {
+      signal.throwIfAborted(); gitCalls.push({direction,path});
+      return {direction, status: direction === 'pull' ? 'up-to-date' : 'pushed'};
+    },
     copy: sftpCopy(async () => sftpFixture(), new RemotePathGuard(root, (command, signal) => workspace.run(command, signal))),
     list: async path => ({entries: await workspace.list(path)}),
     read: path => workspace.read(path),
@@ -37,6 +42,15 @@ test('expanded CLI performs structured reads, searches, edits, file management a
     await server.stop(); await rm(root, {recursive: true, force: true});
   });
   const cli = async (...args: string[]) => JSON.parse((await execute(process.execPath, [resolve('dist/arw.cjs'), '--id', 'fixture', ...args], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}})).stdout);
+  assert.equal((await cli('git-pull')).status, 'up-to-date');
+  assert.equal((await cli('git-push', 'nested/repo')).status, 'pushed');
+  await cli('git-pull', '--path', 'another/repo');
+  assert.deepEqual(gitCalls, [{direction:'pull',path:'.'},{direction:'push',path:'nested/repo'},{direction:'pull',path:'another/repo'}]);
+  await assert.rejects(cli('git-push', '--input', '{"force":true}'), /Unsupported/);
+  await assert.rejects(cli('git', 'pull'), /Unsupported/);
+  await assert.rejects(cli('cp', 'a', 'b'), /Unsupported/);
+  await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"git-push"}]}'), /Unsupported batch command/);
+  assert.equal(gitCalls.length, 3);
   await writeFile(join(root, 'a.txt'), 'one\n你好\nthree\n');
   assert.equal((await cli('current-file')).file.path, join(root, 'a.txt'));
   assert.equal((await cli('read', 'a.txt', '--head', '2')).content, 'one\n你好\n');
@@ -55,14 +69,14 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await cli('create', 'folder-upload', 'directory');
   const binary = Buffer.alloc(2 * 1024 * 1024 + 11, 0x81); binary[0] = 0;
   await writeFile(join(root, 'source.bin'), binary);
-  await cli('cp', join(root, 'source.bin'), 'remote:folder-upload/source.bin');
-  await cli('cp', 'remote:folder-upload/source.bin', join(root, 'downloaded.bin'));
+  await cli('upload', join(root, 'source.bin'), 'folder-upload/source.bin');
+  await cli('download', 'folder-upload/source.bin', join(root, 'downloaded.bin'));
   assert.deepEqual(await readFile(join(root, 'downloaded.bin')), binary);
-  await cli('cp', '-r', 'remote:folder-upload', join(root, 'downloaded-folder'));
+  await cli('download', '-r', 'folder-upload', join(root, 'downloaded-folder'));
   assert.deepEqual(await readFile(join(root, 'downloaded-folder/source.bin')), binary);
-  await assert.rejects(cli('cp', 'remote:folder-upload/source.bin', join(root, 'downloaded.bin')), /exists/);
-  await assert.rejects(cli('cp', join(root, 'source.bin'), 'remote:folder-upload/source.bin'), /exists/);
-  await assert.rejects(cli('cp', 'remote:folder-upload', join(root, 'missing-directory')), /cp -r/);
+  await assert.rejects(cli('download', 'folder-upload/source.bin', join(root, 'downloaded.bin')), /exists/);
+  await assert.rejects(cli('upload', join(root, 'source.bin'), 'folder-upload/source.bin'), /exists/);
+  await assert.rejects(cli('download', 'folder-upload', join(root, 'missing-directory')), /download -r/);
   const command = await execute(process.execPath, [resolve('dist/arw.cjs'), '--id', 'fixture', 'exec', "printf '%070000d' 1"], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}});
   assert.equal(command.stdout.length, 32768);
   const metadata = JSON.parse(command.stderr);
@@ -96,7 +110,7 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   assert.equal(await readFile(join(root, 'a.txt'), 'utf8'), 'first\n你好\nthree\n');
   await symlink(tmpdir(), join(root, 'escape'));
   await assert.rejects(cli('create', 'escape/forbidden', 'file'), /escapes/);
-  await assert.rejects(cli('cp', join(root, 'source.bin'), 'remote:escape/forbidden'), /escapes/);
+  await assert.rejects(cli('upload', join(root, 'source.bin'), 'escape/forbidden'), /escapes/);
   await assert.rejects(cli('read', 'a.txt', '--config', config), /Unknown option/);
   const rawCli = (...args: string[]) => execute(process.execPath, [resolve('dist/arw.cjs'), ...args], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}});
   await assert.rejects(rawCli('read', 'a.txt'), /--id is required/);
@@ -104,7 +118,7 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('read', 'a.txt', '--id', 'missing'), /Workspace is unavailable/);
   await assert.rejects(cli('workspaces'), /does not accept --id/);
   await assert.rejects(cli('install'), /Unsupported/);
-  await assert.rejects(cli('upload'), /Unsupported/);
+  await assert.rejects(cli('upload'), /local path must be a string/);
   await assert.rejects(cli('read', 'a.txt', '--input', '{"workspaceId":"other"}'), /Unsupported/);
   await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"write","arguments":{"path":"a.txt","content":"updated"}},{"command":"read","arguments":{"path":"missing"}},{"command":"write","arguments":{"path":"a.txt","content":"wrong"}}]}'));
   assert.equal(await readFile(join(root, 'a.txt'), 'utf8'), 'updated');

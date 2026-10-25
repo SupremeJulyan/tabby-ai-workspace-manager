@@ -1,3 +1,4 @@
+import { gitRelayOperation } from '../adapters/git-relay-operation'
 import { activityScope } from './agent-activity'
 import { isTerminalCommandMode, runTerminalCommand } from '../shared/terminal-command'
 import { t } from '../shared/i18n'
@@ -91,6 +92,7 @@ export class ForwardingService {
                 activityScope: activityScope(tab),
                 workspace: { id: workspaceId, root, host: session.profile.options.host },
                 terminalOnly:()=>isTerminalCommandMode(tab),
+                git:gitRelayOperation(session,root,join(tabbyConfigPath?join(dirname(tabbyConfigPath),'omw'):dirname(workspaceCatalogPath()),'git-relay')),
                 copy: sftpCopy(() => session.openSFTP(), new RemotePathGuard(root, (command, signal) => workspace.run(command, signal))),
                 list: async (input, signal) => {
                     signal.throwIfAborted()

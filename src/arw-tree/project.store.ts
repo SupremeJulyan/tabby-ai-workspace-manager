@@ -1,3 +1,4 @@
+import { gitRelayOperation } from '../adapters/git-relay-operation'
 import { activityScope } from '../arw-cli/agent-activity'
 import { isTerminalCommandMode, runTerminalCommand } from '../shared/terminal-command'
 import type { BaseTerminalTabComponent } from 'tabby-terminal'
@@ -8,7 +9,7 @@ import { Subject } from 'rxjs'
 import { redactSensitiveText } from '../shared/redact'
 import { ConfigService } from 'tabby-core'
 import { Workspace } from './workspace'
-import { SavedWorkspace, writeWorkspaceCatalog } from '../arw-cli/workspace-catalog'
+import { SavedWorkspace, writeWorkspaceCatalog, workspaceCatalogPath } from '../arw-cli/workspace-catalog'
 import { ForwardingServer } from '../arw-cli/forwarding-server'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -93,6 +94,7 @@ export class ProjectStore {
                 if(this.forwards.get(project.id)!==entry||this.disposed)return
                 this.setState(project.id,error===undefined?'forwarding':'error',operation,error)
             },
+            git: remote?gitRelayOperation(remote,workspace.root,join(dirname(this.catalogFile??workspaceCatalogPath()),'git-relay')):undefined,
             copy: remote ? sftpCopy(() => remote.openSFTP(), new RemotePathGuard(workspace.root, (command, signal) => workspace.run(command, signal))) : undefined,
             list:async(path,signal)=>{signal.throwIfAborted();return {entries:await workspace.list(path)}},
             read:async(path,signal)=>{signal.throwIfAborted();return {path,...await workspace.read(path)}},

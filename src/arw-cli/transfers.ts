@@ -5,24 +5,21 @@ import { object, text } from './operations';
 
 type Invoke = (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 interface Endpoint { remote: boolean; path: string }
-const endpoint = (input: unknown): Endpoint => {
-  const value = text(input, 'copy path');
-  const remote = value.startsWith('remote:');
-  const path = remote ? value.slice(7) : value.startsWith('local:') ? value.slice(6) : value;
-  if (!path || path.includes('\0')) throw new Error('Copy path must not be empty');
-  return {remote, path: remote ? path : resolve(path)};
+const endpoint = (input: unknown,remote:boolean): Endpoint => {
+  const path=text(input,remote?'remote path':'local path');
+  if (!path || path.includes('\0')) throw new Error('Transfer path must not be empty');
+  return {remote,path:remote?path:resolve(path)};
 };
 
-/** Streaming copy; only bounded chunks cross the authenticated bridge. */
-export async function copy(args: Record<string, unknown>, invoke: Invoke): Promise<Record<string, unknown>> {
-  const source = endpoint(args.source), target = endpoint(args.target);
-  if (source.remote === target.remote) throw new Error('cp requires one local path and one remote:PATH');
+/** Streaming upload/download; only bounded chunks cross the authenticated bridge. */
+export async function transfer(direction:'upload'|'download',args: Record<string, unknown>, invoke: Invoke): Promise<Record<string, unknown>> {
+  const source=endpoint(args.source,direction==='download'),target=endpoint(args.target,direction==='upload');
   if (args.recursive !== undefined && typeof args.recursive !== 'boolean') throw new Error('recursive must be boolean');
-  const control = (args: Record<string, unknown>) => invoke('remote_cp', args);
+  const control = (args: Record<string, unknown>) => invoke(direction==='upload'?'remote_upload':'remote_download', args);
   const stat = async (entry: Endpoint): Promise<{exists: boolean; directory?: boolean}> => {
     if (entry.remote) return await control({action: 'stat', path: entry.path}) as {exists: boolean; directory?: boolean};
     const info = await lstat(entry.path).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
-    if (info?.isSymbolicLink()) throw new Error('cp does not follow symbolic links');
+    if (info?.isSymbolicLink()) throw new Error('Transfers do not follow symbolic links');
     return {exists: !!info, directory: info?.isDirectory()};
   };
   const child = (entry: Endpoint, name: string): Endpoint => ({remote: entry.remote, path: entry.remote ? posix.join(entry.path, name) : join(entry.path, name)});
@@ -33,7 +30,7 @@ export async function copy(args: Record<string, unknown>, invoke: Invoke): Promi
   const visit = async (from: Endpoint, to: Endpoint): Promise<void> => {
     const info = await stat(from);
     if (!info.exists) throw new Error('Copy source does not exist');
-    if (info.directory && !args.recursive) throw new Error('Use cp -r to copy a directory');
+    if (info.directory && !args.recursive) throw new Error(`Use ${direction} -r to transfer a directory`);
     if ((await stat(to)).exists) throw new Error('Copy target already exists');
     if (info.directory) {
       if (to.remote) await control({action: 'mkdir', path: to.path});
@@ -46,7 +43,7 @@ export async function copy(args: Record<string, unknown>, invoke: Invoke): Promi
           if (!Array.isArray(page.entries)) throw new Error('Invalid directory listing');
           for (const value of page.entries) {
             const entry = object(value), name = text(entry.name, 'name');
-            if (entry.symlink) throw new Error('cp does not follow symbolic links');
+            if (entry.symlink) throw new Error('Transfers do not follow symbolic links');
             if (!name || ['.', '..'].includes(name) || /[\\/\x00]/.test(name)) throw new Error('Invalid copy entry name');
             names.push(name);
           }
