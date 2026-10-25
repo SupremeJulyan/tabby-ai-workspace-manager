@@ -82,11 +82,13 @@ arw list src --id ID
 arw read README.md --head 40 --id ID
 arw search TODO src --id ID
 arw exec --id ID -- 'git status --short'
-arw cp ./local-file remote:path --id ID
-arw cp -r remote:folder ./local-folder --id ID
+arw upload ./local-file path --id ID
+arw download -r folder ./local-folder --id ID
+arw git-pull --id ID
+arw git-push --path subproject --id ID
 ```
 
-先用 `arw workspaces` 找到目标，再为远程操作传入 `--id ID`。同一 AI 会话可以操作多个已转发工作区；`remote:` 表示所选工作区中的路径，本地相对路径以 CLI 当前目录为起点。
+先用 `arw workspaces` 找到目标，再为远程操作传入 `--id ID`。同一 AI 会话可以操作多个已转发工作区；上传命令先写本地路径、再写远程路径，下载命令相反，无需路径前缀。本地相对路径以 CLI 当前目录为起点。`git-pull` / `git-push` 等同于侧栏的“经本地拉取 / 推送”，默认操作工作区根目录，也可指定子项目路径；沿用当前分支的上游，拉取只允许快进，推送不强制覆盖。
 
 运行 `arw --help` 查看读写、搜索、精确替换、创建、删除、移动、权限和批处理命令。`--input -` 从标准输入读取 JSON，`--file -` 读取文本；长命令输出可通过返回的 `outputId` 续读。
 

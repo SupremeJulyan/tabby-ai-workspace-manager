@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { readWorkspaceCatalog } from './workspace-catalog';
 import { describeNetworkError } from './network-error';
 import { ipcFetch, parseIpcConnection } from './ipc-client';
-import { copy } from './transfers';
+import { transfer } from './transfers';
 import { commands, help } from './commands';
 
 declare const ARW_CLI_VERSION: string;
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
     if (envelope.result.status === 'error' || envelope.result.code) throw new Error(String(envelope.result.message ?? envelope.result.code));
     return envelope.result;
   };
-  const result = verb === 'cp' ? await copy(args, invoke) : await invoke(spec.tool, args);
+  const result = ['upload','download'].includes(verb) ? await transfer(verb as 'upload'|'download', args, invoke) : await invoke(spec.tool, args);
   if (verb === 'exec' && !values.verbose) {
     if (result.truncated) process.stderr.write(JSON.stringify({outputId: result.outputId, nextOffsets: result.nextOffsets, truncated: true}) + '\n');
     process.stdout.write(String(result.stdout ?? '')); process.stderr.write(String(result.stderr ?? ''));

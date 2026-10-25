@@ -40,7 +40,7 @@ export class AgentActivityStore {
         const args = input.arguments && typeof input.arguments === 'object' ? input.arguments as Record<string, unknown> : {}
         const operation = typeof input.name === 'string' && Object.values(commands).some(command => command.tool === input.name) ? input.name : 'invalid'
         const event: AgentActivity = {terminalScope, id: ++this.sequence, operation,
-            category: operation === 'run_remote_command' ? 'command' : ['remote_write', 'remote_edit', 'remote_create', 'remote_delete', 'remote_chmod', 'remote_move', 'remote_cp'].includes(operation) ? 'write' : 'read',
+            category: operation === 'run_remote_command' ? 'command' : ['remote_write', 'remote_edit', 'remote_create', 'remote_delete', 'remote_chmod', 'remote_move', 'remote_upload', 'remote_git_pull', 'remote_git_push'].includes(operation) ? 'write' : 'read',
             status: 'running', workspaceId: safeText(workspace.id), root: safeText(workspace.root), name: safeText(leafName(workspace.root)), host: safeText(workspace.host),
             startedAt: this.now(), command: typeof args.command === 'string' ? safeText(args.command) : undefined,
             path: typeof args.path === 'string' ? safeText(args.path) : undefined}

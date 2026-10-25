@@ -3,7 +3,10 @@ export const commands: Record<string, { tool: string; positional?: string[]; fie
   workspaces: { tool: 'list_remote_workspaces', fields: [] },
   'current-file': { tool: 'current_remote_file', fields: [] },
   output: { tool: 'remote_output', positional: ['outputId', 'stream'], fields: ['outputId', 'stream', 'offset', 'length'] },
-  cp: { tool: 'remote_cp', positional: ['source', 'target'], fields: ['source', 'target', 'recursive'] },
+  upload: { tool: 'remote_upload', positional: ['source', 'target'], fields: ['source', 'target', 'recursive'] },
+  download: { tool: 'remote_download', positional: ['source', 'target'], fields: ['source', 'target', 'recursive'] },
+  'git-pull': { tool: 'remote_git_pull', positional: ['path'], fields: ['path'] },
+  'git-push': { tool: 'remote_git_push', positional: ['path'], fields: ['path'] },
   list: { tool: 'remote_list', positional: ['path'], fields: ['path', 'limit', 'cursor'] },
   read: { tool: 'remote_read', positional: ['path'], fields: ['path', 'offset', 'length', 'head', 'tail', 'startLine', 'lineCount'] },
   'read-many': { tool: 'remote_read_many', fields: ['requests', 'maxBytes'] },
@@ -32,8 +35,10 @@ Write:     write PATH --content TEXT|--file FILE|-
            delete PATH [--input '{"recursive":true}']
            chmod PATH 755
            move --input '{"sourcePath":"old","targetPath":"new","overwrite":false}'
-Copy:      cp [-r] LOCAL_PATH remote:PATH --id ID
-           cp [-r] remote:PATH LOCAL_PATH --id ID
+Transfer:  upload [-r] LOCAL_PATH REMOTE_PATH --id ID
+           download [-r] REMOTE_PATH LOCAL_PATH --id ID
+Git:       git-pull [REMOTE_PATH] --id ID
+           git-push [REMOTE_PATH] --id ID
 Execute:   exec -- 'COMMAND'
            batch --input '{"operations":[{"command":"read","arguments":{"path":"README.md"}}]}'
 Named --path, --query and --command options are supported. --workspace is an alias for --id.

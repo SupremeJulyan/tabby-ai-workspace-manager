@@ -1,9 +1,10 @@
+import { gitRelayOperation } from '../adapters/git-relay-operation'
 import { activityScope } from '../arw-cli/agent-activity'
 import { isTerminalCommandMode, runTerminalCommand } from '../shared/terminal-command'
 import { randomUUID } from 'node:crypto'
 import { t } from '../shared/i18n'
 import { currentCliPath } from './cli-path'
-import { registerActiveWorkspace } from '../arw-cli/workspace-catalog'
+import { workspaceCatalogPath, registerActiveWorkspace } from '../arw-cli/workspace-catalog'
 import { sftpCopy } from '../adapters/sftp-copy'
 import { RemotePathGuard } from '../security/remote-path'
 import { Injectable } from '@angular/core'
@@ -100,6 +101,7 @@ export class AiLauncherService {
                 if (!shared) {
                     server = new ForwardingServer({ activityScope: remote ? activityScope(source) : undefined, workspace: { id: workspace.id, root: workspace.root, host: workspace.host },
                         terminalOnly:()=>isTerminalCommandMode(source),
+                        git:remote?gitRelayOperation(remote,workspace.root,join(dirname(this.auditFile??workspaceCatalogPath()),'git-relay')):undefined,
                         copy: remote?sftpCopy(() => remote.openSFTP(), new RemotePathGuard(workspace.root, (command, signal) => workspace.run(command, signal))):undefined,
                         list: async path => ({ entries: await workspace.list(path) }),
                         read: async path => ({ path, ...await workspace.read(path) }),

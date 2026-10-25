@@ -4,7 +4,7 @@ Use arw for all project files, Git, builds, tests and commands in this remote wo
 
 Run \`arw workspaces\`. Match its host, port, user and workspaceRoot to \`.awm/workspace.json\` (remoteRoot). Pass \`--id ID\` to every operation on the matching forwarded workspace. If the target is ambiguous, ask the user. If it is saved but unavailable, reconnect it in Tabby. Do not switch targets implicitly.
 
-Use \`arw list\`, \`read\`, \`search\`, \`edit\` and \`write\` for remote files, and \`arw exec --id ID -- 'COMMAND'\` for remote commands. Use \`arw cp --id ID [-r] SOURCE TARGET\` to copy between a local path and \`remote:PATH\`. Run \`arw --help\` for syntax.
+Use \`arw list\`, \`read\`, \`search\`, \`edit\` and \`write\` for remote files, and \`arw exec --id ID -- 'COMMAND'\` for remote commands. Use \`arw upload [-r] LOCAL_PATH REMOTE_PATH --id ID\` and \`arw download [-r] REMOTE_PATH LOCAL_PATH --id ID\` for transfers. Use \`arw git-pull [PATH] --id ID\` or \`arw git-push [PATH] --id ID\` to relay Git through the local network and credentials. Run \`arw --help\` for syntax.
 
 Report failures without automatically retrying mutations. For long command output, read the returned outputId instead of rerunning the command. A POLICY_DENIED result must not be bypassed. Do not print connection URLs, tokens or credentials.
 `;

@@ -82,11 +82,13 @@ arw list src --id ID
 arw read README.md --head 40 --id ID
 arw search TODO src --id ID
 arw exec --id ID -- 'git status --short'
-arw cp ./local-file remote:path --id ID
-arw cp -r remote:folder ./local-folder --id ID
+arw upload ./local-file path --id ID
+arw download -r folder ./local-folder --id ID
+arw git-pull --id ID
+arw git-push --path subproject --id ID
 ```
 
-Find the target with `arw workspaces`, then pass `--id ID` to remote operations. One AI session can use multiple forwarded workspaces. `remote:` refers to the selected workspace; local relative paths start at the CLI's current directory.
+Find the target with `arw workspaces`, then pass `--id ID` to remote operations. One AI session can use multiple forwarded workspaces. Upload takes a local source and remote destination; download takes a remote source and local destination. No path prefixes are needed. Local relative paths start at the CLI's current directory. `git-pull` / `git-push` use the sidebar's local Git relay against the workspace root or a specified subproject, using the current branch's upstream, fast-forward pulls, and non-forced pushes.
 
 Run `arw --help` for reading, writing, searching, exact edits, creation, deletion, moves, permissions, and batches. `--input -` reads JSON from stdin, and `--file -` reads text. Long command output can be continued using the returned `outputId`.
 

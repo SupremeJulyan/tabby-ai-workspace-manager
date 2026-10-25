@@ -262,7 +262,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     get runningActivities (): number { return this.activities.filter(event => event.status === 'running').length }
     trackActivity (_index: number, event: AgentActivity): number { return event.id }
     activityLabel (event: AgentActivity): string {
-        return ({remote_list:t('列出目录'), remote_read:t('读取文件'), remote_write:t('写入文件'), run_remote_command:t('执行命令'), list_remote_workspaces:t('查询工作区')} as Record<string,string>)[event.operation] ?? t('无效请求')
+        return ({remote_upload:t('上传文件'), remote_download:t('下载文件'), remote_git_pull:t('通过本地 Git 拉取'), remote_git_push:t('通过本地 Git 推送'), remote_list:t('列出目录'), remote_read:t('读取文件'), remote_write:t('写入文件'), run_remote_command:t('执行命令'), list_remote_workspaces:t('查询工作区')} as Record<string,string>)[event.operation] ?? t('无效请求')
     }
     activityState (event: AgentActivity): string {
         return {running:t('执行中'), success:t('成功'), error:t('失败'), denied:t('已拦截')}[event.status]

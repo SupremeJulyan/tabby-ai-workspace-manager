@@ -1,4 +1,4 @@
-import { copy } from '../arw-cli/transfers'
+import { transfer } from '../arw-cli/transfers'
 import { sftpCopy } from './sftp-copy'
 import { RemotePathGuard } from '../security/remote-path'
 import type { SSHSession } from './ssh-compat'
@@ -19,17 +19,17 @@ export async function uploadLocalPaths (
     try {
         const guard = new RemotePathGuard(workspace.root, (command, signal) => workspace.run(command, signal))
         const target = await guard.resolve(destination, false, controller.signal)
-        const transfer = sftpCopy(() => session.openSFTP(), guard)
+        const copy = sftpCopy(() => session.openSFTP(), guard)
         const invoke = async (_name: string, args: Record<string, unknown>) => {
             // Let cancellation requests clean up even after the operation was aborted.
-            return await transfer(args, args.action === 'cancel' ? new AbortController().signal : controller.signal) as Record<string, unknown>
+            return await copy(args, args.action === 'cancel' ? new AbortController().signal : controller.signal) as Record<string, unknown>
         }
-        const info = await invoke('remote_cp', {action: 'stat', path: target})
+        const info = await invoke('remote_upload', {action: 'stat', path: target})
         if (!info.directory) throw new Error('Upload destination is not a directory')
         for (const path of paths) {
             controller.signal.throwIfAborted()
             progress(path)
-            await copy({source: `local:${path}`, target: `remote:${target}`, recursive: true}, invoke)
+            await transfer('upload',{source:path,target,recursive:true},invoke)
         }
     } finally {
         closed.unsubscribe()

@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core'
 import { dirname, join } from 'path'
 import { NotificationsService, PlatformService, LogService } from 'tabby-core'
 import { cloneThroughLocalGit, GitIdentity } from '../arw-tree/git/git-bootstrap'
+import { gitRelayLocks } from '../arw-tree/git/relay-locks'
 import { relayGit } from '../arw-tree/git/git-relay'
 import type { RemoteWorkspace } from '../api'
 import type { SSHTabComponent } from '../adapters/ssh-compat'
@@ -11,7 +12,7 @@ import { TabbyRelayTransport } from '../adapters/transport'
 @Injectable()
 export class GitTasksService {
     private running = new WeakMap<SSHTabComponent, AbortController>()
-    private locks = new WeakMap<object, Set<string>>()
+    private locks = gitRelayLocks
 
     constructor (
         private notifications: NotificationsService,
