@@ -1,0 +1,127 @@
+{
+  "name": "tabby-ai-workspace-manager",
+  "version": "0.1.0",
+  "description": "Seamless AI local and remote workspace management for Tabby, with the arw CLI, file management, previews, and Git tools.",
+  "keywords": [
+    "tabby-plugin",
+    "arw",
+    "ai",
+    "ssh",
+    "sftp",
+    "git",
+    "workspace",
+    "remote",
+    "local",
+    "workspace-manager",
+    "cli"
+  ],
+  "main": "dist/index.js",
+  "typings": "dist/index.d.ts",
+  "license": "MIT",
+  "scripts": {
+    "install:cli": "npm run build && node scripts/install-cli.mjs",
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "test": "tsx --test test/*.test.ts && node --test test/*.test.mjs",
+    "check": "npm run build && npm test",
+    "pack:plugin": "npm run build && node scripts/pack.mjs",
+    "dev": "node scripts/dev.mjs",
+    "prepublishOnly": "npm run check",
+    "prebuild": "node clean.mjs",
+    "postinstall": "node scripts/cli-lifecycle.mjs",
+    "uninstall:cli": "node scripts/cli-lifecycle.mjs uninstall"
+  },
+  "peerDependencies": {
+    "@angular/common": "^15.2.0",
+    "@angular/core": "^15.2.0",
+    "@angular/forms": "^15.2.0",
+    "@ng-bootstrap/ng-bootstrap": "^14.0.0",
+    "russh": "^0.1.38",
+    "rxjs": "^7.0.0",
+    "tabby-core": ">=1.0.231-nightly.0",
+    "tabby-settings": ">=1.0.231-nightly.0",
+    "tabby-ssh": ">=1.0.231-nightly.0",
+    "tabby-terminal": ">=1.0.231-nightly.0"
+  },
+  "author": "Julyan",
+  "files": [
+    "dist",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "scripts/cli-lifecycle.mjs"
+  ],
+  "peerDependenciesMeta": {
+    "@angular/core": {
+      "optional": true
+    },
+    "@ng-bootstrap/ng-bootstrap": {
+      "optional": true
+    },
+    "tabby-core": {
+      "optional": true
+    },
+    "tabby-ssh": {
+      "optional": true
+    },
+    "russh": {
+      "optional": true
+    },
+    "rxjs": {
+      "optional": true
+    },
+    "tabby-terminal": {
+      "optional": true
+    },
+    "@angular/common": {
+      "optional": true
+    },
+    "@angular/forms": {
+      "optional": true
+    },
+    "tabby-settings": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@angular/animations": "15.2.10",
+    "@angular/common": "15.2.10",
+    "@angular/compiler": "15.2.10",
+    "@angular/core": "15.2.10",
+    "@angular/forms": "15.2.10",
+    "@angular/localize": "15.2.10",
+    "@angular/platform-browser": "15.2.10",
+    "@angular/platform-browser-dynamic": "15.2.10",
+    "@ng-bootstrap/ng-bootstrap": "14.2.0",
+    "@types/node": "^22.0.0",
+    "@types/utif": "^3.0.6",
+    "esbuild": "^0.25.0",
+    "happy-dom": "^21.0.4",
+    "marked": "^18.1.1",
+    "pdfjs-dist": "^6.4.299",
+    "russh": "0.1.38",
+    "rxjs": "^7.8.0",
+    "tabby-core": "1.0.231-nightly.0",
+    "tabby-settings": "^1.0.231-nightly.0",
+    "tabby-ssh": "1.0.231-nightly.0",
+    "tabby-terminal": "1.0.231-nightly.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.8.0",
+    "utif": "^3.1.0"
+  },
+  "bin": {
+    "arw": "dist/arw.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SupremeJulyan/tabby-ai-workspace-manager.git"
+  },
+  "homepage": "https://github.com/SupremeJulyan/tabby-ai-workspace-manager#readme",
+  "bugs": {
+    "url": "https://github.com/SupremeJulyan/tabby-ai-workspace-manager/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
