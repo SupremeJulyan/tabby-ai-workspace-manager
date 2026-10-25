@@ -13,7 +13,7 @@ export async function saveRemoteText(
     if(!isRemotePathInsideRoot(root,target))throw new RemotePathError('Path is outside workspaceRoot')
     if(expectedHash!==undefined&&!/^[a-f0-9]{64}$/.test(expectedHash))throw new RemotePathError('Invalid content hash')
     const quoted=shellQuote(target),marker=`ARW_SAVE_${randomBytes(24).toString('hex')}`
-    const ready=`\0${marker}:READY\0`,bytes=Buffer.from(content)
+    const ready=`\0${marker}:READY\0`,begin=`\0${marker}:STARTED\0`,bytes=Buffer.from(content)
     let acknowledged=false
     const result=await transport.run(`test ! -L ${quoted} || { printf '%s\\n' 'symbolic-link writes are not allowed' >&2; exit 1; }
 _arw_root=$(realpath -e -- ${shellQuote(root)}) && _arw_target=$(realpath -m -- ${quoted}) || exit 1
@@ -41,7 +41,7 @@ else
     ${expectedHash===undefined?':':`printf '%s\\n' 'Remote file has changed (远端文件已变化)' >&2; exit 1`}
 fi
 printf '\\000${marker}:PERMISSIONS:%s\\000' "$_arw_mode:\${_arw_uid-}:\${_arw_gid-}"
-printf '\\000${marker}:READY\\000'
+printf '\\000${marker}:STARTED\\000'
 if test -n "$_arw_before"; then
     exec 3> ${quoted} || exit 1
 else
@@ -54,6 +54,7 @@ $_arw_new
 ARW_METADATA
     printf '\\000${marker}:PERMISSIONS:%s\\000' "$_arw_mode:$_arw_uid:$_arw_gid"
 fi
+printf '\\000${marker}:READY\\000'
 cat >&3 || exit 1
 exec 3>&-
 test "$(wc -c < ${quoted})" -eq ${bytes.length} || { printf '%s\\n' 'Remote file changed during save (远程文件在读取时发生变化)' >&2; exit 1; }
@@ -76,7 +77,7 @@ fi`,signal,{
                 const permissions=record.slice(0,end)
                 if(/^[0-7]+:\d+:\d+$/.test(permissions))recordPermissions(permissions)
             }
-            if(!acknowledged&&output.includes(ready)){acknowledged=true;started()}
+            if(!acknowledged&&output.includes(begin)){acknowledged=true;started()}
         },
     })
     signal.throwIfAborted()

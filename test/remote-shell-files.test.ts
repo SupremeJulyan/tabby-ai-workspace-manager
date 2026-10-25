@@ -24,6 +24,8 @@ function sessionFixture (cwd:string, beforeCommand?:(command:string)=>Promise<vo
                 commands.push(command)
                 await beforeCommand?.(command)
                 child=spawn('/bin/sh',['-c',hooks.rewrite?.(command)??command],{cwd,env:{...env,LC_ALL:'C'}})
+                // write() reports pipe failures through its callback; consume the matching stream event.
+                child.stdin!.on('error',()=>{})
                 child.stdout!.on('data',chunk=>data$.next(chunk))
                 child.stderr!.on('data',chunk=>extendedData$.next([1,chunk]))
                 child.on('close',()=>closed$.next())
@@ -555,4 +557,19 @@ test('remote Git discovery streams a bounded directory prefix including unusual 
     assert.equal(result.entries.length,2)
     assert.equal(result.truncated,true)
     assert.ok(fixture.commands.some(command=>command.includes('head -z -n 6')))
+})
+
+test('a failed destination open never requests file contents but retains an unconfirmed save', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-save-open-failed-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    await writeFile(join(root,'file'),'before')
+    const fixture=sessionFixture(root)
+    let uploaded=false
+    fixture.hooks.afterInput=async()=>{uploaded=true}
+    fixture.hooks.rewrite=command=>command.replaceAll('exec 3>','sleep 0.02; printf permission_denied >&2; exit 1; exec 3>')
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    await assert.rejects(workspace.write('file','after'),/permission_denied/)
+    assert.equal(uploaded,false,'do not upload until opening the destination succeeds')
+    assert.equal(await readFile(join(root,'file'),'utf8'),'before')
+    assert.ok(workspace.saveIssue?.('file'),'the pre-mutation acknowledgement still protects ambiguous failures')
 })
