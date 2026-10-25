@@ -3,6 +3,8 @@ import { ApplicationRef, ComponentFactoryResolver, ComponentRef, Injectable, Inj
 import { AppService, ConfigService, NotificationsService } from 'tabby-core'
 import { ArwTreeComponent } from './tree.component'
 import { applyArwFont } from './fonts'
+import { ArwEditorComponent } from './editor.component'
+import { ArwPreviewComponent } from './preview.component'
 
 /** Owns the single host DOM insertion point; feature components use Angular. */
 @Injectable()
@@ -12,6 +14,7 @@ export class SidebarService {
     private container?: HTMLElement
     private visible = true
     private installed = false
+    private focusSubscription?:{unsubscribe():void}
     private subscriptions:Array<{unsubscribe():void}>=[]
     constructor (private app: AppService, private application: ApplicationRef, private resolver: ComponentFactoryResolver,
         private injector: Injector, private zone: NgZone, private notifications: NotificationsService,
@@ -19,6 +22,8 @@ export class SidebarService {
     install (): void {
         if(this.installed)return
         this.installed=true
+        this.subscriptions.push(this.app.activeTabChange$.subscribe(()=>this.watchActiveTab()))
+        this.watchActiveTab()
         this.app.ready$.subscribe(()=>this.mount())
     }
     private mount (attempt=0):void {
@@ -81,6 +86,7 @@ export class SidebarService {
                 event.preventDefault();update(width+(event.key==='ArrowRight'?10:-10));save()
             }
             host.append(resize)
+            this.updateVisibility()
         })
     }
     private applyFont():void {
@@ -91,7 +97,19 @@ export class SidebarService {
     toggle ():void {
         this.visible=!this.visible
         if(!this.component)this.mount()
-        if(this.host)this.host.style.display=this.visible?'':'none'
-        this.container?.classList.toggle('arw-tree-layout',this.visible)
+        this.updateVisibility()
+    }
+    private updateVisibility():void {
+        const tab=this.app.activeTab
+        const focused=tab&&'getFocusedTab' in tab?((tab as any).getFocusedTab()??(tab as any).getAllTabs?.()[0]):tab
+        const visible=this.visible&&!(focused instanceof ArwEditorComponent||focused instanceof ArwPreviewComponent)
+        if(this.host)this.host.style.display=visible?'':'none'
+        this.container?.classList.toggle('arw-tree-layout',visible)
+    }
+    private watchActiveTab():void {
+        this.focusSubscription?.unsubscribe()
+        const tab=this.app.activeTab
+        this.focusSubscription=tab&&'focusChanged$' in tab?(tab as any).focusChanged$.subscribe(()=>this.updateVisibility()):undefined
+        this.updateVisibility()
     }
 }

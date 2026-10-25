@@ -1,8 +1,9 @@
 import { t } from '../../shared/i18n'
 import type { Workspace } from '../workspace'
+import { gitCommand } from './remote-git'
 
 /** Bound read-only background work independently of whether the backend honours cancellation. */
-export async function readBackgroundGit(workspace:Workspace,command:string,parent?:AbortSignal,timeoutMs=3000) {
+export async function readBackgroundGit(workspace:Workspace,command:string|string[],parent?:AbortSignal,timeoutMs=3000) {
     parent?.throwIfAborted()
     const controller=new AbortController()
     const abort=()=>controller.abort(parent?.reason)
@@ -14,7 +15,11 @@ export async function readBackgroundGit(workspace:Workspace,command:string,paren
         controller.signal.addEventListener('abort',cancelled,{once:true})
     })
     try {
-        return await Promise.race([workspace.run(command,controller.signal,{maxBytes:256*1024}),stopped])
+        const options={maxBytes:256*1024}
+        const result=Array.isArray(command)&&workspace.runGit
+            ?workspace.runGit(command,controller.signal,options)
+            :workspace.run(Array.isArray(command)?gitCommand(command):command,controller.signal,options)
+        return await Promise.race([result,stopped])
     } finally {
         clearTimeout(timer)
         parent?.removeEventListener('abort',abort)

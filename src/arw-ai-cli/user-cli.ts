@@ -2,9 +2,10 @@ import { t } from '../shared/i18n'
 import { chmod, mkdir, readlink, symlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { ensureWindowsCli } from './windows-cli'
 
-export async function ensureUserCli (source: string, home = homedir()): Promise<void> {
-    if (process.platform === 'win32') return
+export async function ensureUserCli (source: string, home = homedir(),platform:NodeJS.Platform=process.platform): Promise<void> {
+    if (platform === 'win32') return ensureWindowsCli(source,home)
     const directory = join(home, '.local', 'bin')
     const command = join(directory, 'arw')
     await mkdir(directory, { recursive: true })

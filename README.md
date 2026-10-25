@@ -21,7 +21,7 @@
 
 3. 完全退出并重新启动 Tabby。
 
-Linux/macOS 安装或首次加载时自动创建 `~/.local/bin/arw`；需要时为 Bash、Zsh、fish 配置 PATH，新终端生效。从 Tabby 插件管理器卸载时删除本插件创建的链接和 PATH 配置。命令行手动卸载前，可在已安装插件目录运行 `npm run uninstall:cli`。
+Linux/macOS 安装或首次加载时自动创建 `~/.local/bin/arw`；需要时为 Bash、Zsh、fish 配置 PATH，兼容已有 Bash 登录配置。Windows 在 `%USERPROFILE%\.tabby-ai-workspace-manager\bin` 安装 `arw.cmd`，并按需加入当前用户 PATH，不要求管理员或符号链接权限。重启 Tabby 后新终端生效。从 Tabby 插件管理器卸载时只删除本插件创建的命令和 PATH 配置，不覆盖已有命令。命令行手动卸载前，可在已安装插件目录运行 `npm run uninstall:cli`。
 
 ## 快速开始
 
@@ -39,6 +39,10 @@ Linux/macOS 安装或首次加载时自动创建 `~/.local/bin/arw`；需要时�
 - 插件操作立即更新文件树；本地监听当前查看的目录，远端每 5 秒检查目录元数据。后台检测有范围限制，未查看的深层变更可手动刷新。
 
 UTF-8 文本编辑上限为 10 MiB。保存检查外部修改，原地写入并保留权限、ACL 和扩展属性；远程编辑拒绝符号链接和硬链接目标，依赖 GNU `realpath`、`stat`、`sha256sum` 等工具。
+
+文本页支持查找与替换：`Ctrl/Cmd+F` 查找、`Ctrl/Cmd+H` 替换，`F3` / `Shift+F3` 切换匹配，`Esc` 关闭；支持大小写、整词与正则。Markdown/CSV 预览查找时切到源码，替换时打开编辑页；替换只修改缓冲区，点击保存才写入文件。匹配超过 10000 项时禁用全部替换。
+
+开启 Tabby 标签恢复后，编辑、预览和 Diff 文件页可在重启后恢复，文件页不显示工作区侧栏。远程文件通过按原 SSH 配置、主机、端口和用户隔离的文件会话池恢复：复用已认证连接，合并并发连接请求；原终端尚未显示时也可通过 Tabby 的认证流程建立文件会话，无需先切换终端标签。文件内容优先经 SFTP 读取，未提供 SFTP 时文本读取回退到 SSH shell；路径边界检查和保存冲突检查仍保留。关闭等待中的文件页会取消该页面的等待，不中断其他页面共用的连接。旧版本留下的空白标签没有文件路径，需重新打开。未保存编辑随标签状态保存在本机，恢复后仍检查文件冲突。
 
 远程保存失败、超时或断线时保留本地编辑并标记“保存未确认”，远端可能已有部分内容。先核对远端或重新加载；覆盖重试需明确确认。未修改的已打开文件可随后台检测更新，未保存编辑不会被自动覆盖。
 
@@ -99,11 +103,14 @@ ARW 检查远程路径边界并拦截高危命令。审计记录位于 `<Tabby �
 ```sh
 npm ci
 npm run check          # 构建并运行全部测试
+npm run test:portable  # 构建后运行跨平台本机测试
 npm run pack:plugin    # 生成 artifacts/tabby-ai-workspace-manager-0.1.0.tgz
 npm run dev -- /opt/Tabby/tabby
 ```
 
 开发模式使用独立的 userData 和插件目录。实现细节见 [架构说明](docs/architecture.md)。
+
+CI 矩阵覆盖 Linux、macOS、Windows 的 Node.js 22 / 24：Linux 执行全部测试，三平台均执行原生 Git、路径、CLI 生命周期、IPC、文件恢复、搜索替换和打包预览测试。Linux shell/GNU 工具的远端测试仍在 Linux 上运行，不通过 Git Bash 冒充 Windows 本地 Git。该矩阵针对本机 Tabby；SSH 远端仍需满足前述 POSIX/GNU 工具要求，不代表支持 Windows 远端。未运行的 CI 不作为实机验证结果。
 
 ## License
 

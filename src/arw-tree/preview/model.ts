@@ -1,6 +1,6 @@
 import { t } from '../../shared/i18n'
 import { Marked, Renderer } from 'marked';
-import { posix } from 'node:path';
+import { workspacePath } from '../../shared/workspace-path';
 
 export type PreviewKind='image'|'pdf'|'markdown'|'csv';
 const images:Record<string,string>={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',jpe:'image/jpeg',gif:'image/gif',webp:'image/webp',bmp:'image/bmp',dib:'image/bmp',svg:'image/svg+xml',ico:'image/x-icon',avif:'image/avif',tif:'image/tiff',tiff:'image/tiff'};
@@ -28,12 +28,13 @@ export function markdownImages(source:string):string[] {
   parser.walkTokens(parser.lexer(source),token=>{if(token.type==='image'&&paths.size<16)paths.add(token.href)});
   return [...paths];
 }
-export function relativePreviewAsset(path:string,href:string):string|undefined {
+export function relativePreviewAsset(path:string,href:string,kind:'local'|'remote'='remote',platform:NodeJS.Platform=process.platform):string|undefined {
   if(!href||href.length>4096||/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(href))return undefined;
   try{
     const target=decodeURIComponent(href.split(/[?#]/)[0]);
     if(!target||/[\x00-\x1f\x7f]/.test(target))return undefined;
-    return posix.isAbsolute(target)?target:posix.join(posix.dirname(path),target);
+    const paths=workspacePath(kind,platform);
+    return paths.isAbsolute(target)?target:paths.join(paths.dirname(path),target);
   }catch{return undefined}
 }
 export function renderMarkdown(source:string,assets:ReadonlyMap<string,string>=new Map()):string {

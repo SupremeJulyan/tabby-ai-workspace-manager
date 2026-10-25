@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, mkdir, rm, symlink, stat, chmod } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, rm, symlink, stat, chmod, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { localWorkspace } from '../src/arw-tree/workspace';
@@ -16,7 +16,7 @@ test('local workspace lists nested paths, edits with conflict detection, and run
   await assert.rejects(workspace.write('src/file.txt','wrong',file.hash),/changed/);
   await assert.rejects(workspace.read('../outside'),/outside/);
   const result=await workspace.run(process.platform==='win32'?'cd':'pwd');
-  assert.equal(result.exitCode,0);assert.equal(result.stdout.trim(),root);
+  assert.equal(result.exitCode,0);assert.equal(await realpath(result.stdout.trim()),await realpath(root));
 });
 
 test('local saves keep the inode and permissions, truncate shorter contents, and create private files',async context=>{

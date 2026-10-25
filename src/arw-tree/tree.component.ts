@@ -6,8 +6,10 @@ import { AppService, NotificationsService, PlatformService } from 'tabby-core'
 import { Subscription } from 'rxjs'
 import { resolve, posix, relative, isAbsolute, sep } from 'node:path'
 import { WorkspaceFile, Workspace, localWorkspace } from './workspace'
-import { RemoteGit, GitChange, isGitConflict, gitCommand, parseGitStatus } from './git/remote-git'
+import { RemoteGit, GitChange, isGitConflict, parseGitStatus } from './git/remote-git'
 import { readBackgroundGit } from './git/background-git'
+import { workspaceGit } from './git/workspace-git'
+import { workspacePath, parentWorkspacePath } from '../shared/workspace-path'
 import { discoverGitRepositories } from './git/git-discovery'
 import { cwdIntegrationCommand, RemoteShell } from '../shared/shell-integration'
 import { WorkspaceRegistry, WorkspaceSelection } from '../services/workspace-registry.service'
@@ -605,7 +607,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.commitMessages.set(repository.root,value)
         this.rememberIfTabbed()
     }
-    private git (repository:GitRepositoryView): RemoteGit { return new RemoteGit(command=>repository.workspace.run(command)) }
+    private git (repository:GitRepositoryView): RemoteGit { return workspaceGit(repository.workspace) }
     private async gitOperation (repository:GitRepositoryView, operation:()=>Promise<void>, message?:string): Promise<void> {
         if(repository.busy)return
         const version=this.version
@@ -809,13 +811,13 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                     message=>{if(tabKey===this.activeTab&&version===this.version){this.gitSetupProgress=message;this.render()}})
             if(tabKey!==this.activeTab||version!==this.version||scope!==this.currentGitScope())return
             const backend=workspace.kind==='local'?localWorkspace(root):remoteWorkspace(remote!,root)
-            const repository:GitRepositoryView={workspace:backend,root,name:root.split('/').filter(Boolean).pop()??root,expanded:true,groups:[],error:'',count:0,loading:true,
+            const repository:GitRepositoryView={workspace:backend,root,name:workspacePath(backend.kind).basename(root)||root,expanded:true,groups:[],error:'',count:0,loading:true,
                 branch:'',branches:[],commits:[],inspector:'',inspectorLoading:false,inspectorError:''}
             this.invalidateGitScanCache(backend)
             this.repositories=[repository];this.gitWorkspace=backend;this.gitScope=scope;this.gitScanCompleted=true
             this.gitSetupMode=null;this.gitNotice='';this.gitSetupProgress=''
             try {
-                const changes=await new RemoteGit(command=>backend.run(command,controller.signal)).status()
+                const changes=await workspaceGit(backend,controller.signal).status()
                 if(tabKey!==this.activeTab||version!==this.version||scope!==this.currentGitScope())return
                 this.applyGitChanges(repository,changes)
                 await this.loadGitInspector(repository,controller.signal)
@@ -878,8 +880,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.rememberBrowsing()
             const kind=previewKind(node.path)
             if(kind){
-                const parent=posix.dirname(node.path)
-                const imagePaths=this.nodes.filter(entry=>!entry.directory&&previewKind(entry.path)==='image'&&posix.dirname(entry.path)===parent).map(entry=>entry.path)
+                const paths=workspacePath(workspace.kind),parent=paths.dirname(node.path)
+                const imagePaths=this.nodes.filter(entry=>!entry.directory&&previewKind(entry.path)==='image'&&paths.dirname(entry.path)===parent).map(entry=>entry.path)
                 openAdjacentTab(this.app,{type:ArwPreviewComponent,inputs:{workspace,filePath:node.path,imagePaths}})
             }else openAdjacentTab(this.app,{ type: ArwEditorComponent, inputs: { workspace, filePath:node.path } })
             return
@@ -926,14 +928,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         finally{node.loading=false;this.render()}
     }
     get parentPath (): string {
-        if (!this.relativePath) return ''
-        const parts = this.relativePath.replace(/\/+$/, '').split('/')
-        parts.pop()
-        return parts.join('/')
+        return parentWorkspacePath(this.relativePath,(this.browserWorkspace??this.selection?.workspace)?.kind??'local')
     }
     get breadcrumb (): string {
-        const root = (this.browserWorkspace ?? this.selection?.workspace)?.root ?? ''
-        return this.relativePath ? `${root.replace(/[\\/]+$/, '')}/${this.relativePath}` : root
+        const workspace=this.browserWorkspace??this.selection?.workspace,root=workspace?.root??''
+        return this.relativePath?workspacePath(workspace?.kind??'local').join(root,this.relativePath):root
     }
     async up (): Promise<void> {
         const workspace = this.browserWorkspace ?? this.selection?.workspace
@@ -1009,7 +1008,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         },t`已切换到 ${branch.name}`)
     }
     private async loadGitInspector (repository:GitRepositoryView, signal?:AbortSignal):Promise<void>{
-        const git=new RemoteGit(command=>readBackgroundGit(repository.workspace,command,signal))
+        const git=workspaceGit(repository.workspace,signal,true)
         const version=(repository.inspectorVersion??0)+1
         repository.inspectorVersion=version;repository.inspectorPending=true;this.render()
         const [branches,commits,sync]=await Promise.allSettled([git.branches(signal),git.history(50,signal),readGitSyncState(git)])
@@ -1098,7 +1097,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(running>=2)await new Promise<void>(resolve=>waiters.push(resolve));else running++
             try{
                 if(!active())return
-                const git=new RemoteGit(command=>readBackgroundGit(entry.workspace,command,controller.signal))
+                const git=workspaceGit(entry.workspace,controller.signal,true)
                 const changes=await git.status()
                 if(changes.length>1000)throw new Error(t('Git 变更超过 1000 项，请进入具体项目后刷新。'))
                 if(!active())return
@@ -1116,7 +1115,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             const discovery=await discoverGitRepositories(workspace,{maxDepth:2,maxDirectories:60,maxRepositories:10,maxDurationMs:3000,concurrency:2,scanNestedRepositories:false,signal:controller.signal,onRepository:root=>{
                 if(!active())return
                 const repository=workspace.kind==='remote' && selection?.remote ? remoteWorkspace(selection.remote,root) : localWorkspace(root)
-                const entry:GitRepositoryView=previous.get(root)??{workspace:repository,name:root.replace(/\\/g,'/').split('/').filter(Boolean).pop()??root,root,
+                const entry:GitRepositoryView=previous.get(root)??{workspace:repository,name:workspacePath(repository.kind).basename(root)||root,root,
                     expanded:this.collapsed.has(this.repositoryKey(root))?!this.collapsed.get(this.repositoryKey(root)):root===workspace.root,groups:[],error:'',count:0,loading:true,
                     branch:'',branches:[],commits:[],inspector:'',inspectorLoading:false,inspectorError:''}
                 entry.loading=true
@@ -1148,7 +1147,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(!workspace)return
         const tab=this.activeTab
         try {
-            const patch=change.index==='?'?addedFilePatch((await workspace.read(change.path)).content):await new RemoteGit(command=>workspace.run(command)).diff(change,staged)
+            const patch=change.index==='?'?addedFilePatch((await workspace.read(change.path)).content):await workspaceGit(workspace).diff(change,staged)
             if(tab!==this.activeTab)return
             openAdjacentTab(this.app,{type:ArwEditorComponent,inputs:{workspace,filePath:change.path,readonly:true,diffPatch:patch,diffStaged:staged}})
         }catch(error){if(tab===this.activeTab){this.error=String(error);this.render()}}
@@ -1342,7 +1341,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(!active())return
             try{
                 if(repository.busy||repository.loading)continue
-                const content=await readBackgroundGit(repository.workspace,gitCommand(['status','--porcelain=v1','-z','--untracked-files=all']))
+                const content=await readBackgroundGit(repository.workspace,['status','--porcelain=v1','-z','--untracked-files=all'])
                 if(content.truncated)throw new Error(t('Git 变更过多，已停止自动更新，请进入具体项目后刷新。'))
                 if(!active())return
                 if(content.exitCode===0&&content.stdout!==repository.watchedStatus){

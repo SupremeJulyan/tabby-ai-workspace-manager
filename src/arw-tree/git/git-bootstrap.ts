@@ -9,13 +9,14 @@ import { localGitRunner, validateFetchUrl, LocalGitRunner } from './local-git-pu
 import { describeFetchFailure } from './local-git-pull';
 import type { RelayOptions, RelayTransport } from './git-relay';
 import type { Workspace } from '../workspace';
+import { runWorkspaceGit } from './workspace-git';
 
 export async function setupLocalGit(workspace:Workspace,mode:'init'|'clone',input:GitIdentity & {directory:string},options:{signal?:AbortSignal;report?:(message:string)=>void;local?:LocalGitRunner}={}):Promise<string> {
   const identity=validateGitIdentity(input),git=options.local??localGitRunner(),root=await realpath(workspace.root),{signal,report}=options;
   signal?.throwIfAborted();
   let target=root;
   if(mode==='init'){
-    const existing=await workspace.run(gitCommand(['rev-parse','--show-toplevel']),signal);
+    const existing=await runWorkspaceGit(workspace,['rev-parse','--show-toplevel'],signal);
     if(existing.exitCode===0)throw new Error(t('当前目录已属于 Git 仓库，请刷新 Git'));
     if(existing.exitCode!==128||!/not a git repository|不是.*git.*仓库/i.test(existing.stderr+existing.stdout))throw new Error(existing.stderr||t('无法检查当前 Git 目录'));
     const metadata=await lstat(join(root,'.git')).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;});

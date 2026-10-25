@@ -17,6 +17,8 @@ export interface Workspace {
   verifySave?(path:string):Promise<WorkspaceText>;
   reloadSave?(path:string):Promise<WorkspaceText>;
   retrySave?(path:string,content:string):Promise<WorkspaceText>;
+  readonly waitForConnection?:boolean;
+  readonly connectionStatus?:string;
   sourceWorkspace?: Workspace;
   validateCommand?(command: string, signal?: AbortSignal): Promise<void>;
   watch?(changed: () => void, failed: (error: Error) => void, signal: AbortSignal, directories?:()=>string[]): Promise<void>;
@@ -24,10 +26,11 @@ export interface Workspace {
   id: string; kind: 'local' | 'remote'; root: string; host: string; label: string; name: string; titleName?:string;
   list(path: string, signal?: AbortSignal): Promise<WorkspaceFile[]>;
   listForGit?(path:string,limit:number,signal?:AbortSignal):Promise<{entries:WorkspaceFile[];truncated:boolean}>;
-  read(path: string): Promise<WorkspaceText>;
+  read(path: string, signal?:AbortSignal): Promise<WorkspaceText>;
   readBytes?(path:string,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>;
   write(path: string, content: string, expectedHash?: string): Promise<WorkspaceText>;
   run(command: string, signal?: AbortSignal, options?: {maxBytes?: number}): Promise<GitResult>;
+  runGit?(args:string[],signal?:AbortSignal,options?:{maxBytes?:number}):Promise<GitResult>;
 }
 const childRoot = (root: string, input: string) => input === '.' ? root
     : root.endsWith('/') ? `${root}${input}` : `${root}/${input}`
@@ -38,8 +41,10 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
     return {
         sourceWorkspace: workspace,
         id: `${workspace.id}:${root}`, kind: workspace.kind, host: workspace.host, label: absolute, root, name: leafName(root), titleName: inheritedWorkspaceName(workspace.kind,workspace.name),
+        get waitForConnection(){return workspace.waitForConnection},
+        get connectionStatus(){return workspace.connectionStatus},
         list: (path, signal) => workspace.list(childRoot(root, path), signal),
-        read: path => workspace.read(childRoot(root, path)),
+        read: (path,signal) => workspace.read(childRoot(root, path),signal),
         saveIssue:workspace.saveIssue ? path=>workspace.saveIssue!(childRoot(root,path)) : undefined,
         verifySave:workspace.verifySave ? path=>workspace.verifySave!(childRoot(root,path)) : undefined,
         reloadSave:workspace.reloadSave ? path=>workspace.reloadSave!(childRoot(root,path)) : undefined,
@@ -47,6 +52,7 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
         readBytes: workspace.readBytes ? (path,maxBytes,signal)=>workspace.readBytes!(childRoot(root,path),maxBytes,signal) : undefined,
         write: (path, content, expectedHash) => workspace.write(childRoot(root, path), content, expectedHash),
         run: (command, signal) => workspace.run(workspace.kind === 'remote' ? `cd -- ${shellQuote(absolute)} && ${command}` : command, signal),
+        runGit:workspace.runGit?(args,signal,options)=>workspace.runGit!(['-C',root,...args],signal,options):undefined,
     }
 }
 export const textHash = (content: string) => createHash('sha256').update(content).digest('hex');
@@ -126,6 +132,11 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     run(command, signal, options) {
       return executeCaptured({ command: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',
         args: process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command], cwd: root }, signal, options?.maxBytes);
+    },
+    runGit(args,signal,options){
+      signal?.throwIfAborted();
+      return executeCaptured({command:'git',args:['--no-pager','--literal-pathspecs',...args],cwd:root,
+        env:{LC_ALL:'C',LANGUAGE:'C',GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0'}},signal,options?.maxBytes);
     }
   };
 }

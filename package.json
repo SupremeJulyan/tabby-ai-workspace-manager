@@ -22,6 +22,7 @@
     "install:cli": "npm run build && node scripts/install-cli.mjs",
     "build": "tsc -p tsconfig.json && node build.mjs",
     "test": "tsx --test test/*.test.ts && node --test test/*.test.mjs",
+    "test:portable": "node scripts/test-portable.mjs",
     "check": "npm run build && npm test",
     "pack:plugin": "npm run build && node scripts/pack.mjs",
     "dev": "node scripts/dev.mjs",
