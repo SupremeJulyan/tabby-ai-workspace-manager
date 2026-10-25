@@ -2,6 +2,7 @@ import type { Injector } from '@angular/core'
 import type { AppService } from 'tabby-core'
 import type { FileWorkspaceToken } from '../arw-tree/file-recovery'
 import { isSshTab, type SSHSession } from '../adapters/ssh-compat'
+import { logFileRecovery } from './file-recovery-log'
 
 export class FileSessionPool {
     private connecting=new Map<string,Promise<SSHSession>>()
@@ -27,11 +28,17 @@ export class FileSessionPool {
                 if(user!==token.user)continue
                 if(tab.sshSession?.open)return this.retain(key,tab.sshSession)
                 if(tab.frontendIsReady||typeof tab.setupOneSession!=='function')continue
+                const started=Date.now()
+                logFileRecovery('pool-connect-start',{token})
                 const operation=Promise.resolve().then(()=>tab.setupOneSession(this.injector,profile)).then(session=>{
                     if(!session.open||(session.authUsername??session.profile.options.user)!==token.user){
                         throw new Error('Recovered file session identity does not match')
                     }
+                    logFileRecovery('pool-connect-ready',{token,elapsedMs:Date.now()-started})
                     return this.retain(key,session)
+                }).catch(error=>{
+                    logFileRecovery('pool-connect-error',{token,elapsedMs:Date.now()-started,error:String(error)})
+                    throw error
                 }).finally(()=>this.connecting.delete(key))
                 this.connecting.set(key,operation)
                 return operation

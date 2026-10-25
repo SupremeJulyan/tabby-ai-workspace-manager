@@ -64,7 +64,7 @@ test('editor, preview and Diff tabs round-trip through JSON recovery with file i
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
     const root=await fs.mkdtemp(join(tmpdir(),'arw-file-recovery-'))
-    const plugin=load(),provider=new plugin.FileRecoveryProvider({tabs:[]})
+    const plugin=load(),provider=new plugin.FileRecoveryProvider({get:()=>({tabs:[]})})
     const create=async(token)=>{
         const params=await provider.recover(JSON.parse(JSON.stringify(token)))
         const instance=new params.type({get:()=>({detectChanges(){}})})
@@ -100,8 +100,25 @@ test('editor, preview and Diff tabs round-trip through JSON recovery with file i
     }finally{for(const instance of instances)instance.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
 })
 
+test('file recovery resolves AppService lazily instead of capturing a startup placeholder',async()=>{
+    const plugin=load()
+    let app,lookups=0
+    const provider=new plugin.FileRecoveryProvider({get(token){assert.equal(token,core.AppService);lookups++;return app}})
+    assert.equal(lookups,0,'constructing recovery providers must not resolve AppService during its own initialization')
+    const token={type:'arw-editor',workspace:{kind:'local',host:'localhost',root:'/project'},filePath:'file.txt'}
+    app={}
+    await assert.rejects(()=>provider.recover(token),/initialized AppService/)
+    app={tabs:[]}
+    const recovered=await provider.recover(token)
+    assert.equal(recovered.inputs.filePath,'file.txt')
+    assert.equal(lookups,2,'each recovery obtains the current initialized service from the injector')
+    assert.equal(plugin.FileRecoveryProvider['design:paramtypes'].length,1)
+    assert.notEqual(plugin.FileRecoveryProvider['design:paramtypes'][0],core.AppService)
+    provider.ngOnDestroy()
+})
+
 test('remote file recovery waits for the exact SSH identity and closing a waiting preview cancels recovery',async()=>{
-    const plugin=load(),app={tabs:[]},provider=new plugin.FileRecoveryProvider(app)
+    const plugin=load(),app={tabs:[]},provider=new plugin.FileRecoveryProvider({get:()=>app})
     const workspace={kind:'remote',root:'/project/sub',host:'example.test',port:2222,user:'alice',profileId:'original'}
     const editorParams=await provider.recover({type:'arw-editor',workspace,filePath:'file.txt',state:{initialContent:'snapshot'}})
     const editor=new editorParams.type({get:()=>({})});editor.setTitle=()=>{};Object.assign(editor,editorParams.inputs)
@@ -132,7 +149,7 @@ test('remote file recovery waits for the exact SSH identity and closing a waitin
 })
 
 test('restored remote files wait without a deadline until their lazily connected SSH tab is ready',async()=>{
-    const plugin=load(),app={tabs:[]},provider=new plugin.FileRecoveryProvider(app)
+    const plugin=load(),app={tabs:[]},provider=new plugin.FileRecoveryProvider({get:()=>app})
     const workspace={kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'}
     const preview=new (await provider.recover({type:'arw-preview',workspace,filePath:'notes.txt'})).type({get:()=>({detectChanges(){}})})
     preview.setTitle=()=>{}
@@ -176,7 +193,7 @@ test('an editor still loading is not labelled as a Diff, while a failed read bec
 })
 
 test('restored remote files expose a visible wait state and closing cancels waiting',async()=>{
-    const plugin=load(),provider=new plugin.FileRecoveryProvider({tabs:[]})
+    const plugin=load(),provider=new plugin.FileRecoveryProvider({get:()=>({tabs:[]})})
     const workspace={kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'}
     const previewParams=await provider.recover({type:'arw-preview',workspace,filePath:'image.png'})
     const preview=new previewParams.type({get:()=>({detectChanges(){}})})
@@ -193,7 +210,7 @@ test('restored remote files expose a visible wait state and closing cancels wait
 test('file recovery acquires one pooled session before terminal activation and reads actual SFTP content',async()=>{
     const {Subject}=await import('rxjs'),plugin=load(),terminal=new SSHTabComponent()
     const profile={id:'profile',options:{host:'example.test',port:22,user:'alice'}}
-    const app={tabs:[{getAllTabs:()=>[terminal]}]},provider=new plugin.FileRecoveryProvider(app,{})
+    const app={tabs:[{getAllTabs:()=>[terminal]}]},provider=new plugin.FileRecoveryProvider({get:()=>app})
     const workspace={kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'}
     let connections=0,references=0,reads=0
     const content='print("restored through SFTP")\n'
@@ -229,9 +246,31 @@ test('file recovery acquires one pooled session before terminal activation and r
     assert.equal(references,0)
 })
 
+test('an available terminal unblocks recovery while an earlier file handshake is still pending',async()=>{
+    const plugin=load(),terminal=new SSHTabComponent()
+    const profile={id:'profile',options:{host:'example.test',port:22,user:'alice'}}
+    const app={tabs:[terminal]},provider=new plugin.FileRecoveryProvider({get:()=>app})
+    let connections=0
+    terminal.profile=profile;terminal.frontendIsReady=false
+    terminal.setupOneSession=()=>{connections++;return new Promise(()=>{})}
+    const params=await provider.recover({type:'arw-editor',workspace:{kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'},filePath:'file.py',state:{initialContent:'restored'}})
+    const editor=new params.type({get:()=>({})});editor.setTitle=()=>{};Object.assign(editor,params.inputs)
+    const loading=editor.ngOnInit()
+    let deadline
+    try{
+        await new Promise(resolve=>setImmediate(resolve))
+        assert.equal(connections,1)
+        terminal.frontendIsReady=true
+        terminal.sshSession={open:true,authUsername:'alice',profile,ref(){},unref(){}}
+        await Promise.race([loading,new Promise((resolve,reject)=>{deadline=setTimeout(()=>reject(new Error('Recovery ignored the connected terminal')),1000)})])
+        assert.equal(editor.error,'');assert.equal(editor.content,'restored');assert.equal(editor.loading,false)
+        assert.equal(editor.waitingForConnection,false)
+    }finally{clearTimeout(deadline);editor.ngOnDestroy();provider.ngOnDestroy();await loading}
+})
+
 test('closing a recovered file cancels its wait without cancelling shared authentication',async()=>{
     const plugin=load(),terminal=new SSHTabComponent(),profile={id:'profile',options:{host:'example.test',port:22,user:'alice'}}
-    const app={tabs:[terminal]},provider=new plugin.FileRecoveryProvider(app,{})
+    const app={tabs:[terminal]},provider=new plugin.FileRecoveryProvider({get:()=>app})
     let finish,refs=0,connections=0
     const session={open:true,authUsername:'alice',profile,ref(){refs++},unref(){refs--}}
     terminal.profile=profile;terminal.frontendIsReady=false

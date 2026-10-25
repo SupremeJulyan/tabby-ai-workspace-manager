@@ -4,22 +4,32 @@ import { ArwEditorComponent } from '../arw-tree/editor.component'
 import { ArwPreviewComponent } from '../arw-tree/preview.component'
 import { restoredFileWorkspace, type FileWorkspaceToken } from '../arw-tree/file-recovery'
 import { FileSessionPool } from '../services/file-session-pool'
+import { logFileRecovery } from '../services/file-recovery-log'
 
 @Injectable()
 export class FileRecoveryProvider extends TabRecoveryProvider<BaseTabComponent> {
     private pool?:FileSessionPool
-    constructor(private app:AppService,injector?:Injector){super();if(injector)this.pool=new FileSessionPool(app,injector)}
+    constructor(private injector:Injector){
+        super()
+        logFileRecovery('provider-created',{diagnosticsVersion:2,injectorPresent:!!injector})
+    }
     ngOnDestroy():void{this.pool?.dispose()}
     async applicableTo(token:RecoveryToken):Promise<boolean> {
         return token.type==='arw-editor'||token.type==='arw-preview'
     }
     async recover(token:RecoveryToken) {
+        const app=this.injector.get(AppService)
+        logFileRecovery('app-resolved',{appType:app?.constructor?.name,tabsPresent:Array.isArray(app?.tabs),tabCount:app?.tabs?.length})
+        if(!Array.isArray(app?.tabs))throw new Error('ARW file recovery could not resolve the initialized AppService')
+        this.pool??=new FileSessionPool(app,this.injector)
         const workspace=token.workspace as FileWorkspaceToken
+        logFileRecovery('recover-token',{type:token.type,filePath:token.filePath,workspace:workspace&&{
+            kind:workspace.kind,root:workspace.root,host:workspace.host,port:workspace.port,user:workspace.user,profileId:workspace.profileId}})
         if(!workspace||!['local','remote'].includes(workspace.kind)||typeof workspace.root!=='string'||typeof workspace.host!=='string'||typeof token.filePath!=='string'){
             throw new Error('Invalid ARW file recovery token')
         }
         const state=token.state??{}
-        const inputs:Record<string,unknown>={workspace:restoredFileWorkspace(workspace,this.app,this.pool),filePath:token.filePath}
+        const inputs:Record<string,unknown>={workspace:restoredFileWorkspace(workspace,app,this.pool),filePath:token.filePath}
         for(const key of ['initialContent','diffPatch','diffLabel','diffDescription']){
             if(typeof state[key]==='string')inputs[key]=state[key]
         }

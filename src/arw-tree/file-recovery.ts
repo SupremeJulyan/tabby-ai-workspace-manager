@@ -6,6 +6,7 @@ import { localWorkspace, type Workspace } from './workspace'
 import { isSshTab } from '../adapters/ssh-compat'
 import { remoteWorkspace, remoteWorkspaceSession } from '../adapters/remote-workspace'
 import type { FileSessionPool } from '../services/file-session-pool'
+import { logFileRecovery } from '../services/file-recovery-log'
 
 export interface FileWorkspaceToken {
     kind:'local'|'remote'
@@ -20,6 +21,23 @@ interface RestoredFileWorkspace {
     resolve:(signal?:AbortSignal)=>Promise<Workspace>
 }
 const restored=new WeakMap<Workspace,RestoredFileWorkspace>()
+
+function recoveryTabs(app:AppService,token:FileWorkspaceToken):unknown[] {
+    return (app.tabs??[]).map(top=>({type:top.constructor?.name,children:('getAllTabs' in top?(top as any).getAllTabs():[top]).map((tab:any)=>{
+        const ssh=isSshTab(tab),session=tab.sshSession,profile=session?.profile??tab.profile
+        const options=profile?.options,user=session?.authUsername??options?.user
+        const rejected=[]
+        if(!ssh)rejected.push('not-ssh-instance')
+        if(!session)rejected.push('no-session')
+        else if(!session.open)rejected.push('session-not-open')
+        if(options?.host!==token.host)rejected.push('host-mismatch')
+        if((options?.port??22)!==(token.port??22))rejected.push('port-mismatch')
+        if(token.profileId&&profile?.id!==token.profileId)rejected.push('profile-mismatch')
+        if(user!==token.user)rejected.push('user-mismatch')
+        return {type:tab.constructor?.name,ssh,frontendReady:tab.frontendIsReady,sessionPresent:!!session,open:session?.open,
+            profileId:profile?.id,host:options?.host,port:options?.port,user,rejected}
+    })}))
+}
 
 const findRemoteSession=(app:AppService,token:FileWorkspaceToken) => {
     for(const top of app.tabs??[]){
@@ -66,12 +84,35 @@ export function restoredFileWorkspace(token:FileWorkspaceToken,app:AppService,po
         })
     }
     const resolve=async(signal?:AbortSignal):Promise<Workspace>=>{
+        const started=Date.now()
+        logFileRecovery('resolve-start',{token,pool:!!pool})
+        let pending:Promise<void>|undefined
+        let acquired:Awaited<ReturnType<FileSessionPool['get']>>
+        let acquisitionError:unknown
+        let lastSnapshot='',lastLogged=0
+        try{
         while(true){
             signal?.throwIfAborted()
-            const session=await acquire(signal)??findRemoteSession(app,token)
-            signal?.throwIfAborted()
-            if(session)return remoteWorkspace(session,token.root)
+            const session=findRemoteSession(app,token)??acquired
+            if(session){
+                logFileRecovery('resolve-connected',{token,elapsedMs:Date.now()-started,source:session===acquired?'pool':'terminal'})
+                return remoteWorkspace(session,token.root)
+            }
+            const tabs=recoveryTabs(app,token),snapshot=JSON.stringify(tabs)
+            if(snapshot!==lastSnapshot||Date.now()-lastLogged>=5000){
+                logFileRecovery('resolve-wait',{token,elapsedMs:Date.now()-started,pending:!!pending,tabs})
+                lastSnapshot=snapshot;lastLogged=Date.now()
+            }
+            if(acquisitionError)throw acquisitionError
+            if(!pending){
+                pending=acquire(signal).then(session=>{acquired=session},error=>{acquisitionError=error})
+                    .finally(()=>{pending=undefined})
+            }
             await delay(100,undefined,{signal})
+        }
+        }catch(error){
+            logFileRecovery(signal?.aborted?'resolve-cancelled':'resolve-error',{token,elapsedMs:Date.now()-started,error:String(error)})
+            throw error
         }
     }
     const workspace:Workspace={id:`recovered:${token.host}:${token.root}`,kind:'remote',root:token.root,host:token.host,

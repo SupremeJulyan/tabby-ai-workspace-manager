@@ -13,6 +13,7 @@ import * as UTIF from 'utif'
 import { registerOpenedWorkspaceFile } from '../services/opened-files.service'
 import { fileWorkspaceToken, resolveFileWorkspace } from './file-recovery'
 import { TextSearch } from './text-search'
+import { logFileRecovery } from '../services/file-recovery-log'
 
 @Component({selector:'arw-preview',template:PREVIEW_TEMPLATE,styles:[PREVIEW_STYLES]})
 export class ArwPreviewComponent extends BaseTabComponent implements AfterViewInit {
@@ -117,7 +118,9 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         this.setTitle(t`预览 · ${path}`);this.render()
         try{
             if(!kind)throw new Error(t('不支持此文件的预览格式'))
+            logFileRecovery('preview-read-start',{filePath:path,workspace:fileWorkspaceToken(this.workspace)})
             const bytes=await this.bytes(path,previewMaxBytes(kind));if(version!==this.version||this.closed)return
+            logFileRecovery('preview-read-ready',{filePath:path})
             this.byteLength=bytes.length
             if(kind==='image'){
                 const blob=await this.imageBlob(bytes,path);if(version!==this.version||this.closed)return
@@ -150,7 +153,10 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
                     this.markdown=renderMarkdown(this.text,assets)
                 }
             }
-        }catch(error){if(version===this.version&&!this.closed)this.error=this.controller.signal.aborted?t('预览读取已取消或 SSH 已断开'):error instanceof Error?error.message:String(error)}
+        }catch(error){
+            logFileRecovery('preview-load-error',{filePath:path,cancelled:this.controller.signal.aborted,error:String(error)})
+            if(version===this.version&&!this.closed)this.error=this.controller.signal.aborted?t('预览读取已取消或 SSH 已断开'):error instanceof Error?error.message:String(error)
+        }
         finally{if(version===this.version&&!this.closed){this.loading=false;this.render()}}
     }
     async reload():Promise<void>{if(this.loading||this.pdfRendering)return;++this.version;this.loading=true;if(this.pdfLoading)await this.pdfLoading.destroy().catch(()=>undefined);this.pdfLoading=undefined;this.pdfDocument=undefined;this.pdfPasswordRequired=false;await this.load()}

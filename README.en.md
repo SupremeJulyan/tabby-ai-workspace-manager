@@ -98,6 +98,8 @@ Run `arw --help` for reading, writing, searching, exact edits, creation, deletio
 
 ARW checks remote path boundaries and blocks high-risk commands. Audit records are stored at `<Tabby config directory>/omw/audit.jsonl`. Set `TABBY_CONFIG_DIRECTORY` for a custom configuration directory.
 
+File recovery diagnostics are stored at `<Tabby config directory>/omw/file-recovery.jsonl`. They record candidate SSH session matching, connection and read stages, and waiting state changes or a 5-second heartbeat. Passwords, private keys, and file contents are not logged; error text is redacted. Logs rotate at 1 MiB with one `.1` backup. They include remote paths, usernames, and hosts; review before sharing.
+
 ## Development and packaging
 
 ```sh
