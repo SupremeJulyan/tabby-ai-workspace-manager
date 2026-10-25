@@ -7,6 +7,7 @@ import { EDITOR_TEMPLATE, EDITOR_STYLES } from './editor.view'
 import { registerOpenedWorkspaceFile } from '../services/opened-files.service'
 import { fileWorkspaceToken, resolveFileWorkspace } from './file-recovery'
 import { TextSearch, type FindState } from './text-search'
+import { logFileRecovery } from '../services/file-recovery-log'
 
 @Component({
     selector: 'arw-editor',
@@ -61,9 +62,16 @@ export class ArwEditorComponent extends BaseTabComponent {
             this.workspace=await resolveFileWorkspace(this.workspace,this.recoveryController.signal)
             if(this.recoveredEdit){Object.assign(this,this.recoveredEdit);return}
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }
-            else { const file = await this.workspace.read(this.filePath); this.content = file.content; this.hash = file.hash }
+            else {
+                logFileRecovery('editor-read-start',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace)})
+                const file = await this.workspace.read(this.filePath); this.content = file.content; this.hash = file.hash
+                logFileRecovery('editor-read-ready',{filePath:this.filePath})
+            }
             this.original = this.content
-        } catch (error) { this.error = String(error); this.readonly = true }
+        } catch (error) {
+            logFileRecovery('editor-load-error',{filePath:this.filePath,cancelled:this.recoveryController.signal.aborted,error:String(error)})
+            this.error = String(error); this.readonly = true
+        }
         finally {
             this.loading = false
             if(this.initialFind)this.search.restore(this.initialFind)
