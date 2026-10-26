@@ -22,6 +22,7 @@ import { ProjectStore } from '../arw-tree/project.store'
 import { aiProxyEnvironment } from './proxy'
 import { agentEnvironment } from './agent-env'
 import { titleAiTabs, workspaceNames } from '../shared/workspace-name'
+import { commandExistsInPath } from '../shared/process'
 
 @Injectable()
 export class AiLauncherService {
@@ -132,6 +133,12 @@ export class AiLauncherService {
                 const placeholder = await ensureAgentCwdPlaceholder(workspace.root, join(dirname(configPath), 'awm'), identity, terminalMode,terminalMode?workspace.id:undefined)
                 cwd = placeholder.localPath
                 env.ARW_LOCAL_WORKSPACE_ROOT = cwd
+            }
+            if (!await commandExistsInPath(command.trim(), env.PATH, cwd)) {
+                this.notifications.error(t('AI CLI 启动失败'),
+                    `${t('在 Tabby PATH 中找不到命令：')}${command.trim()}。${t('请在 Tabby 设置 → ai-workspace-manager 中将 AI CLI 命令修改为绝对路径。')}`)
+                await cleanup()
+                return
             }
             const opened = await this.profiles.openNewTabForProfile({ type: 'local', name: command.trim(),
                 options: { command: command.trim(), args, cwd, env, pauseAfterExit: true } })

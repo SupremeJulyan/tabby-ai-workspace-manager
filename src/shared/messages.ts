@@ -96,6 +96,8 @@ export const englishMessages: Record<string,string> = {
     "无法创建 AI 终端": "Cannot create AI terminal",
     "AI 终端已启动，但无法放入右侧分屏": "AI terminal started, but could not be placed in the right split",
     "AI CLI 启动失败": "AI CLI launch failed",
+    "在 Tabby PATH 中找不到命令：": "Command not found in Tabby PATH: ",
+    "请在 Tabby 设置 → ai-workspace-manager 中将 AI CLI 命令修改为绝对路径。": "Set the AI CLI command to an absolute path in Tabby Settings → ai-workspace-manager.",
     "请输入完整 HTTP/HTTPS 代理地址，例如 http://127.0.0.1:7897，或留空": "Enter a complete HTTP/HTTPS proxy URL, such as http://127.0.0.1:7897, or leave blank",
     "AI 占位目录不属于当前 Tabby 配置": "AI Placeholder directory does not belong to the current Tabby Configuration",
     "AI 工作区元数据不匹配": "AI workspace metadata does not match",

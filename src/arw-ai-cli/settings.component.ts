@@ -5,6 +5,7 @@ import { SettingsTabProvider } from 'tabby-settings'
 import { resumeArguments } from './recovery'
 import { aiProxyEnvironment } from './proxy'
 import { AgentEnvironmentSource, parseAgentEnvironment } from './agent-env'
+import { defaultAgentArguments } from './defaults'
 
 @Component({
     selector: 'arw-settings',
@@ -72,7 +73,7 @@ export class ArwSettingsComponent {
     constructor (private config: ConfigService) {
         const agent = config.store.omw?.agent
         this.command = agent?.command ?? 'codex'
-        this.argumentsText = (agent?.args ?? []).join('\n')
+        this.argumentsText = (agent?.args ?? defaultAgentArguments(this.command)).join('\n')
         this.resumeArgumentsText = (agent?.resumeArgs ?? resumeArguments(this.command,agent?.args??[])).join('\n')
         this.proxyUrl = agent?.proxyUrl ?? ''
         this.environmentText = this.renderEnvironment(agent?.env ?? [])
@@ -89,7 +90,7 @@ export class ArwSettingsComponent {
         try {
             aiProxyEnvironment(this.proxyUrl)
             this.config.store.omw ??= {}
-            this.config.store.omw.agent ??= { command: 'codex', args: [] }
+            this.config.store.omw.agent ??= { command: 'codex', args: defaultAgentArguments('codex') }
             this.config.store.omw.agent.command=this.command.trim()
             this.config.store.omw.agent.args=this.argumentsText.split(/\r?\n/).map(argument=>argument.trim()).filter(Boolean)
             this.config.store.omw.agent.resumeArgs=this.resumeArgumentsText.split(/\r?\n/).map(argument=>argument.trim()).filter(Boolean)
