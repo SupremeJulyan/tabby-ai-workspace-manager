@@ -113,7 +113,8 @@ export class ArwSettingsComponent {
             if (!shell) throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
             aiProxyEnvironment(this.proxyUrl)
             this.config.store.omw ??= {}
-            this.config.store.omw.paneProportions={...this.proportions}
+            this.config.store.omw.paneProportions ??= {}
+            Object.assign(this.config.store.omw.paneProportions,this.proportions)
             this.config.store.omw.fileLayout=this.fileLayout
             this.config.store.omw.aiLayout=this.aiLayout
             this.config.store.omw.agent ??= { command: 'codex', args: defaultAgentArguments('codex') }
