@@ -1,7 +1,28 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
-import { addAiCloseButton } from '../src/arw-ai-cli/close-button'
+import { addAiCloseButton, addFileCloseButton } from '../src/arw-ai-cli/close-button'
+
+test('file header shares AI controls and respects unsaved-file cancellation',async()=>{
+    const window=new Window(),host=window.document.createElement('div')
+    let allow=false,closed=0
+    const tab:any={arwFilePane:true,title:'Edit · example.ts',hostView:{rootNodes:[host]},canClose:async()=>allow,destroy(){closed++}}
+    const app:any={tabs:[],getParentTab:()=>({getAllTabs:()=>[tab]})}
+    const cleanup=addFileCloseButton(tab,app,error=>{throw error})!
+    try{
+        assert.equal(host.querySelector('.arw-ai-header span')?.textContent,tab.title)
+        assert.ok(host.querySelector('.arw-ai-toggle-button'))
+        assert.ok(host.querySelector('.arw-ai-expand-button'))
+        const header=host.querySelector<HTMLElement>('.arw-ai-header')!
+        assert.equal(header.style.gridTemplateColumns,'22px minmax(0, 1fr) auto 22px')
+        assert.equal(host.querySelector<HTMLElement>('.arw-ai-toggle-button')!.style.gridColumn,'1')
+        assert.equal(host.querySelector<HTMLElement>('.arw-ai-close-button')!.style.gridColumn,'4')
+        assert.equal(host.querySelector<HTMLElement>('.arw-ai-expand-button')!.style.display,'none')
+        const button=host.querySelector<HTMLButtonElement>('.arw-ai-close-button')!
+        button.click();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(closed,0)
+        allow=true;button.click();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(closed,1)
+    }finally{cleanup();await window.happyDOM.close()}
+})
 
 test('AI close button respects cancellation, closes only its split pane, and detaches cleanly',async()=>{
     const window=new Window(),host=window.document.createElement('div');window.document.body.append(host)
@@ -51,7 +72,7 @@ test('collapsing AI panes releases their layout area and increments the adjacent
         click(1,'.arw-ai-toggle-button')
         assert.equal(area(split.root,panes[1]),0)
         assert.equal(count(2),'2')
-        assert.ok(area(split.root,panes[2])>.7)
+        assert.equal(area(split.root,panes[2]),.32)
         tileAiTerminals(app,split,true)
         assert.equal(area(split.root,panes[0]),0,'automatic retiling preserves collapsed panes')
         click(2,'.arw-ai-expand-button')

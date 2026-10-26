@@ -1,8 +1,8 @@
 import { setTerminalCommandMode } from '../shared/terminal-command'
-import { openAdjacentTab } from '../shared/open-adjacent-tab'
+import { openFilePane } from './open-file-pane'
 import { t } from '../shared/i18n'
 import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy } from '@angular/core'
-import { AppService, NotificationsService, PlatformService } from 'tabby-core'
+import { AppService, ConfigService, NotificationsService, PlatformService, TabsService } from 'tabby-core'
 import { Subscription } from 'rxjs'
 import { resolve, posix, relative, isAbsolute, sep } from 'node:path'
 import { WorkspaceFile, Workspace, localWorkspace } from './workspace'
@@ -432,7 +432,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     constructor (private registry: WorkspaceRegistry, private app: AppService,
         private notifications: NotificationsService, private forwarding: ForwardingService,
         private tasks: GitTasksService, private ai: AiLauncherService, private platform: PlatformService,
-        private projectStore?: ProjectStore, private changeDetector?: ChangeDetectorRef) {
+        private projectStore?: ProjectStore, private changeDetector?: ChangeDetectorRef, private config?:ConfigService, private tabs?:TabsService) {
         this.subscription = registry.current.subscribe(next => {
             if(next?.terminal!==this.selection?.terminal||(next?.workspace&&next.pathSource!=='sftp')){
                 this.cwdSetupPending=false;this.cwdSetupError='';this.clearCwdSetup()
@@ -884,8 +884,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(kind){
                 const paths=workspacePath(workspace.kind),parent=paths.dirname(node.path)
                 const imagePaths=this.nodes.filter(entry=>!entry.directory&&previewKind(entry.path)==='image'&&paths.dirname(entry.path)===parent).map(entry=>entry.path)
-                openAdjacentTab(this.app,{type:ArwPreviewComponent,inputs:{workspace,filePath:node.path,imagePaths}})
-            }else openAdjacentTab(this.app,{ type: ArwEditorComponent, inputs: { workspace, filePath:node.path } })
+                await openFilePane(this.app,{type:ArwPreviewComponent,inputs:{workspace,filePath:node.path,imagePaths}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
+            }else await openFilePane(this.app,{ type: ArwEditorComponent, inputs: { workspace, filePath:node.path } },this.source,this.config?.store.omw?.fileLayout,this.tabs)
             return
         }
         await this.enter(node)
@@ -986,8 +986,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         try {
             const patch=await this.git(repository).showCommit(commit.hash)
             if(tab!==this.activeTab||!this.repositories.includes(repository))return
-            openAdjacentTab(this.app,{type:ArwEditorComponent,inputs:{workspace:repository.workspace,filePath:`${commit.shortHash} ${commit.subject}`,readonly:true,diffPatch:patch,
-                diffLabel:t('父提交 → 当前提交'),diffDescription:`${commit.hash}\n${commit.author} · ${commit.date}\n${commit.subject}`}})
+            await openFilePane(this.app,{type:ArwEditorComponent,inputs:{workspace:repository.workspace,filePath:`${commit.shortHash} ${commit.subject}`,readonly:true,diffPatch:patch,
+                diffLabel:t('父提交 → 当前提交'),diffDescription:`${commit.hash}\n${commit.author} · ${commit.date}\n${commit.subject}`}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
         } catch(error){if(tab===this.activeTab)repository.error=String(error)}
         finally{if(tab===this.activeTab){repository.inspectorLoading=false;this.render()}}
     }
@@ -1151,7 +1151,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         try {
             const patch=change.index==='?'?addedFilePatch((await workspace.read(change.path)).content):await workspaceGit(workspace).diff(change,staged)
             if(tab!==this.activeTab)return
-            openAdjacentTab(this.app,{type:ArwEditorComponent,inputs:{workspace,filePath:change.path,readonly:true,diffPatch:patch,diffStaged:staged}})
+            await openFilePane(this.app,{type:ArwEditorComponent,inputs:{workspace,filePath:change.path,readonly:true,diffPatch:patch,diffStaged:staged}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
         }catch(error){if(tab===this.activeTab){this.error=String(error);this.render()}}
     }
     async toggleForwarding (): Promise<void> {

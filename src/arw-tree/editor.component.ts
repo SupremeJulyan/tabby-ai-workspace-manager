@@ -1,6 +1,7 @@
+import type { PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
-import { Component, Injector, ElementRef, HostListener, ViewChild } from '@angular/core'
-import { BaseTabComponent, PlatformService, type GetRecoveryTokenOptions, type RecoveryToken } from 'tabby-core'
+import { AfterViewInit, Component, Injector, ElementRef, HostListener, ViewChild } from '@angular/core'
+import { AppService, BaseTabComponent, NotificationsService, PlatformService, type GetRecoveryTokenOptions, type RecoveryToken } from 'tabby-core'
 import { Workspace } from './workspace'
 import { parseDiff, DiffModel, DiffHunk } from './git/diff-model'
 import { EDITOR_TEMPLATE, EDITOR_STYLES } from './editor.view'
@@ -8,13 +9,16 @@ import { registerOpenedWorkspaceFile } from '../services/opened-files.service'
 import { fileWorkspaceToken, resolveFileWorkspace } from './file-recovery'
 import { TextSearch, type FindState } from './text-search'
 import { logFileRecovery } from '../services/file-recovery-log'
+import { addFileCloseButton } from '../arw-ai-cli/close-button'
 
 @Component({
     selector: 'arw-editor',
     template: EDITOR_TEMPLATE,
     styles: [EDITOR_STYLES],
 })
-export class ArwEditorComponent extends BaseTabComponent {
+export class ArwEditorComponent extends BaseTabComponent implements AfterViewInit {
+    readonly arwFilePane=true
+    arwPaneLayout:PaneLayout='tiled'
     workspace!: Workspace
     filePath = ''
     content = ''
@@ -33,6 +37,9 @@ export class ArwEditorComponent extends BaseTabComponent {
     saving = false
     error = ''
     private platform: PlatformService
+    private app: AppService
+    private notifications: NotificationsService
+    private removePaneHeader?:()=>void
     private unregisterFile?:()=>void
     private recoveryController=new AbortController()
     recoveredEdit?:{content:string;original:string;hash?:string}
@@ -42,7 +49,12 @@ export class ArwEditorComponent extends BaseTabComponent {
     readonly search=new TextSearch(()=>this.content,text=>{this.content=text},()=>this.textEditor?.nativeElement,
         ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.loading&&!this.saving&&!this.isDiff&&!this.saveIssue)
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff)this.search.key(event)}
-    constructor (injector: Injector) { super(injector); this.platform = injector.get(PlatformService) }
+    constructor (injector: Injector) {
+        super(injector)
+        this.platform = injector.get(PlatformService)
+        this.app = injector.get(AppService)
+        this.notifications = injector.get(NotificationsService)
+    }
     get dirty (): boolean { return !this.readonly && this.content !== this.original }
     get saveIssue (): {message:string;busy:boolean}|undefined {return this.workspace?.saveIssue?.(this.filePath)}
     get isDiff (): boolean { return this.diffPatch !== undefined }
@@ -90,13 +102,14 @@ export class ArwEditorComponent extends BaseTabComponent {
     async getRecoveryToken(options?:GetRecoveryTokenOptions):Promise<RecoveryToken|null> {
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
         if(!workspace)return null
-        const state:Record<string,unknown>={readonly:this.readonly,initialContent:this.initialContent,diffPatch:this.diffPatch,
+        const state:Record<string,unknown>={arwPaneLayout:this.arwPaneLayout,readonly:this.readonly,initialContent:this.initialContent,diffPatch:this.diffPatch,
             diffLabel:this.diffLabel,diffDescription:this.diffDescription,diffStaged:this.diffStaged,diffMode:this.diffMode}
         if(options?.includeState!==false&&this.dirty)state.recoveredEdit={content:this.content,original:this.original,hash:this.hash}
         if(this.saveIssue){state.initialContent=this.content;delete state.recoveredEdit}
         return {type:'arw-editor',workspace,filePath:this.filePath,state}
     }
-    ngOnDestroy (): void { this.search.destroy();this.recoveryController.abort();this.unregisterFile?.(); super.ngOnDestroy() }
+    ngAfterViewInit (): void { this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error))) }
+    ngOnDestroy (): void { this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.unregisterFile?.(); super.ngOnDestroy() }
     saveKey (event: Event): void { event.preventDefault(); void this.save() }
     async save (): Promise<void> {
         if (this.readonly || this.saving || this.loading || !this.dirty || this.saveIssue) return

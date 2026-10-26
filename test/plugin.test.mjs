@@ -77,19 +77,22 @@ test('editor, preview and Diff tabs round-trip through JSON recovery with file i
     try{
         await fs.writeFile(join(root,'notes.md'),'# Original')
         const editor=new plugin.EditorComponent({get:()=>({})});editor.setTitle=()=>{}
-        editor.workspace=localWorkspace(root);editor.filePath='notes.md';await editor.ngOnInit();instances.push(editor)
+        editor.workspace=localWorkspace(root);editor.filePath='notes.md';editor.arwPaneLayout='stacked';await editor.ngOnInit();instances.push(editor)
         editor.content='# Unsaved'
         const token=await editor.getRecoveryToken({includeState:true})
+        assert.equal(token.state.arwPaneLayout,'stacked')
         assert.equal(await provider.applicableTo(token),true)
         assert.equal(await provider.applicableTo({type:'other'}),false)
         assert.equal((await editor.getRecoveryToken({includeState:false})).state.recoveredEdit,undefined)
         await fs.writeFile(join(root,'notes.md'),'# External change')
         const restored=await create(token);instances.push(restored)
+        assert.equal(restored.arwPaneLayout,'stacked')
         assert.equal(restored.content,'# Unsaved');assert.equal(restored.original,'# Original');assert.equal(restored.dirty,true)
         await restored.save()
         assert.ok(restored.error,'restored edits keep the original conflict hash')
         assert.equal(await fs.readFile(join(root,'notes.md'),'utf8'),'# External change')
-        const preview=await create({type:'arw-preview',workspace:token.workspace,filePath:'notes.md',state:{imagePaths:[]}});instances.push(preview)
+        const preview=await create({type:'arw-preview',workspace:token.workspace,filePath:'notes.md',state:{imagePaths:[],arwPaneLayout:'stacked'}});instances.push(preview)
+        assert.equal(preview.arwPaneLayout,'stacked')
         assert.equal(preview.error,'');assert.match(preview.markdown,/External change/)
         const previewToken=await preview.getRecoveryToken()
         assert.equal(previewToken.type,'arw-preview');assert.equal(previewToken.filePath,'notes.md')
@@ -440,39 +443,59 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     const agent=config.store.omw.agent
     Object.defineProperty(config.store.omw,'agent',{get:()=>agent})
     const provider=plugin.default.ngModule.providers.find(entry=>entry.provide===SettingsTabProvider)
-    const settings=new (new provider.useClass().getComponentType())(config)
-    const defaultSettings=new (new provider.useClass().getComponentType())({store:{omw:{}},async save(){}})
+    const shell={id:'local:default',name:'Bash',type:'local',isBuiltin:true,options:{command:'/bin/bash',args:['--login'],env:{LANG:'C.UTF-8'},shellType:'unix'}}
+    const profiles={async getProfiles(){return [shell]}}
+    const settings=new (new provider.useClass().getComponentType())(config,profiles)
+    const defaultConfig={store:{omw:{}},async save(){}}
+    const defaultSettings=new (new provider.useClass().getComponentType())(defaultConfig,profiles)
+    await new Promise(resolve=>setImmediate(resolve))
+    defaultSettings.shellId='local:default';await defaultSettings.save()
+    assert.equal(defaultConfig.store.omw.agent.shell.command,'/bin/bash')
+    settings.shellId='local:default'
     assert.equal(defaultSettings.command,'codex')
     assert.equal(defaultSettings.argumentsText,'--sandbox\ndanger-full-access\n--ask-for-approval\non-request')
     assert.equal(defaultSettings.proxyUrl,'')
     assert.equal(defaultSettings.resumeArgumentsText,'resume\n--last')
+    assert.equal(defaultSettings.fileLayout,'tiled')
+    assert.equal(defaultSettings.aiLayout,'tiled')
+    settings.fileLayout='stacked';settings.aiLayout='stacked'
     settings.proxyUrl=' http://127.0.0.1:7897 '
     settings.resumeArgumentsText=' --resume \r\n session-id\n --model\n recovery-model '
     settings.command=' /bin/bash ';settings.argumentsText='--noprofile \r\n --norc\n  \nargument with spaces '
     await settings.save()
     assert.equal(config.store.omw.agent.command,'/bin/bash')
+    assert.deepEqual(JSON.parse(JSON.stringify(config.store.omw.agent.shell)),{id:'local:default',name:'Bash',command:'/bin/bash',args:['--login'],env:{LANG:'C.UTF-8'},shellType:'unix'})
+    assert.equal(config.store.omw.fileLayout,'stacked')
+    assert.equal(config.store.omw.aiLayout,'stacked')
     assert.equal(config.store.omw.agent.proxyUrl,'http://127.0.0.1:7897')
     assert.deepEqual(Array.from(config.store.omw.agent.args),['--noprofile','--norc','argument with spaces'])
     assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),['--resume','session-id','--model','recovery-model'])
     assert.equal(config.saves,1);assert.equal(settings.saved,true)
-    settings.resumeArgumentsText='';await settings.save()
+    const reopened=new (new provider.useClass().getComponentType())(config,profiles)
+    assert.equal(reopened.fileLayout,'stacked');assert.equal(reopened.aiLayout,'stacked')
+    settings.resumeArgumentsText='';settings.fileLayout='tiled';settings.aiLayout='tabs';await settings.save()
+    assert.equal(config.store.omw.fileLayout,'tiled')
+    assert.equal(config.store.omw.aiLayout,'tabs')
     assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),[])
 })
 
-test('AI launch explains when a command is absent from the Tabby PATH',async()=>{
+const failureText=(notices)=>notices.map(entry=>entry.join(': ')).join('\n')
+test('AI launch resolves the executable inside the selected shell',async()=>{
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
     const notices=[];let opened=false
     const command='arw-command-that-does-not-exist'
-    const launcher=new (load().AiLauncherService)({async openNewTabForProfile(){opened=true}},
+    const shell=process.platform==='win32'?'pwsh.exe':'/bin/bash'
+    const profiles={async getProfiles(){return [{id:'local:default',name:'Shell',type:'local',options:{command:shell,args:[],env:{}}}]}}
+    let profile
+    const launcher=new (load().AiLauncherService)({async getProfiles(){return profiles.getProfiles()},async openNewTabForProfile(value){profile=value;opened=true;return {destroyed$:{subscribe(){return {unsubscribe(){}}}}}}},
         {pin(){}},{error:(...args)=>notices.push(args)},
-        {store:{omw:{agent:{command,args:[]}}}},{},{})
+        {store:{omw:{agent:{command,args:[],shell:{id:'local:default',command:shell,args:[],env:{}}}}}},{},{})
     await launcher.launchConfigured({terminal:{},workspace:{id:'local',...localWorkspace(process.cwd())},hint:''})
-    assert.equal(opened,false)
-    assert.equal(notices.length,1)
-    assert.equal(notices[0][0],'AI CLI 启动失败')
-    assert.match(notices[0][1],/Tabby PATH/)
-    assert.match(notices[0][1],/绝对路径/)
-    assert.match(notices[0][1],new RegExp(command))
+    assert.equal(opened,true,failureText(notices))
+    assert.equal(notices.length,0,failureText(notices))
+    assert.equal(profile.options.command,shell)
+    const invocation=profile.options.args.join(' ')
+    assert.ok(invocation.includes(command),invocation)
 })
 
 test('saved remote workspaces are isolated by SSH identity and AI uses the saved absolute root',async()=>{
@@ -587,9 +610,9 @@ test('saved workspace forwarding routes CLI by ID, survives other entries, and c
         const firstConfig=store.connection(first.id),firstConnection=JSON.parse(await readFile(firstConfig,'utf8'))
         let profile
         const aiClosed=new Subject()
-        const launcher=new plugin.AiLauncherService({async openNewTabForProfile(value){profile=value;return {destroyed$:aiClosed}}},
+        const launcher=new plugin.AiLauncherService({async getProfiles(){return [{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{}}}]},async openNewTabForProfile(value){profile=value;return {destroyed$:aiClosed}}},
             {pin(){}},{error(message,detail){throw Error(message+detail)}},
-            {store:{omw:{agent:{command:'/bin/bash',args:[]}}}},{},{},store)
+            {store:{omw:{agent:{command:'codex',args:[],shell:{id:'local:default',command:'/bin/bash',args:[],env:{}}}}}},{},{},store)
         await launcher.launchConfigured({terminal:{},hint:'',workspace:{...localWorkspace(first.root),id:first.id}})
         assert.equal(profile.options.env.ARW_CONFIG,undefined)
         assert.equal(JSON.parse((await cli('workspaces')).stdout).workspaces.filter(entry=>entry.status==='forwarded').length,2)
@@ -644,14 +667,31 @@ test('AI terminal opens as the right split pane of the workspace terminal',async
     let added,focused,selected
     const split={getAllTabs:()=>[source],async add(tab,relative,side){added={tab,relative,side}},focus(tab){focused=tab}}
     const app={tabs:[source],getParentTab(tab){return tab===source?split:null},selectTab(tab){selected=tab},removeTab(){}}
-    const launcher=new plugin.AiLauncherService({async openNewTabForProfile(){return {destroyed$:aiClosed}}},
+    const launcher=new plugin.AiLauncherService({async getProfiles(){return [{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{}}}]},async openNewTabForProfile(){return {destroyed$:aiClosed}}},
         {pin(){}},{error(message,detail){throw Error(message+detail)}},
-        {store:{omw:{agent:{command:'/bin/bash',args:[]}}}},{}, {}, undefined, app)
+        {store:{omw:{agent:{command:'codex',args:[],shell:{id:'local:default',command:'/bin/bash',args:[],env:{}}}}}},{}, {}, undefined, app)
     await launcher.launchConfigured({terminal:source,sourceTerminal:source,workspace:{id:'local',...localWorkspace(process.cwd())},hint:''})
     assert.equal(added.relative,source)
     assert.equal(added.side,'r')
     assert.equal(focused,added.tab)
     assert.equal(selected,split)
+    aiClosed.next()
+})
+
+test('AI tab layout opens immediately right of the active top-level tab without splitting',async()=>{
+    const {Subject}=await import('rxjs')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const plugin=load(),aiClosed=new Subject(),source={},left={},right={},aiTab={destroyed$:aiClosed}
+    const wrapper={getAllTabs:()=>[aiTab]}
+    let changes=0
+    const app={tabs:[left,source,right],activeTab:source,getParentTab(tab){return tab===aiTab?wrapper:null},emitTabsChanged(){changes++}}
+    const launcher=new plugin.AiLauncherService({async getProfiles(){return [{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{}}}]},async openNewTabForProfile(){app.tabs.push(wrapper);app.activeTab=wrapper;return aiTab}},
+        {pin(){}},{error(message,detail){throw Error(message+detail)}},
+        {store:{omw:{aiLayout:'tabs',agent:{command:'codex',args:[],shell:{id:'local:default',command:'/bin/bash',args:[],env:{}}}}}},{}, {}, undefined, app)
+    await launcher.launchConfigured({terminal:source,workspace:{id:'local',...localWorkspace(process.cwd())},hint:''})
+    assert.deepEqual(app.tabs,[left,source,wrapper,right])
+    assert.equal(app.activeTab,wrapper)
+    assert.equal(changes,1)
     aiClosed.next()
 })
 
@@ -662,9 +702,9 @@ test('AI launch also pairs a legacy unwrapped workspace terminal into a left/rig
     let added,focused,selected,removed
     const wrapper={getAllTabs:()=>[aiTab],async add(tab,relative,side){added={tab,relative,side}},focus(tab){focused=tab}}
     const app={tabs:[source],getParentTab(tab){return tab===aiTab?wrapper:null},selectTab(tab){selected=tab},removeTab(tab){removed=tab;this.tabs=this.tabs.filter(entry=>entry!==tab)}}
-    const launcher=new plugin.AiLauncherService({async openNewTabForProfile(){return aiTab}},
+    const launcher=new plugin.AiLauncherService({async getProfiles(){return [{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{}}}]},async openNewTabForProfile(){return aiTab}},
         {pin(){}},{error(message,detail){throw Error(message+detail)}},
-        {store:{omw:{agent:{command:'/bin/bash',args:[]}}}},{}, {}, undefined, app)
+        {store:{omw:{agent:{command:'codex',args:[],shell:{id:'local:default',command:'/bin/bash',args:[],env:{}}}}}},{}, {}, undefined, app)
     await launcher.launchConfigured({terminal:source,workspace:{id:'local',...localWorkspace(process.cwd())},hint:''})
     assert.equal(added.tab,source)
     assert.equal(added.relative,aiTab)
@@ -1153,15 +1193,16 @@ test('remote AI launch uses a persistent placeholder, private session config and
     const session={open:true,authUsername:'user',profile:{options:{host:'host',port:22}},willDestroy$:disconnect,ref(){references++},unref(){references--}}
     const selection={terminal:{},remote:session,workspace:{id:'bound',kind:'remote',root:'/actual/project',label:'user@host:/actual/project',host:'host',
         list:async()=>[],read:async()=>({content:'data',hash:'hash'}),write:async()=>({content:'data',hash:'hash'}),run:async()=>({stdout:'',stderr:'',exitCode:0})}}
-    const launcher=new plugin.AiLauncherService({async openNewTabForProfile(value){profile=value;return {destroyed$:destroyed}}},
+    const launcher=new plugin.AiLauncherService({async getProfiles(){return [{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{}}}]},async openNewTabForProfile(value){profile=value;return {destroyed$:destroyed}}},
         {pin:(tab,value)=>pinned=value},{error(message,detail){throw Error(message+detail)}},
-        {store:{omw:{agent:{command:'/bin/bash',args:[]}}}},{},{getConfigPath:()=>storage+'/config.yaml'})
+        {store:{omw:{agent:{command:'codex',args:[],shell:{id:'local:default',command:'/bin/bash',args:[],env:{}}}}}},{},{getConfigPath:()=>storage+'/config.yaml'})
     // The VM bundle's __dirname points at this real release directory.
     await launcher.launchConfigured(selection)
     try{
         assert.equal(pinned,selection)
         assert.notEqual(profile.options.cwd,'/actual/project')
-        assert.equal(profile.name,'/bin/bash')
+        assert.equal(profile.options.command,'/bin/bash')
+        assert.deepEqual(profile.options.args.slice(-3),['-i','-c',"exec 'codex'"])
         assert.equal(profile.disableDynamicTitle,undefined)
         const metadata=JSON.parse(await readFile(profile.options.cwd+'/.awm/workspace.json','utf8'))
         assert.equal(metadata.remoteRoot,'/actual/project');assert.equal(metadata.user,'user')

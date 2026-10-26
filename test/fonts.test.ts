@@ -2,7 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { scaleTypography, terminalFont } from '../src/arw-tree/fonts'
 import { TREE_STYLES } from '../src/arw-tree/tree.view'
-import { EDITOR_STYLES } from '../src/arw-tree/editor.view'
+import { EDITOR_TEMPLATE, EDITOR_STYLES } from '../src/arw-tree/editor.view'
+import { PREVIEW_TEMPLATE, PREVIEW_STYLES } from '../src/arw-tree/preview.view'
 
 test('terminal font settings produce a safe sidebar family, size, and line height', () => {
     const font = terminalFont({
@@ -28,4 +29,42 @@ test('compact component typography scales from the Tabby terminal font variables
     assert.match(css, /font-size:calc\(var\(--arw-font-size,12px\) - 2px\)!important/)
     assert.doesNotMatch(TREE_STYLES, /font-size:\d+(?:\.\d+)?px/)
     assert.doesNotMatch(EDITOR_STYLES, /font-size:\d+(?:\.\d+)?px/)
+})
+
+
+test('file toolbar buttons scale with their pane rather than the application viewport',()=>{
+    for(const styles of [EDITOR_STYLES,PREVIEW_STYLES]){
+        assert.match(styles,/container-type:inline-size/)
+        assert.match(styles,/font-size:clamp\(10px,3cqw,var\(--arw-font-size,12px\)\)/)
+        assert.match(styles,/@container\(max-width:320px\)/)
+        assert.match(styles,/padding:clamp\(3px,1cqw,6px\) clamp\(5px,2cqw,10px\)/)
+    }
+})
+
+
+test('directory input and actions align with the indented workspace rows',()=>{
+    assert.match(TREE_STYLES,/\.saved-workspaces\{[^}]*margin:0 10px 8px/)
+    assert.match(TREE_STYLES,/\.project-row\{[^}]*gap:3px;[^}]*margin-left:12px/)
+    assert.match(TREE_STYLES,/\.current-directory\{[^}]*gap:3px;[^}]*margin:0 10px 8px 22px/)
+    assert.match(TREE_STYLES,/\.project-row>\.project-ai,\.project-row>\.icon-button,\.current-directory>\.icon-button\{flex:0 0 max\(26px/)
+})
+
+test('editor actions use hollow SVG icons without filled Bootstrap buttons',()=>{
+    const header=EDITOR_TEMPLATE.slice(0,EDITOR_TEMPLATE.indexOf('</header>'))
+    assert.equal((header.match(/class="file-icon-button"/g)??[]).length,3)
+    assert.equal((header.match(/fill="none"/g)??[]).length,3)
+    assert.equal((header.match(/aria-label/g)??[]).length,3)
+    assert.doesNotMatch(header,/btn-primary|btn-secondary/)
+})
+
+test('every preview action uses an accessible hollow line icon',()=>{
+    const buttons=[...PREVIEW_TEMPLATE.matchAll(/<button((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)<\/button>/gs)]
+    assert.equal(buttons.filter(([,attributes])=>attributes.includes('class="file-icon-button"')).length,16)
+    for(const [,attributes,body] of buttons.filter(([,attributes])=>attributes.includes('class="file-icon-button"'))){
+        assert.match(attributes,/class="file-icon-button"/)
+        assert.match(attributes,/\[title\]=/)
+        assert.match(attributes,/aria-label/)
+        assert.match(body,/fill="none"/)
+        assert.match(body,/stroke="currentColor"/)
+    }
 })

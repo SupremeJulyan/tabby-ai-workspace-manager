@@ -1,7 +1,8 @@
+import type { PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
-import { openAdjacentTab } from '../shared/open-adjacent-tab'
+import { openFilePane } from './open-file-pane'
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, Injector, ViewChild } from '@angular/core'
-import { AppService, BaseTabComponent, PlatformService, type RecoveryToken } from 'tabby-core'
+import { AppService, BaseTabComponent, NotificationsService, PlatformService, type RecoveryToken } from 'tabby-core'
 import { join } from 'node:path'
 import type { Workspace } from './workspace'
 import { remoteWorkspaceSession } from '../adapters/remote-workspace'
@@ -14,9 +15,12 @@ import { registerOpenedWorkspaceFile } from '../services/opened-files.service'
 import { fileWorkspaceToken, resolveFileWorkspace } from './file-recovery'
 import { TextSearch } from './text-search'
 import { logFileRecovery } from '../services/file-recovery-log'
+import { addFileCloseButton } from '../arw-ai-cli/close-button'
 
 @Component({selector:'arw-preview',template:PREVIEW_TEMPLATE,styles:[PREVIEW_STYLES]})
 export class ArwPreviewComponent extends BaseTabComponent implements AfterViewInit {
+    readonly arwFilePane=true
+    arwPaneLayout:PaneLayout='tiled'
     workspace!:Workspace
     filePath=''
     imagePaths:string[]=[]
@@ -55,8 +59,10 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     private closed=false
     private releaseRemote?:()=>void
     private unregisterFile?:()=>void
+    private removePaneHeader?:()=>void
     private platform:PlatformService
     private app:AppService
+    private notifications:NotificationsService
     private detector:ChangeDetectorRef
     @ViewChild('pdfCanvasHost') pdfCanvasHost?:ElementRef<HTMLElement>
     @ViewChild('textPreview') textPreview?:ElementRef<HTMLTextAreaElement>
@@ -64,7 +70,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     readonly search=new TextSearch(()=>this.text,()=>{},()=>this.textPreview?.nativeElement,
         ()=>this.findInput?.nativeElement,()=>false,()=>{this.source=true},()=>this.edit(true))
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(this.isText&&!this.loading&&!this.error)this.search.key(event)}
-    constructor(injector:Injector){super(injector);this.platform=injector.get(PlatformService);this.app=injector.get(AppService);this.detector=injector.get(ChangeDetectorRef)}
+    constructor(injector:Injector){super(injector);this.platform=injector.get(PlatformService);this.app=injector.get(AppService);this.notifications=injector.get(NotificationsService);this.detector=injector.get(ChangeDetectorRef)}
     get kind(){return previewKind(this.filePath)}
     get isText(){return this.kind==='markdown'||this.kind==='csv'}
     get canEdit(){return this.isText&&this.encoding==='UTF-8'&&this.byteLength<=10*1024*1024&&!this.loading&&!this.error}
@@ -85,10 +91,10 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         await this.load()
         if(this.isText&&!this.closed)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:async()=>{if(!this.loading&&!this.closed)await this.load()}})
     }
-    ngAfterViewInit():void{this.viewReady=true;if(this.pdfDocument)void this.renderPdf()}
+    ngAfterViewInit():void{this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error)));this.viewReady=true;if(this.pdfDocument)void this.renderPdf()}
     async getRecoveryToken():Promise<RecoveryToken|null>{
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
-        return workspace?{type:'arw-preview',workspace,filePath:this.filePath,state:{imagePaths:this.imagePaths}}:null
+        return workspace?{type:'arw-preview',workspace,filePath:this.filePath,state:{imagePaths:this.imagePaths,arwPaneLayout:this.arwPaneLayout}}:null
     }
     private async bytes(path:string,maxBytes:number):Promise<Uint8Array>{
         if(this.workspace.readBytes){
@@ -182,7 +188,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         this.csvPage=1
     }
     changeCsvPage(delta:number):void{this.csvPage=Math.max(1,Math.min(this.csvPages,this.csvPage+delta))}
-    edit(replace=false):void{if(this.canEdit)openAdjacentTab(this.app,{type:ArwEditorComponent,inputs:{workspace:this.workspace,filePath:this.filePath,...(replace?{initialFind:{...this.search.state,replaceVisible:true}}:{})}})}
+    edit(replace=false):void{if(this.canEdit)void openFilePane(this.app,{type:ArwEditorComponent,inputs:{workspace:this.workspace,filePath:this.filePath,...(replace?{initialFind:{...this.search.state,replaceVisible:true}}:{})}},this,this.config?.store.omw?.fileLayout).catch(error=>{this.error=String(error);this.render()})}
     markdownClick(event:MouseEvent):void{
         const anchor=(event.target as Element)?.closest?.('a');if(!anchor)return
         event.preventDefault();const href=anchor.getAttribute('href')??''
@@ -214,7 +220,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         finally{page?.cleanup();this.renderTask=undefined;this.pdfRendering=false;this.render()}
     }
     ngOnDestroy():void{
-        this.search.destroy()
+        this.removePaneHeader?.();this.search.destroy()
         this.closed=true;this.version++;this.controller.abort();this.renderTask?.cancel();this.unregisterFile?.()
         void this.pdfLoading?.destroy().catch(()=>undefined)
         if(this.imageUrl)URL.revokeObjectURL(this.imageUrl)

@@ -1,9 +1,11 @@
 import { t } from '../shared/i18n'
-import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { basename, isAbsolute, join, relative, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { currentCliPath } from './cli-path'
 import { cliGuidance, terminalCliGuidance } from '../arw-cli/instructions'
+import { agentShellFromOptions, isAgentProfile } from './agent-profile'
+import { replaceShellArguments, shellCommand, shellEnvironment, type ShellType } from './shell'
 
 interface AgentOptions {
     command?: string; args?: string[]; cwd?: string; env?: Record<string,string>
@@ -37,6 +39,17 @@ function managedFile(path:string,content:string,mode=0o600):void {
     finally {rmSync(temporary,{force:true})}
 }
 
+/** Windows shells cannot execute the Unix manager shim; use the stable launcher beside it. */
+function persistentCliSource(source:string):string {
+    const launcher=join(dirname(source),'arw-launcher.cjs')
+    try {if(readFileSync(launcher,'utf8').includes(source))return launcher} catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
+    return source
+}
+
+function ensureExecutable(path:string):void {
+    try {chmodSync(path,0o755)} catch(error) {if((error as NodeJS.ErrnoException).code!=='EPERM'&&(error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
+}
+
 /** Runs synchronously in TerminalDecorator.attach, before Tabby starts the restored PTY. */
 export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliSource:string,configuredResumeArgs?:string[]|null):void {
     const profile=terminal.profile,options=profile?.options,env=options?.env
@@ -49,17 +62,56 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
         if(metadata.version!==1||metadata.kind!=='remote'||metadata.remoteRoot!==env.ARW_WORKSPACE_ROOT)throw new Error(t('AI 工作区元数据不匹配'))
         managedFile(join(cwd,'AGENTS.md'),metadata.terminalOnly?terminalCliGuidance:cliGuidance)
     }
-    const recoveredEnv:Record<string,string>={...env,PATH:currentCliPath(cliSource)}
+    const savedPath=Object.entries(env).find(([name])=>name.toLowerCase()==='path')?.[1]
+    const executableCli=process.platform==='win32'?persistentCliSource(cliSource):cliSource
+    ensureExecutable(executableCli)
+    const recoveredEnv:Record<string,string>={}
+    const pathName=Object.keys(env).find(name=>name.toLowerCase()==='path')??'PATH'
+    for(const key of Object.keys(env))if(key.toLowerCase()!=='path')recoveredEnv[key]=env[key]
+    recoveredEnv[pathName]=currentCliPath(executableCli,savedPath??process.env.PATH??'')
     delete recoveredEnv.ARW_CONFIG
     delete recoveredEnv.ARW_AI_FRESH_START
     if(configuredResumeArgs!=null&&(!Array.isArray(configuredResumeArgs)||configuredResumeArgs.some(arg=>typeof arg!=='string')))throw new Error(t('恢复会话参数必须是字符串数组'))
     const explicit=configuredResumeArgs!=null
     const savedExplicit=configuredResumeArgs===undefined&&env.ARW_AI_RECOVERY_CONFIGURED==='1'
-    const args=explicit?[...configuredResumeArgs]:savedExplicit?[...(options.args??[])]:resumeArguments(options.command,options.args??[])
+    const agentCommand=isAgentProfile(options)?env.ARW_AGENT_COMMAND:options.command
+    let agentArgs:string[]=[]
+    if(isAgentProfile(options)) {
+        try {const parsed=JSON.parse(env.ARW_AGENT_ARGS??'[]');if(!Array.isArray(parsed)||parsed.some(arg=>typeof arg!=='string'))throw new Error() ;agentArgs=parsed}
+        catch {throw new Error(t('恢复参数无效'))}
+    } else agentArgs=options.args??[]
+    const args=explicit?[...configuredResumeArgs]:savedExplicit?[...agentArgs]:resumeArguments(agentCommand,agentArgs)
+    let launchOptions:{command:string;args:string[];shellType?:string|null}={command:agentCommand,args}
+    if(isAgentProfile(options)) {
+        const shellCommandValue=env.ARW_AGENT_SHELL_COMMAND
+        const savedShellType=env.ARW_AGENT_SHELL_TYPE
+        const configuredShellType:ShellType|null=savedShellType==='unix'||savedShellType==='powershell'||savedShellType==='cmd'?savedShellType:null
+        const savedShellArgs=env.ARW_AGENT_SHELL_ARGS
+        if(shellCommandValue) {
+            let shellArguments:string[]=[]
+            if(savedShellArgs) {
+                try {
+                    const parsedShellArgs=JSON.parse(savedShellArgs)
+                    if(!Array.isArray(parsedShellArgs)||parsedShellArgs.some(argument=>typeof argument!=='string'))throw new Error()
+                    shellArguments=parsedShellArgs
+                } catch {throw new Error(t('恢复 Shell 参数无效'))}
+            }
+            const envForShell=shellEnvironment({command:shellCommandValue,args:shellArguments,env:recoveredEnv,shellType:configuredShellType},recoveredEnv)
+            const launch=shellCommand({command:shellCommandValue,args:shellArguments,env:envForShell,shellType:configuredShellType},[agentCommand].concat(args))
+            launchOptions={command:launch.command,args:launch.args,shellType:launch.shellType}
+        } else {
+            const shell=agentShellFromOptions(options)
+            if(!shell)throw new Error(t('未找到原 AI 终端使用的 Shell'))
+            const envForShell=shellEnvironment(shell,recoveredEnv)
+            const launch=replaceShellArguments({...shell,args:shell.args??[],env:envForShell,shellType:shell.shellType??null},[agentCommand].concat(args))
+            launchOptions={command:launch.command,args:launch.args,shellType:launch.shellType}
+        }
+        recoveredEnv.ARW_AGENT_ARGS=JSON.stringify(args)
+    }
     if(explicit)recoveredEnv.ARW_AI_RECOVERY_CONFIGURED='1'
     else if(configuredResumeArgs===null)delete recoveredEnv.ARW_AI_RECOVERY_CONFIGURED
     if(env.ARW_AI_FRESH_START!=='1'){
-        terminal.profile={...profile,options:{...options,args,cwd,env:recoveredEnv}}
+        terminal.profile={...profile,options:{...options,...launchOptions,cwd,env:recoveredEnv}}
         if('sessionOptions' in terminal)terminal.sessionOptions=terminal.profile.options
     }
     if(!terminal.getRecoveryToken||wrapped.has(terminal))return
@@ -68,6 +120,6 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
     terminal.getRecoveryToken=async(...parameters)=>{
         const token=await getToken(...parameters)
         if(!token||token.type!=='app:local-tab'||!token.profile)return token
-        return {...token,profile:{...token.profile,options:{...token.profile.options,args,cwd,env:recoveredEnv}}}
+        return {...token,profile:{...token.profile,options:{...token.profile.options,...launchOptions,cwd,env:recoveredEnv}}}
     }
 }

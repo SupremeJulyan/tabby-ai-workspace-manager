@@ -33,6 +33,7 @@ On Linux/macOS, installation or first plugin load creates `~/.local/bin/arw` and
 ## Workspaces and files
 
 - Switch between local and remote workspaces with the active terminal. Each tab remembers its directory, expanded folders, and Git view.
+- **Open File Layout** and **AI Terminal Layout** each offer **Tiled**, **Stacked**, and **Tabs**. Stacked keeps the same placement as tiled but shows one pane from each group through previous/next arrows; all editors and terminal sessions remain active. Layout choices apply to newly opened files and AI terminals.
 - Click a folder arrow to expand it; double-click a folder to enter it. The path field supports completion, and the locate button follows the terminal's current directory.
 - Resize the sidebar by dragging its edge. Fonts and colors follow Tabby settings.
 - Drop local files or folders on a remote folder to upload there, or on empty space to upload to the current directory. Right-click remote items to download. Transfers require SFTP and do not silently overwrite existing targets.
@@ -68,7 +69,7 @@ Discovery is limited to **two levels, 60 directories, 10 repositories, and 5000 
 
 ## AI terminals
 
-Settings include the AI CLI command, launch arguments, recovery arguments, HTTP/HTTPS proxy, and environment variables. Enter one argument per line and environment variables as `NAME VALUE`. Values are stored as plaintext in Tabby configuration and masked in the settings UI. Reopen the AI terminal after changes.
+Choose a local Tabby shell in Settings, then configure the AI CLI command, launch arguments, recovery arguments, and HTTP/HTTPS proxy. The AI CLI launches through that shell, so it loads the shell profile and inherits its environment. The plugin never executes the AI command directly and does not provide separate AI terminal environment variables. Enter one argument per line and reopen the AI terminal after changes.
 
 For Codex recovery, enter `resume` and `--last`; for Claude, use `--continue`. Launch and recovery arguments are configured separately. Tabby's tab recovery can restore these sessions.
 

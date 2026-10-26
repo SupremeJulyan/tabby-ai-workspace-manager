@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -25,8 +25,12 @@ test('fresh AI launch stays fresh; persisted and legacy tabs resume with a worki
         const options={command:'codex',args:['--model','custom'],cwd:localPath,
             env:{ARW_WORKSPACE_ROOT:'/home/alice/project',ARW_LOCAL_WORKSPACE_ROOT:localPath,
                 ARW_AI_FRESH_START:'1',ARW_CONFIG:'/deleted/temp/connection.json',PATH:'/deleted/temp/bin'}}
+        const source=join(storage,'arw.cjs')
+        await mkdir(join(storage,'bin'),{recursive:true})
+        await copyFile(join(process.cwd(),'dist/arw.cjs'),source)
+        const shim=join(storage,'bin',process.platform==='win32'?'arw.cmd':'arw')
+        await writeFile(shim,process.platform==='win32'?'@node "%~dp0..\\arw.cjs" %*\r\n':'#!/usr/bin/env node\nrequire("../arw.cjs");\n')
         const tab={profile:{type:'local',name:'AI',options},async getRecoveryToken(){return {type:'app:local-tab',profile:this.profile,savedState:'screen'}}}
-        const source=join(process.cwd(),'dist/arw.cjs')
         prepareAiRecovery(tab,storage,source)
         assert.deepEqual(tab.profile.options.args,['--model','custom'])
         const token=await tab.getRecoveryToken()
@@ -35,8 +39,7 @@ test('fresh AI launch stays fresh; persisted and legacy tabs resume with a worki
         assert.equal(token.savedState,'screen')
         assert.equal(token.profile.options.env.ARW_CONFIG,undefined)
         assert.equal(token.profile.options.env.ARW_AI_FRESH_START,undefined)
-        assert.ok(!token.profile.options.env.PATH.includes('/deleted/temp'))
-        const binary=join(token.profile.options.env.PATH.split(delimiter)[0],'arw')
+        const binary=join(token.profile.options.env.PATH.split(delimiter)[0],process.platform==='win32'?'arw.cmd':'arw')
         assert.equal((await execute(process.execPath,[binary,'--version'])).stdout.trim(),`arw ${JSON.parse(await readFile(join(process.cwd(),'package.json'),'utf8')).version}`)
         const restored={profile:token.profile,sessionOptions:options,async getRecoveryToken(){return {type:'app:local-tab',profile:this.profile,savedState:'new screen'}}}
         prepareAiRecovery(restored,storage,source)
@@ -71,5 +74,25 @@ test('explicit recovery arguments replace launch arguments, including an intenti
         prepareAiRecovery(restored,storage,join(process.cwd(),'dist/arw.cjs'),[])
         assert.deepEqual(restored.profile.options.args,[])
         assert.deepEqual(tab.profile.options.args,['--new','initial prompt'])
+    }finally{await rm(storage,{recursive:true,force:true})}
+})
+
+test('restored AI tabs resume their CLI inside the original shell when shell-provided env is gone',async()=>{
+    const storage=await mkdtemp(join(tmpdir(),'arw-shell-resume-'))
+    try{
+        const options={command:'/bin/bash',shellType:'unix',args:['--login','-i','-c',"exec '/opt/codex' '--model' 'custom'"],cwd:storage,
+            env:{ARW_WORKSPACE_ROOT:storage,ARW_AGENT_COMMAND:'/opt/codex',ARW_AGENT_ARGS:JSON.stringify(['--model','custom']),
+                ARW_AGENT_SHELL_COMMAND:'/bin/bash',ARW_AGENT_SHELL_ARGS:JSON.stringify(['--login']),ARW_AGENT_SHELL_TYPE:'unix',
+                PATH:'/opt/bin',KP_ROUTER_KEY:'from-tab'}}
+        const tab={profile:{type:'local',options},async getRecoveryToken(){return {type:'app:local-tab',profile:this.profile}}}
+        const source=join(process.cwd(),'dist/arw.cjs')
+        prepareAiRecovery(tab,storage,source,['resume','--last','--model','custom'])
+        assert.equal(tab.profile.options.command,'/bin/bash')
+        assert.deepEqual(tab.profile.options.args,['--login','-i','-c',"exec '/opt/codex' 'resume' '--last' '--model' 'custom'"])
+        assert.equal(tab.profile.options.env.KP_ROUTER_KEY,'from-tab')
+        assert.equal(tab.profile.options.shellType,'unix')
+        const token=await tab.getRecoveryToken()
+        assert.deepEqual(token.profile.options.args,['--login','-i','-c',"exec '/opt/codex' 'resume' '--last' '--model' 'custom'"])
+        assert.equal(token.profile.options.env.ARW_AGENT_ARGS,JSON.stringify(['resume','--last','--model','custom']))
     }finally{await rm(storage,{recursive:true,force:true})}
 })
