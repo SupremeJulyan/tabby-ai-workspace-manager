@@ -40,6 +40,7 @@ export const englishMessages: Record<string,string> = {
     "暂不支持二进制文件": "Binary files are not supported yet",
     "当前 SSH 会话不支持 SFTP 二进制预览": "Current SSH session does not support SFTP binary preview",
     "只能预览普通文件": "Only regular files can be previewed",
+    "符号链接不支持在文件浏览器中打开：": "Symbolic links cannot be opened in the file browser: ",
     "预览上限为 ": "Preview limit: ",
     "文件超过预览大小限制": "File exceeds the preview size limit",
     "远程文件在读取时发生变化，请重新打开": "Remote file changed while being read. Reopen it",

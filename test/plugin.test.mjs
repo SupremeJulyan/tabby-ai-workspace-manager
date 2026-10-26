@@ -1001,6 +1001,24 @@ test('double-clicking a folder enters it and shows its children',async()=>{
     }finally{await rm(root,{recursive:true,force:true})}
 })
 
+test('symbolic links show a clear browser error instead of opening a broken editor',async()=>{
+    const {BehaviorSubject}=await import('rxjs')
+    const plugin=load(),opened=[]
+    const workspace={id:'links',kind:'remote',root:'/project',host:'host',label:'host:/project',name:'project',
+        async list(){return [{name:'.runtime-cache',path:'.runtime-cache',directory:false,symlink:true}]}}
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject({terminal:{},workspace,hint:''})},{openNewTab:value=>opened.push(value)},{info(){}},{},{},{},{})
+    try{
+        await tree.refresh()
+        await tree.clickNode(tree.nodes[0],{detail:1})
+        assert.equal(opened.length,0)
+        assert.match(tree.error,/符号链接/)
+        assert.match(tree.error,/\.runtime-cache/)
+        await tree.open(tree.nodes[0])
+        assert.equal(opened.length,0)
+        assert.match(plugin.TreeComponent.component.template,/node\.symlink/)
+    }finally{tree.ngOnDestroy()}
+})
+
 test('terminal profile labels stay fixed across split changes without touching editor labels',async()=>{
     const {Subject}=await import('rxjs')
     const plugin=load(),tabsChanged=new Subject(),cwd=new Subject()
@@ -2428,7 +2446,7 @@ test('directory row and chevron toggle nested children, render collapse, and ign
     assert.ok(saved>=4)
     const template=Tree.component.template
     assert.match(template,/\(click\)="clickNode\(node,\$event\)"/)
-    assert.match(template,/\(dblclick\)="node.directory \? open\(node\) : null"/)
+    assert.match(template,/\(dblclick\)="node.directory && !node.symlink \? open\(node\) : null"/)
     assert.match(template,/<svg \*ngIf="node.directory"[^>]*fill="none"[^>]*stroke="currentColor"/)
     assert.doesNotMatch(tree.fileIcon(folder),/fas|fa-folder/)
 })
