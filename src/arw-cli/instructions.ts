@@ -6,6 +6,8 @@ Run \`arw workspaces\`. Match its host, port, user and workspaceRoot to \`.awm/w
 
 Use \`arw list\`, \`read\`, \`search\`, \`edit\` and \`write\` for remote files, and \`arw exec --id ID -- 'COMMAND'\` for remote commands. Use \`arw upload [-r] LOCAL_PATH REMOTE_PATH --id ID\` and \`arw download [-r] REMOTE_PATH LOCAL_PATH --id ID\` for transfers. Use \`arw git-pull [PATH] --id ID\` or \`arw git-push [PATH] --id ID\` to relay Git through the local network and credentials. Run \`arw --help\` for syntax.
 
+Read-only file commands (list, read, search, find and download sources) may access paths outside workspaceRoot, subject to the SSH account permissions. Relative paths start at workspaceRoot; absolute paths can read elsewhere. Mutations and upload destinations must remain inside workspaceRoot. Shell commands via exec retain their separate command policy.
+
 Report failures without automatically retrying mutations. For long command output, read the returned outputId instead of rerunning the command. A POLICY_DENIED result must not be bypassed. Do not print connection URLs, tokens or credentials.
 `;
 

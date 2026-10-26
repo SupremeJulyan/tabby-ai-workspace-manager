@@ -67,7 +67,7 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     return target;
   };
   const read = async (input: string) => {
-    const target = filePath(input);
+    const target = resolve(root,input);
     const info=await lstat(target);
     if(info.isSymbolicLink())throw new Error('Editing symbolic links is not supported yet');
     if(!info.isFile())throw new Error('Only regular files can be read');
@@ -90,7 +90,7 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     watch: (changed, failed, signal, directories) => watchLocalDirectory(root, changed, failed, signal, directories),
     async listForGit(input,limit,signal) {
       const entries:WorkspaceFile[]=[];let truncated=false
-      const directory=await opendir(filePath(input))
+      const directory=await opendir(resolve(root,input))
       for await(const entry of directory){
         signal?.throwIfAborted()
         if(entries.length>=limit){truncated=true;break}
@@ -100,13 +100,13 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     },
     async list(input, signal) {
       signal?.throwIfAborted();
-      const entries = await readdir(filePath(input), { withFileTypes: true });
+      const entries = await readdir(resolve(root,input), { withFileTypes: true });
       signal?.throwIfAborted();
       return entries.map(entry => ({ name: entry.name, path: join(input, entry.name), directory: entry.isDirectory(), symlink: entry.isSymbolicLink() }))
         .sort((a,b) => Number(b.directory)-Number(a.directory) || a.name.localeCompare(b.name));
     },
     read,
-    readBytes:async(input,maxBytes,signal)=>readLocalBytes(filePath(input),maxBytes,signal),
+    readBytes:async(input,maxBytes,signal)=>readLocalBytes(resolve(root,input),maxBytes,signal),
     async write(input, content, expectedHash) {
       if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 500 MiB');
       const target = filePath(input);

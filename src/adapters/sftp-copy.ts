@@ -88,8 +88,10 @@ export function sftpCopy (open: () => Promise<SFTPSession>, guard: RemotePathGua
         }
         if (!['stat', 'mkdir', 'open-read', 'open-write'].includes(action)) throw new Error('Unsupported copy action')
         const input = text(args.path, 'path')
-        // Reject final symlinks on both reads and writes; validate parents through realpath.
-        const path = await guard.resolve(input, true, signal)
+        // Download/stat may read outside the root; uploads still enforce the boundary.
+        const path = action==='stat'||action==='open-read'
+            ?await guard.resolveRead(input,signal,action==='stat')
+            :await guard.resolve(input,true,signal)
         const sftp = await session()
         const info = await sftp.stat(path).catch(error => { if (missing(error)) return undefined; throw error })
         signal.throwIfAborted()

@@ -14,7 +14,7 @@ test('local workspace lists nested paths, edits with conflict detection, and run
   await workspace.write('src/file.txt','after',file.hash);
   assert.equal(await readFile(join(root,'src/file.txt'),'utf8'),'after');
   await assert.rejects(workspace.write('src/file.txt','wrong',file.hash),/changed/);
-  await assert.rejects(workspace.read('../outside'),/outside/);
+  await assert.rejects(workspace.write('../outside','denied'),/outside/);
   const result=await workspace.run(process.platform==='win32'?'cd':'pwd');
   assert.equal(result.exitCode,0);assert.equal(await realpath(result.stdout.trim()),await realpath(root));
 });
@@ -50,4 +50,17 @@ test('local workspace refuses binary/oversized text and symlink replacement',asy
     await assert.rejects(workspace.read('link'),/symbolic/);await assert.rejects(workspace.write('link','replace'),/symbolic/);
     assert.equal(await readFile(join(root,'target'),'utf8'),'original');
   }
+});
+
+test('local file reads and listings may leave the workspace but writes cannot',async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'arw-read-scope-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const root=join(directory,'project'),outside=join(directory,'shared');await mkdir(root);await mkdir(outside);
+  const file=join(outside,'reference.txt');await writeFile(file,'reference');
+  const workspace=localWorkspace(root);
+  assert.equal((await workspace.read(file)).content,'reference');
+  assert.equal((await workspace.read('../shared/reference.txt')).content,'reference');
+  assert.equal((await workspace.list('../shared'))[0].name,'reference.txt');
+  await assert.rejects(workspace.write(file,'denied'),/outside/);
+  await assert.rejects(workspace.write('../shared/reference.txt','denied'),/outside/);
+  assert.equal(await readFile(file,'utf8'),'reference');
 });

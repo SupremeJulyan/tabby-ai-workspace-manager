@@ -16,6 +16,19 @@ export class RemotePathGuard {
     constructor (private root: string, private run: Run) {}
 
 
+    /** Read paths use the SSH account's permissions, without a workspace boundary. */
+    async resolveRead(input:string,signal?:AbortSignal,allowMissing=false):Promise<string> {
+        signal?.throwIfAborted()
+        if(!posix.isAbsolute(this.root)||/[\x00-\x1f\x7f]/.test(this.root+input))throw new RemotePathError('Invalid remote path')
+        const target=posix.resolve(this.root,input)
+        const result=await this.run(`realpath -${allowMissing?'m':'e'} -- ${shellQuote(target)}`,signal)
+        signal?.throwIfAborted()
+        const resolved=result.stdout.replace(/\n$/,'')
+        if(result.exitCode!==0||!posix.isAbsolute(resolved)||/[\x00-\x1f\x7f]/.test(resolved))
+            throw new RemotePathError('Cannot resolve remote read path')
+        return resolved
+    }
+
     async resolveDirectory (input:string, signal?:AbortSignal):Promise<string> {
         signal?.throwIfAborted()
         if (!posix.isAbsolute(this.root) || /[\x00-\x1f\x7f]/.test(this.root + input)) throw new RemotePathError('Invalid remote path')

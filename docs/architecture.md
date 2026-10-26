@@ -3,7 +3,7 @@
 Tabby 提供 SSH 连接、主机密钥确认、认证、跳板机、本地/远程终端、标签与分屏。
 ARW 插件复用 SSH 标签持有的会话，通过独立 exec 通道与 SFTP 完成操作，不新建认证链路。
 
-optional-sftp.ts 按会话及底层客户端缓存 SFTP 能力探测，并对初始化设置 10 秒上限。sftp-text.ts 使用 SFTP 读取与原地保存远程文本；打开时记录文件大小和修改时间，保存前仅用 stat 比较这两个字段，不计算内容哈希或重新读取正文。保存后返回新的大小和修改时间，沿用 WorkspaceText.hash / expectedHash 字段作为不透明版本标识。侧栏的读取、预览、目录列举及 SFTP 保存不启动 SSH 路径校验；arw-cli/workspace-files.ts 在 CLI 入口执行工作区范围限制。普通文件保留 inode、权限、ACL 和扩展属性，新文件写入内容前设置为 0600；setuid/setgid 位由操作系统决定，不主动恢复或核对。保存前权限记录用于断线后的显式核对，失败时由 SaveConfirmation 保留异常标记。
+optional-sftp.ts 按会话及底层客户端缓存 SFTP 能力探测，并对初始化设置 10 秒上限。sftp-text.ts 使用 SFTP 读取与原地保存远程文本；打开时记录文件大小和修改时间，保存前仅用 stat 比较这两个字段，不计算内容哈希或重新读取正文。保存后返回新的大小和修改时间，沿用 WorkspaceText.hash / expectedHash 字段作为不透明版本标识。侧栏的读取、预览、目录列举及 SFTP 保存不启动 SSH 路径校验；arw-cli/workspace-files.ts 在 CLI 入口限制写入范围；读取、目录列举、搜索和下载来源按账户权限访问，不限制在工作区内。普通文件保留 inode、权限、ACL 和扩展属性，新文件写入内容前设置为 0600；setuid/setgid 位由操作系统决定，不主动恢复或核对。保存前权限记录用于断线后的显式核对，失败时由 SaveConfirmation 保留异常标记。
 
 SFTP 不可用时，shell-files.ts 提供 NUL 格式目录列举（最多 2001 项）和有界 Base64 文本读取。remote-save.ts 使用已认证 SSH 连接上的一个 exec 通道比较文件大小和修改时间，通过就绪帧后接收标准输入正文并原地写入，不依赖 sha256sum。executeChannel 等待就绪帧后分块发送正文，以退出状态确认完成。目录集成脚本也可通过 SSH 写入私有临时目录，交互终端执行短 source 指令。
 
