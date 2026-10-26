@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, chmod, chown, stat, readdir } from 'node:fs/promises'
+import { truncate, mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, chmod, chown, stat, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Subject } from 'rxjs'
@@ -98,16 +98,16 @@ test('SFTP and shell saves preserve ordinary and setuid/setgid permissions', {sk
     }
 })
 
-test('SFTP reads text up to 10 MiB and rejects larger files', {skip:process.platform==='win32'}, async context=>{
+test('SFTP reads text above the old limit and rejects files over 500 MiB', {skip:process.platform==='win32'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-sftp-size-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const fixture=sessionFixture(root);fixture.session.openSFTP=async()=>sftpFixture()
     const workspace=remoteWorkspace(fixture.session as any,root)
-    const text='x'.repeat(10*1024*1024)
+    const text='x'.repeat(11*1024*1024)
     await writeFile(join(root,'large'),text)
     assert.equal((await workspace.read('large')).content,text)
-    await writeFile(join(root,'large'),text+'x')
-    await assert.rejects(workspace.read('large'),/10 MiB/)
+    await truncate(join(root,'large'),500*1024*1024+1)
+    await assert.rejects(workspace.read('large'),/500 MiB/)
 })
 
 test('SFTP and shell saves preserve extended ACLs and xattrs, including inherited ACL directories', {skip:process.platform!=='linux'}, async context=>{
@@ -305,15 +305,15 @@ test('SSH without SFTP lists hidden directories, quotes paths and safely reads a
     await another.list('.');assert.equal(fixture.opens,1)
 })
 
-test('SSH text fallback preserves the 10 MiB limit and rejects binary, invalid UTF-8 and directories', {skip:process.platform==='win32'}, async context=>{
+test('SSH text fallback preserves the 500 MiB limit and rejects binary, invalid UTF-8 and directories', {skip:process.platform==='win32'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-shell-read-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const fixture=sessionFixture(root),workspace=remoteWorkspace(fixture.session as any,root)
-    const text='x'.repeat(10*1024*1024)
+    const text='x'.repeat(11*1024*1024)
     await writeFile(join(root,'large'),text)
     assert.equal((await workspace.read('large')).content,text)
-    await writeFile(join(root,'large'),text+'x')
-    await assert.rejects(workspace.read('large'),/10 MiB/)
+    await truncate(join(root,'large'),500*1024*1024+1)
+    await assert.rejects(workspace.read('large'),/500 MiB/)
     await writeFile(join(root,'binary'),Buffer.from([65,0,66]))
     await assert.rejects(workspace.read('binary'),/二进制/)
     await writeFile(join(root,'invalid'),Buffer.from([255]))
@@ -348,7 +348,7 @@ test('SFTP directory permission failures are not masked by a shell retry', {skip
     assert.ok(fixture.commands.every(command=>!command.includes('ARW_DIRECTORY_V1')))
 })
 
-test('SSH save preserves permissions, supports empty and 10 MiB contents and does not put payload in commands', {skip:process.platform==='win32'}, async context=>{
+test('SSH save preserves permissions, supports empty and large contents and does not put payload in commands', {skip:process.platform==='win32'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-shell-save-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const fixture=sessionFixture(root),workspace=remoteWorkspace(fixture.session as any,root)
@@ -365,7 +365,7 @@ test('SSH save preserves permissions, supports empty and 10 MiB contents and doe
     assert.equal((await workspace.read('large')).content,text)
     assert.ok(fixture.commands.every(command=>!command.includes('敏感数据')&&!command.includes(Buffer.from(text).toString('base64'))))
     await assert.rejects(readFile(join(root,'injected')))
-    await assert.rejects(workspace.write('large',text+'x'),/10 MiB/)
+    await workspace.write('large',text+'x')
     await assert.rejects(workspace.write('script.sh','conflict',original.hash),/文件已变化/)
     assert.equal(await readFile(join(root,'script.sh'),'utf8'),'after\n')
     assert.ok((await readdir(root)).every(name=>!name.startsWith('.arw-')))
@@ -469,7 +469,7 @@ test('single-channel saves preserve BOM hash semantics and stream content only a
     assert.ok(fixture.commands.every(command=>!command.includes('中文 changed')))
     let uploaded=false
     fixture.hooks.afterInput=async()=>{uploaded=true}
-    await assert.rejects(workspace.write('bom.txt','x'.repeat(10*1024*1024),original.hash),/文件已变化/)
+    await assert.rejects(workspace.write('bom.txt','x'.repeat(11*1024*1024),original.hash),/文件已变化/)
     assert.equal(uploaded,false,'stale content fails before sending the payload')
     assert.equal(workspace.saveIssue?.('bom.txt'),undefined)
     assert.equal(await readFile(target,'utf8'),'中文 changed')

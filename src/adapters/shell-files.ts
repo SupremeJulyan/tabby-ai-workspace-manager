@@ -42,14 +42,14 @@ export async function readShellText (transport:TabbyRelayTransport, target:strin
     const quoted=shellQuote(target)
     const result=await transport.run(t`test -f ${quoted} || { printf '%s\\n' '仅支持读取普通文本文件' >&2; exit 1; }
 size=$(wc -c < ${quoted}) || exit $?
-test "$size" -le 10485760 || { printf '%s\\n' '文本文件上限为 10 MiB' >&2; exit 1; }
-base64 < ${quoted}`,signal??AbortSignal.timeout(30000),{maxBytes:14*1024*1024})
+test "$size" -le ${textFileLimit} || { printf '%s\\n' '文本文件上限为 500 MiB' >&2; exit 1; }
+base64 < ${quoted}`,signal??AbortSignal.timeout(30000),{maxBytes:Math.ceil(textFileLimit/3)*4+Math.ceil(textFileLimit/57)+1024})
     signal?.throwIfAborted()
     if(result.exitCode!==0)throw new Error(result.stderr.trim()||t('无法通过 SSH 读取远程文本（需要 base64 和 wc）'))
     const encoded=result.stdout.replace(/[\r\n\t ]/g,'')
     const bytes=Buffer.from(encoded,'base64')
     if(bytes.toString('base64')!==encoded)throw new Error(t('SSH 文本结果不是完整的 Base64 数据'))
-    if(bytes.length>textFileLimit)throw new Error(t('文本文件上限为 10 MiB'))
+    if(bytes.length>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
     if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
     return new TextDecoder('utf-8',{fatal:true}).decode(bytes)
 }

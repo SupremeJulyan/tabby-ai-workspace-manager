@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, mkdir, rm, symlink, stat, chmod, realpath } from 'node:fs/promises';
+import { truncate, mkdtemp, writeFile, readFile, mkdir, rm, symlink, stat, chmod, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { localWorkspace } from '../src/arw-tree/workspace';
@@ -44,7 +44,7 @@ test('local workspace refuses binary/oversized text and symlink replacement',asy
   const root=await mkdtemp(join(tmpdir(),'arw-workspace-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const workspace=localWorkspace(root);
   await writeFile(join(root,'binary'),Buffer.from([0,1]));await assert.rejects(workspace.read('binary'),/binary/);
-  await writeFile(join(root,'large'),Buffer.alloc(10*1024*1024+1,65));await assert.rejects(workspace.read('large'),/10 MiB/);
+  await writeFile(join(root,'large'),'');await truncate(join(root,'large'),500*1024*1024+1);await assert.rejects(workspace.read('large'),/500 MiB/);
   if(process.platform!=='win32'){
     await writeFile(join(root,'target'),'original');await symlink('target',join(root,'link'));
     await assert.rejects(workspace.read('link'),/symbolic/);await assert.rejects(workspace.write('link','replace'),/symbolic/);

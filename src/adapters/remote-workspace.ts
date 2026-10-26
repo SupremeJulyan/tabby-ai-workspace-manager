@@ -63,7 +63,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
     const readTarget = async (target: string, sftp: NonNullable<Awaited<ReturnType<typeof optionalSftp>>>,signal?:AbortSignal) => {
         signal?.throwIfAborted()
         const size=(await sftp.stat(target)).size
-        if(size > textFileLimit) throw new Error(t('文本文件上限为 10 MiB'))
+        if(size > textFileLimit) throw new Error(t('文本文件上限为 500 MiB'))
         signal?.throwIfAborted()
         const file = await sftp.open(target, OPEN_READ)
         try {
@@ -75,7 +75,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
                 signal?.throwIfAborted()
                 if (!bytes.length) break
                 length += bytes.length
-                if (length > textFileLimit) throw new Error(t('文本文件上限为 10 MiB'))
+                if (length > textFileLimit) throw new Error(t('文本文件上限为 500 MiB'))
                 chunks.push(Buffer.from(bytes))
             }
             const bytes = Buffer.concat(chunks)
@@ -238,7 +238,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
         },
     }
     async function write(input:string, content:string, expectedHash?:string,confirmedRetry=false) {
-            if (Buffer.byteLength(content) > textFileLimit) throw new Error(t('文本文件上限为 10 MiB'))
+            if (Buffer.byteLength(content) > textFileLimit) throw new Error(t('文本文件上限为 500 MiB'))
             return saves.run(saveKey(input),content,async(signal,recordPermissions,started)=>{
               priority.active++
               try {

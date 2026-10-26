@@ -1,3 +1,4 @@
+import { textFileLimit } from '../shared/text-file-limit'
 import { randomUUID } from 'node:crypto';
 import { RemotePathGuard } from '../security/remote-path';
 import { shellQuote } from '../shared/shell-quote';
@@ -94,7 +95,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
         await run(`mkdir -- ${target}`);
       } else if (args.type === 'file') {
         const content = text(args.content ?? '', 'content');
-        if (Buffer.byteLength(content) > 10 * 1024 * 1024) throw new Error('Text files are limited to 10 MiB');
+        if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 500 MiB');
         const temporary = shellQuote((await guard.resolve(path(), true, signal)) + '.arw-' + randomUUID() + '.tmp');
         let created = false;
         try {

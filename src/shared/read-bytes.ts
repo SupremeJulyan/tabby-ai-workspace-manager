@@ -1,8 +1,9 @@
+import { textFileLimit } from './text-file-limit'
 import { t } from './i18n'
 import { open } from 'node:fs/promises';
 
 export function previewLimit(maxBytes:number):void {
-  if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>64*1024*1024)throw new Error('Invalid preview size limit');
+  if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>textFileLimit)throw new Error('Invalid preview size limit');
 }
 export async function readLocalBytes(path:string,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array> {
   previewLimit(maxBytes);signal?.throwIfAborted();
