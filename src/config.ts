@@ -6,7 +6,9 @@ import { CODEX_FULL_ACCESS_ARGUMENTS } from './arw-ai-cli/defaults'
 export class ArwConfigProvider extends ConfigProvider {
     defaults = {
         omw: {
-            agent: { command: 'codex', args: [...CODEX_FULL_ACCESS_ARGUMENTS] as string[], resumeArgs: null as string[]|null, proxyUrl: '', env: [] },
+            fileLayout: 'tiled',
+            aiLayout: 'tiled',
+            agent: { command: 'codex', args: [...CODEX_FULL_ACCESS_ARGUMENTS] as string[], resumeArgs: null as string[]|null, proxyUrl: '', shell: null },
             projects: {},
         },
     }

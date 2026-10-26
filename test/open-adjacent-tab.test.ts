@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { openAdjacentTab } from '../src/shared/open-adjacent-tab'
+import { openAdjacentTab, placeAdjacentTab } from '../src/shared/open-adjacent-tab'
 
 function fixture (wrapped:boolean) {
     const left={},anchor={},right={},opened={},wrapper={}
@@ -44,4 +44,23 @@ test('closing the anchor during opening leaves the new tab at the normal fallbac
     openAdjacentTab(f.app,{type:class {} as any})
     assert.deepEqual(f.app.tabs,[f.left,f.right,f.opened])
     assert.equal(f.notifications(),0)
+})
+
+
+test('AI tabs move their wrapper immediately to the right of the captured anchor',()=>{
+    const f=fixture(true),pane={}
+    const original=f.app.getParentTab
+    f.app.getParentTab=(tab:object)=>tab===pane?f.anchor:original(tab)
+    f.app.openNewTab()
+    placeAdjacentTab(f.app,f.opened,pane,'right')
+    assert.deepEqual(f.app.tabs,[f.left,f.anchor,f.wrapper,f.right])
+    assert.equal(f.app.activeTab,f.wrapper)
+    assert.equal(f.notifications(),1)
+})
+
+test('right-adjacent movement calculates the insertion index after removing the target',()=>{
+    const f=fixture(false)
+    f.app.tabs.unshift(f.opened)
+    placeAdjacentTab(f.app,f.opened,f.anchor,'right')
+    assert.deepEqual(f.app.tabs,[f.left,f.anchor,f.opened,f.right])
 })

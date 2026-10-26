@@ -1,3 +1,5 @@
+import { SCROLLBAR_STYLES } from '../shared/scrollbar-styles'
+import { SPLIT_DIVIDER_STYLES } from '../shared/split-divider-styles'
 import { t } from '../shared/i18n'
 import { ApplicationRef, ComponentFactoryResolver, ComponentRef, Injectable, Injector, NgZone } from '@angular/core'
 import { AppService, ConfigService, NotificationsService } from 'tabby-core'
@@ -50,7 +52,7 @@ export class SidebarService {
             }
             Object.assign(host.style,{position:'absolute',left:'0',top:'0',bottom:'0',width:'var(--arw-sidebar-width,300px)',zIndex:'20'})
             const style=document.createElement('style')
-            style.textContent='.arw-tree-layout > .content-tab-active{margin-left:var(--arw-sidebar-width,300px)!important;width:calc(100% - var(--arw-sidebar-width,300px))!important}.arw-tree-resizer:hover,.arw-tree-resizer:focus{background:#73a9ed55!important}'
+            style.textContent='.arw-tree-layout > .content-tab-active{margin-left:var(--arw-sidebar-width,300px)!important;width:calc(100% - var(--arw-sidebar-width,300px))!important}.arw-tree-resizer:hover,.arw-tree-resizer:focus{background:#73a9ed55!important}'+SPLIT_DIVIDER_STYLES+SCROLLBAR_STYLES
             host.append(style)
             content.classList.add('arw-tree-layout');content.prepend(host)
             this.container=content
@@ -102,7 +104,9 @@ export class SidebarService {
     private updateVisibility():void {
         const tab=this.app.activeTab
         const focused=tab&&'getFocusedTab' in tab?((tab as any).getFocusedTab()??(tab as any).getAllTabs?.()[0]):tab
-        const visible=this.visible&&!(focused instanceof ArwEditorComponent||focused instanceof ArwPreviewComponent)
+        const isFile=(pane:unknown)=>pane instanceof ArwEditorComponent||pane instanceof ArwPreviewComponent
+        const hasTerminal=tab&&'getAllTabs' in tab&&(tab as any).getAllTabs().some((pane:unknown)=>!isFile(pane))
+        const visible=this.visible&&(!isFile(focused)||Boolean(hasTerminal))
         if(this.host)this.host.style.display=visible?'':'none'
         this.container?.classList.toggle('arw-tree-layout',visible)
     }

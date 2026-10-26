@@ -5,6 +5,7 @@ import { ArwPreviewComponent } from '../arw-tree/preview.component'
 import { restoredFileWorkspace, type FileWorkspaceToken } from '../arw-tree/file-recovery'
 import { FileSessionPool } from '../services/file-session-pool'
 import { logFileRecovery } from '../services/file-recovery-log'
+import { paneLayout } from '../shared/pane-layout'
 
 @Injectable()
 export class FileRecoveryProvider extends TabRecoveryProvider<BaseTabComponent> {
@@ -37,6 +38,7 @@ export class FileRecoveryProvider extends TabRecoveryProvider<BaseTabComponent> 
         if(typeof state.diffPatch!=='string'&&typeof state.initialContent!=='string')inputs.readonly=false
         if(['split','unified'].includes(state.diffMode))inputs.diffMode=state.diffMode
         if(Array.isArray(state.imagePaths)&&state.imagePaths.every((path:unknown)=>typeof path==='string'))inputs.imagePaths=state.imagePaths
+        if(state.arwPaneLayout!==undefined)inputs.arwPaneLayout=paneLayout(state.arwPaneLayout)
         if(typeof state.recoveredEdit?.content==='string'&&typeof state.recoveredEdit?.original==='string'&&typeof state.recoveredEdit?.hash==='string'){
             inputs.recoveredEdit={content:state.recoveredEdit.content,original:state.recoveredEdit.original,hash:state.recoveredEdit.hash}
         }
