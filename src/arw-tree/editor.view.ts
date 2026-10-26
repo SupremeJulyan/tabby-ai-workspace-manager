@@ -1,4 +1,5 @@
 import { FILE_TOOLBAR_STYLES } from './file-toolbar.view'
+import { MARKDOWN_STYLES } from './preview/markdown.view'
 import { scaleTypography } from './fonts'
 import { TEXT_SEARCH_TEMPLATE, TEXT_SEARCH_STYLES } from './text-search.view'
 
@@ -7,6 +8,7 @@ export const EDITOR_TEMPLATE = `
   <button *ngIf="!isDiff" class="file-icon-button" [title]="'查找' | arwTranslate" [attr.aria-label]="'查找' | arwTranslate" (click)="search.open()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0"/></svg></button>
   <button *ngIf="!isDiff && !readonly" class="file-icon-button" [title]="'替换' | arwTranslate" [attr.aria-label]="'替换' | arwTranslate" (click)="search.open(true)" [disabled]="!search.canReplace()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"/></svg></button>
   <button *ngIf="!isDiff" class="file-icon-button" [title]="(saving ? '保存中…' : '保存') | arwTranslate" [attr.aria-label]="(saving ? '保存中…' : '保存') | arwTranslate" [disabled]="readonly || loading || saving || !dirty || saveIssue" (click)="save()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h12l4 4v14H3V3h2Zm2 0v6h10V3M7 21v-8h10v8"/></svg></button>
+  <button *ngIf="isMarkdown" class="file-icon-button" [title]="(markdownPreview ? '源码' : '预览') | arwTranslate" [attr.aria-label]="(markdownPreview ? '源码' : '预览') | arwTranslate" (click)="toggleMarkdown()" [disabled]="loading || saving"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18"/></svg></button>
 </header>
 ${TEXT_SEARCH_TEMPLATE}
 <div class="error" *ngIf="saveIssue as issue" role="alert">
@@ -45,11 +47,14 @@ ${TEXT_SEARCH_TEMPLATE}
     </ng-container>
   </div>
 </ng-container>
-<textarea #textEditor *ngIf="!isDiff" [readOnly]="readonly || loading || saving" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
+<div *ngIf="markdownPreview && markdownError" class="error" role="alert">{{markdownError}}</div>
+<article *ngIf="markdownPreview" class="markdown-preview" [innerHTML]="markdown" (click)="markdownClick($event)"></article>
+<textarea #textEditor *ngIf="!isDiff && !markdownPreview" [readOnly]="readonly || loading || saving" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
 `
 
 export const EDITOR_STYLES = scaleTypography(`
 ${TEXT_SEARCH_STYLES}
+${MARKDOWN_STYLES}
 :host{font-family:var(--arw-font-family,inherit);font-size:12px;line-height:1.45}
 .diff-description{padding:8px 14px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-height:120px;overflow:auto;flex:none}
 .split-diff{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.diff-pane{min-width:0;overflow-x:auto;scrollbar-width:thin}.diff-pane+.diff-pane{border-left:1px solid var(--diff-border)}.diff-pane>.diff-cell,.diff-pane>.diff-cell+.diff-cell{overflow:visible;min-width:max-content;border-left:0}

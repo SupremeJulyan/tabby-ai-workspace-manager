@@ -1,3 +1,4 @@
+import { cliWorkspaceFiles } from '../arw-cli/workspace-files'
 import { gitRelayOperation } from '../adapters/git-relay-operation'
 import { activityScope } from '../arw-cli/agent-activity'
 import { isTerminalCommandMode, runTerminalCommand } from '../shared/terminal-command'
@@ -86,6 +87,7 @@ export class ProjectStore {
             const error=new Error(t('SSH 会话已断开'));this.setState(project.id,'error',t('启动转发'),error);throw error
         }
         this.setState(project.id,'starting')
+        const cliFiles=cliWorkspaceFiles(workspace)
         const entry:ProjectForwarding={remote,client:remote?.ssh,source,retained:false,ready:Promise.resolve(),server:new ForwardingServer({
             activityScope:remote&&source?activityScope(source):undefined,
             workspace:{id:project.id,root:workspace.root,host:workspace.host},
@@ -96,9 +98,9 @@ export class ProjectStore {
             },
             git: remote?gitRelayOperation(remote,workspace.root,join(dirname(this.catalogFile??workspaceCatalogPath()),'git-relay')):undefined,
             copy: remote ? sftpCopy(() => remote.openSFTP(), new RemotePathGuard(workspace.root, (command, signal) => workspace.run(command, signal))) : undefined,
-            list:async(path,signal)=>{signal.throwIfAborted();return {entries:await workspace.list(path)}},
-            read:async(path,signal)=>{signal.throwIfAborted();return {path,...await workspace.read(path)}},
-            write:async(path,content,signal,expectedHash)=>{signal.throwIfAborted();return {path,...await workspace.write(path,content,expectedHash)}},
+            list:async(path,signal)=>{signal.throwIfAborted();return {entries:await cliFiles.list(path)}},
+            read:async(path,signal)=>{signal.throwIfAborted();return {path,...await cliFiles.read(path)}},
+            write:async(path,content,signal,expectedHash)=>{signal.throwIfAborted();return {path,...await cliFiles.write(path,content,expectedHash)}},
             run:(command,signal,options)=>source&&isTerminalCommandMode(source)?runTerminalCommand(source as BaseTerminalTabComponent<any>,workspace.root,command,signal,options?.maxBytes):workspace.run(command,signal,options),
             validateCommand:workspace.validateCommand?.bind(workspace),
         }, this.catalogFile ? join(dirname(this.catalogFile), 'audit.jsonl') : undefined)}

@@ -7,6 +7,7 @@ import { resumeArguments } from './recovery'
 import { aiProxyEnvironment } from './proxy'
 import { defaultAgentArguments } from './defaults'
 import { configuredShell } from './settings-shell'
+import { defaultShell } from './default-shell'
 import { t } from '../shared/i18n'
 import { selectableShells } from './shell-selection'
 import type { AgentShell } from './shell'
@@ -101,7 +102,7 @@ export class ArwSettingsComponent {
             if (!this.shells.some(shell => shell.id === this.shellId)) this.shellId=''
             if (!this.shellId) {
                 const preferred=this.config.store.terminal?.profile
-                this.shellId=this.shells.find(shell=>shell.id===preferred)?.id??''
+                this.shellId=defaultShell(this.shells,preferred)?.id??''
             }
         } catch (error) { this.error=String(error) }
     }

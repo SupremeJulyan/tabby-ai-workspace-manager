@@ -3,7 +3,7 @@ import { previewLimit } from '../shared/read-bytes'
 import { posix } from 'path'
 import { randomUUID } from 'crypto'
 import { OPEN_READ } from 'russh'
-import { Workspace, textHash } from '../arw-tree/workspace'
+import { Workspace } from '../arw-tree/workspace'
 import type { SSHSession } from './ssh-compat'
 import { TabbyRelayTransport } from './transport'
 import { RemotePathGuard } from '../security/remote-path'
@@ -17,6 +17,7 @@ import { shellQuote } from '../shared/shell-quote'
 import { SaveConfirmation, SaveConfirmationState } from './save-confirmation'
 import { leafName } from '../shared/workspace-name'
 import { saveRemoteText } from './remote-save'
+import { readSftpText, saveSftpText, sftpPermissions } from './sftp-text'
 
 class BackgroundDirectoryLimit extends Error {}
 
@@ -59,43 +60,18 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
     }
     const saves=confirmations
     const saveKey=(input:string)=>posix.resolve(root,input)
-    const permissions=(metadata:string)=>metadata.split(':').slice(3,6).join(':')
-    const readTarget = async (target: string, sftp: NonNullable<Awaited<ReturnType<typeof optionalSftp>>>,signal?:AbortSignal) => {
-        signal?.throwIfAborted()
-        const size=(await sftp.stat(target)).size
-        if(size > textFileLimit) throw new Error(t('文本文件上限为 500 MiB'))
-        signal?.throwIfAborted()
-        const file = await sftp.open(target, OPEN_READ)
-        try {
-            signal?.throwIfAborted()
-            const chunks: Buffer[] = []; let length = 0
-            while (true) {
-                signal?.throwIfAborted()
-                const bytes = await file.read()
-                signal?.throwIfAborted()
-                if (!bytes.length) break
-                length += bytes.length
-                if (length > textFileLimit) throw new Error(t('文本文件上限为 500 MiB'))
-                chunks.push(Buffer.from(bytes))
-            }
-            const bytes = Buffer.concat(chunks)
-            if (bytes.includes(0)) throw new Error(t('暂不支持二进制文件'))
-            const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-            return { content, hash: textHash(content) }
-        } finally { await file.close() }
+    const permissions=(metadata:string)=>{
+        const [mode,uid,gid]=metadata.split(':').slice(3,6)
+        return `${(parseInt(mode,8)&0o1777).toString(8)}:${uid}:${gid}`
     }
     const read = async (input: string,signal?:AbortSignal) => {
         signal?.throwIfAborted()
         if (!session.open) throw new Error(t('SSH 已断开'))
         const sftp = await optionalSftp(session)
         signal?.throwIfAborted()
+        if (sftp) return readSftpText(sftp,posix.resolve(root,input),signal)
         const target = await guard.resolve(input,false,signal)
-        if (sftp) {
-            const file=await readTarget(target,sftp,signal)
-            return file
-        }
-        const content = await readShellText(transport, target,signal)
-        return { content, hash: textHash(content) }
+        return readShellText(transport, target,signal)
     }
     const workspace: Workspace = {
         id: randomUUID(), kind: 'remote', root, host: session.profile.options.host, name: leafName(root), titleName: leafName(root),
@@ -106,7 +82,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
             const snapshot=async(input:string)=>{
                 signal.throwIfAborted()
                 await waitForForegroundWrites(priority,signal)
-                const target = await guard.resolveDirectory(input, signal)
+                const target = sftp?posix.resolve(root,input):await guard.resolveDirectory(input, signal)
                 await waitForForegroundWrites(priority,signal)
                 if(sftp){
                     const entries=await sftp.readdir(target)
@@ -180,7 +156,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             const sftp = await optionalSftp(session)
             if(!sftp)return listShellDirectory(transport,await guard.resolveDirectory(input,signal??AbortSignal.timeout(30000)),input,signal)
             signal?.throwIfAborted()
-            const files=await sftp.readdir(await guard.resolve(input,false,signal))
+            const files=await sftp.readdir(posix.resolve(root,input))
             signal?.throwIfAborted()
             return files.filter(file => !['.', '..'].includes(file.name))
                 .map(file => ({ name: file.name, path: posix.join(input, file.name), directory: file.isDirectory, symlink: file.isSymlink }))
@@ -191,6 +167,16 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
         async verifySave(input){
             let file:Awaited<ReturnType<typeof read>>|undefined
             await saves.verify(saveKey(input),async signal=>{
+                const sftp=await optionalSftp(session)
+                if(sftp){
+                    const target=posix.resolve(root,input),before=await sftp.stat(target)
+                    file=await readSftpText(sftp,target,signal,before)
+                    const after=await sftp.stat(target)
+                    const mode=sftpPermissions(after)
+                    if(before.size!==after.size||sftpPermissions(before)!==mode||mode===undefined)
+                        throw new Error(t('远端内容或权限不一致，异常标记保留'))
+                    return {content:file.content,permissions:mode}
+                }
                 const target=await guard.resolve(input,false,signal)
                 const before=await guard.metadata(target,signal)
                 file=await read(input,signal)
@@ -211,7 +197,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             if(!session.open)throw new Error(t('SSH 已断开'))
             const sftp=await optionalSftp(session)
             if(!sftp)throw new Error(t('当前 SSH 会话不支持 SFTP 二进制预览'))
-            const target=await guard.resolve(input,false,signal),info=await sftp.stat(target)
+            const target=posix.resolve(root,input),info=await sftp.stat(target)
             if(info.isDirectory)throw new Error(t('只能预览普通文件'))
             if(!Number.isSafeInteger(info.size)||info.size<0||info.size>maxBytes)throw new Error(t`预览上限为 ${Math.floor(maxBytes/1024/1024)} MiB`)
             const file=await sftp.open(target,OPEN_READ)
@@ -248,10 +234,14 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
                     if(!session.open||session.ssh!==connection)throw new Error(t('SSH 会话已断开或重连，请刷新目录'))
                 }
                 check()
-                await saveRemoteText(transport,root,input,content,expectedHash,signal,recordPermissions,started)
+                const sftp=await optionalSftp(session)
+                check()
+                const version=sftp
+                    ?await saveSftpText(sftp,posix.resolve(root,input),content,expectedHash,signal,recordPermissions,started)
+                    :await saveRemoteText(transport,root,input,content,expectedHash,signal,recordPermissions,started)
                 check()
                 notifyWorkspaceChange(workspace)
-                return { content, hash: textHash(content) }
+                return { content, hash: version }
               } finally { finishForegroundWrite(priority) }
             },confirmedRetry)
     }

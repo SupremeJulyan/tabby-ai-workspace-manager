@@ -48,11 +48,11 @@ export class GitTasksService {
         }
     }
 
-    async run (tab: SSHTabComponent, workspace: RemoteWorkspace|undefined, direction: 'pull'|'push',
-        options:{report?:(message:string)=>void;throwOnError?:boolean}={}): Promise<boolean> {
+    async run (tab: SSHTabComponent, workspace: RemoteWorkspace|undefined, direction: 'fetch'|'pull'|'push',
+        options:{report?:(message:string)=>void;throwOnError?:boolean;quiet?:boolean}={}): Promise<boolean> {
         const fail=(message:string):false=>{
             if(options.throwOnError)throw new Error(message)
-            this.notifications.error(t('ARW Git 中转未完成'),message)
+            if(!options.quiet)this.notifications.error(t('ARW Git 中转未完成'),message)
             return false
         }
         const session = tab.sshSession
@@ -74,14 +74,14 @@ export class GitTasksService {
         const timeout = setTimeout(() => controller.abort(), 600_000)
         const logger = this.logs.create('arw-git')
         try {
-            this.notifications.info(direction === 'pull' ? t('ARW：正在通过本地拉取') : t('ARW：正在通过本地推送'))
+            if(!options.quiet)this.notifications.info(direction === 'fetch' ? t('正在提取上游状态…') : direction === 'pull' ? t('正在拉取上游更新…') : t('正在推送到上游…'))
             const result = await relayGit(direction, new TabbyRelayTransport(session, workspace.root), {
                 storagePath: join(dirname(configPath), 'omw', 'git-relay'),
                 signal: controller.signal,
                 report: message => {logger.info(message);options.report?.(message)},
             })
-            this.notifications.info(direction === 'push' ? t('ARW：已通过本地推送已有提交')
-                : result?.status === 'up-to-date' ? t('ARW：已是最新提交') : t('ARW：已通过本地拉取'))
+            if(!options.quiet)this.notifications.info(direction === 'fetch' ? t('已提取上游状态') : direction === 'push' ? t('已推送到上游分支')
+                : result?.status === 'up-to-date' ? t('ARW：已是最新提交') : t('已快进拉取'))
             return true
         } catch (error) {
             return fail(controller.signal.aborted

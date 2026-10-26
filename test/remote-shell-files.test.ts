@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn, execFileSync } from 'node:child_process'
-import { truncate, mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, chmod, chown, stat, readdir } from 'node:fs/promises'
+import { truncate, mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, chmod, chown, stat, readdir, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Subject } from 'rxjs'
 import { remoteWorkspace } from '../src/adapters/remote-workspace'
 import { optionalSftp } from '../src/adapters/optional-sftp'
+import { cliWorkspaceFiles } from '../src/arw-cli/workspace-files'
 import { parseShellDirectory } from '../src/adapters/shell-files'
 import { sftpFixture } from './sftp-copy-fixture'
-import { textHash } from '../src/arw-tree/workspace'
 import { statSync, readdirSync } from 'node:fs'
 
 function sessionFixture (cwd:string, beforeCommand?:(command:string)=>Promise<void>, env=process.env) {
@@ -40,7 +40,131 @@ function sessionFixture (cwd:string, beforeCommand?:(command:string)=>Promise<vo
     return {session,commands,hooks,get opens(){return opens}}
 }
 
-test('SFTP saves ignore missing or invalid SFTP modes and verify actual metadata before writing', {skip:process.platform==='win32'}, async context=>{
+test('interactive SFTP follows selected links while CLI paths remain scoped', {skip:process.platform==='win32'},async context=>{
+    const directory=await mkdtemp(join(tmpdir(),'arw-sftp-scope-'))
+    context.after(()=>rm(directory,{recursive:true,force:true}))
+    const root=join(directory,'project'),outside=join(directory,'outside')
+    await mkdir(root);await mkdir(outside)
+    await writeFile(join(outside,'file'),'before')
+    await symlink(outside,join(root,'linked'))
+    const fixture=sessionFixture(root),sftp=sftpFixture()
+    ;(sftp as any).readdir=async(path:string)=>(await readdir(path)).map(name=>({name,isDirectory:false,isSymlink:false}))
+    fixture.session.openSFTP=async()=>sftp
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    const original=await workspace.read('linked/file')
+    assert.equal(original.content,'before')
+    assert.equal((await workspace.list('linked'))[0].name,'file')
+    assert.equal(Buffer.from(await workspace.readBytes!('linked/file',1024)).toString(),'before')
+    await workspace.write('linked/file','after',original.hash)
+    assert.equal(await readFile(join(outside,'file'),'utf8'),'after')
+    assert.equal(fixture.commands.length,0)
+    const cli=cliWorkspaceFiles(workspace)
+    await assert.rejects(cli.read('linked/file'),/symbolic link/)
+    await assert.rejects(cli.list('linked'),/symbolic link/)
+    await assert.rejects(cli.write('linked/file','unsafe'),/symbolic link/)
+    await assert.rejects(cli.read('../outside/file'),/outside workspaceRoot/)
+    assert.equal(await readFile(join(outside,'file'),'utf8'),'after')
+})
+
+test('SFTP saves support private new files, BOM text and metadata versions and bounded large writes without SSH', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-sftp-write-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const fixture=sessionFixture(root),sftp=sftpFixture(),sizes:number[]=[]
+    const open=sftp.open.bind(sftp)
+    sftp.open=async(path,mode)=>{
+        const file=await open(path,mode),write=file.write.bind(file)
+        file.write=async bytes=>{sizes.push(bytes.length);await write(bytes)}
+        return file
+    }
+    fixture.session.openSFTP=async()=>sftp
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    await workspace.write('empty','')
+    assert.equal((await stat(join(root,'empty'))).mode&0o777,0o600)
+    await writeFile(join(root,'bom'),Buffer.from('\ufeff中文'))
+    await workspace.write('bom','updated',(await workspace.read('bom')).hash)
+    const content='x'.repeat(10*1024*1024)
+    await workspace.write('large',content)
+    assert.equal((await workspace.read('large')).content,content)
+    assert.ok(sizes.length>1&&sizes.every(size=>size<=256*1024))
+    assert.equal((await stat(join(root,'large'))).mode&0o777,0o600)
+    await assert.rejects(workspace.write('missing','unsafe','sftp:3:0'),/远端文件已变化/)
+    await assert.rejects(stat(join(root,'missing')),/ENOENT/)
+    assert.equal(fixture.commands.length,0)
+})
+
+test('failed SFTP writes retain partial contents and require reload before retry', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-sftp-failed-write-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const target=join(root,'file');await writeFile(target,'before')
+    const fixture=sessionFixture(root),sftp=sftpFixture(),open=sftp.open.bind(sftp)
+    let closes=0
+    sftp.open=async(path,mode)=>{
+        const file=await open(path,mode),write=file.write.bind(file),close=file.close.bind(file)
+        if(mode&2)file.write=async()=>{await write(Buffer.from('partial'));throw new Error('SFTP write failed')}
+        file.close=async()=>{closes++;await close()}
+        return file
+    }
+    fixture.session.openSFTP=async()=>sftp
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    await assert.rejects(workspace.write('file','after'),/SFTP write failed/)
+    assert.equal(closes,1)
+    assert.equal(await readFile(target,'utf8'),'partial')
+    assert.ok(workspace.saveIssue?.('file'))
+    await assert.rejects(workspace.write('file','retry'),/尚未确认/)
+    assert.equal((await workspace.reloadSave!('file')).content,'partial')
+    assert.equal(workspace.saveIssue?.('file'),undefined)
+    assert.equal(fixture.commands.length,0)
+})
+
+test('a lost SFTP close reply can be verified without an SSH command', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-sftp-verify-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const target=join(root,'file');await writeFile(target,'before');await chmod(target,0o640)
+    const fixture=sessionFixture(root),sftp=sftpFixture(),open=sftp.open.bind(sftp)
+    sftp.open=async(path,mode)=>{
+        const file=await open(path,mode),close=file.close.bind(file)
+        if(mode&2)file.close=async()=>{await close();throw new Error('SFTP close reply lost')}
+        return file
+    }
+    fixture.session.openSFTP=async()=>sftp
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    await assert.rejects(workspace.write('file','after'),/SFTP close reply lost/)
+    assert.ok(workspace.saveIssue?.('file'))
+    assert.equal((await workspace.verifySave!('file')).content,'after')
+    assert.equal(workspace.saveIssue?.('file'),undefined)
+    assert.equal(fixture.commands.length,0)
+})
+
+test('SFTP conflicts use size and modification time and saves never reopen for reading', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-sftp-version-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const target=join(root,'file'),time=new Date(1700000000000)
+    await writeFile(target,'aaaa');await utimes(target,time,time)
+    const fixture=sessionFixture(root),sftp=sftpFixture(),open=sftp.open.bind(sftp)
+    fixture.session.openSFTP=async()=>sftp
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    const original=await workspace.read('file')
+    assert.equal(original.hash,`sftp:4:${time.getTime()}`)
+    await writeFile(target,'bbbbb');await utimes(target,time,time)
+    await assert.rejects(workspace.write('file','unsafe',original.hash),/远端文件已变化/)
+    const resized=await workspace.read('file')
+    await writeFile(target,'ccccc');await utimes(target,time,new Date(time.getTime()+10000))
+    await assert.rejects(workspace.write('file','unsafe',resized.hash),/远端文件已变化/)
+    const latest=await workspace.read('file')
+    sftp.open=async(path,mode)=>{
+        assert.equal(mode&1,0,'saving must not open a read handle')
+        return open(path,mode)
+    }
+    const saved=await workspace.write('file','updated',latest.hash)
+    assert.match(saved.hash,/^sftp:7:/)
+    const next=await workspace.write('file','again',saved.hash)
+    assert.match(next.hash,/^sftp:5:/)
+    assert.equal(await readFile(target,'utf8'),'again')
+    assert.equal(workspace.saveIssue?.('file'),undefined)
+    assert.equal(fixture.commands.length,0)
+})
+
+test('SFTP saves leave ordinary permissions alone and do not fall back on operation errors', {skip:process.platform==='win32'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-sftp-mode-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const target=join(root,'script.sh')
@@ -58,9 +182,8 @@ test('SFTP saves ignore missing or invalid SFTP modes and verify actual metadata
         assert.ok(fixture.commands.every(command=>!command.includes('--preserve=mode,ownership,xattr')),'in-place saves never copy file attributes')
     }
     await writeFile(target,'unchanged');await chmod(target,0o751)
-    const fixture=sessionFixture(root,async command=>{
-        if(command.includes('stat -c'))throw new Error('stat unavailable')
-    }),sftp=sftpFixture()
+    const fixture=sessionFixture(root),sftp=sftpFixture()
+    sftp.stat=async()=>{throw new Error('stat unavailable')}
     fixture.session.openSFTP=async()=>sftp
     await assert.rejects(remoteWorkspace(fixture.session as any,root).write('script.sh','unsafe'),/stat unavailable/)
     assert.equal(await readFile(target,'utf8'),'unchanged')
@@ -68,7 +191,7 @@ test('SFTP saves ignore missing or invalid SFTP modes and verify actual metadata
     assert.deepEqual(await readdir(root),['script.sh'])
 })
 
-test('SFTP and shell saves preserve ordinary and setuid/setgid permissions', {skip:process.platform!=='linux'}, async context=>{
+test('SFTP and shell saves preserve ordinary permissions without managing setuid/setgid', {skip:process.platform!=='linux'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-save-metadata-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const target=join(root,'file'),group=process.getgroups?.().find(group=>group!==process.getgid?.())
@@ -78,10 +201,6 @@ test('SFTP and shell saves preserve ordinary and setuid/setgid permissions', {sk
             await chmod(target,mode)
             const before=await stat(target),fixture=sessionFixture(root)
             if(withSftp)fixture.session.openSFTP=async()=>sftpFixture()
-            if(mode&0o6000){
-                const workspace=remoteWorkspace(fixture.session as any,root)
-                await workspace.write('file','after')
-            }
             if(mode===0o000&&process.getuid?.()!==0){
                 await assert.rejects(remoteWorkspace(fixture.session as any,root).write('file','after'),/permission denied/i)
                 assert.equal((await stat(target)).mode&0o7777,0o000)
@@ -90,7 +209,7 @@ test('SFTP and shell saves preserve ordinary and setuid/setgid permissions', {sk
             }
             await remoteWorkspace(fixture.session as any,root).write('file','after')
             const after=await stat(target)
-            assert.equal(after.mode&0o7777,before.mode&0o7777,`SFTP=${withSftp}, mode=${mode.toString(8)}`)
+            assert.equal(after.mode&0o1777,before.mode&0o1777,`SFTP=${withSftp}, mode=${mode.toString(8)}`)
             assert.equal(after.uid,before.uid);assert.equal(after.gid,before.gid)
             await chmod(target,0o600)
             assert.equal(await readFile(target,'utf8'),'after')
@@ -147,15 +266,21 @@ test('in-place saves do not stage or copy file attributes', {skip:process.platfo
     }
 })
 
-test('remote in-place saves refuse hard links', {skip:process.platform!=='linux'}, async context=>{
+test('SFTP in-place saves retain hard links while the shell fallback refuses them', {skip:process.platform!=='linux'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-save-hardlink-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const target=join(root,'file');await writeFile(target,'before');await link(target,join(root,'alias'))
     for(const withSftp of [false,true]){
         const fixture=sessionFixture(root)
         if(withSftp)fixture.session.openSFTP=async()=>sftpFixture()
-        await assert.rejects(remoteWorkspace(fixture.session as any,root).write('file','after'),/hard-linked/)
-        assert.equal(await readFile(target,'utf8'),'before');assert.equal(await readFile(join(root,'alias'),'utf8'),'before')
+        if(withSftp){
+            await remoteWorkspace(fixture.session as any,root).write('file','after')
+            assert.equal(await readFile(join(root,'alias'),'utf8'),'after')
+            assert.equal(fixture.commands.length,0)
+        }else{
+            await assert.rejects(remoteWorkspace(fixture.session as any,root).write('file','after'),/hard-linked/)
+            assert.equal(await readFile(target,'utf8'),'before');assert.equal(await readFile(join(root,'alias'),'utf8'),'before')
+        }
         assert.equal((await stat(target)).nlink,2)
     }
 })
@@ -223,7 +348,7 @@ test('in-place saves do not need ACL tools because extended ACLs remain on the s
     const root=await mkdtemp(join(tmpdir(),'arw-save-no-acl-tools-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const commands=join(root,'commands');await mkdir(commands)
-    for(const executable of ['realpath','stat','cp','ls','mv','rm','chmod','sh','base64','wc','sha256sum','cat','dd']){
+    for(const executable of ['realpath','stat','cp','ls','mv','rm','chmod','sh','base64','wc','cat']){
         const source=execFileSync('/bin/sh',['-c',`command -v ${executable}`],{encoding:'utf8'}).trim()
         await symlink(source,join(commands,executable))
     }
@@ -233,18 +358,18 @@ test('in-place saves do not need ACL tools because extended ACLs remain on the s
         const fixture=sessionFixture(root,undefined,{...process.env,PATH:commands})
         if(withSftp)fixture.session.openSFTP=async()=>sftpFixture()
         const workspace=remoteWorkspace(fixture.session as any,root),original=await workspace.read('file')
-        await workspace.write('file','ordinary save',original.hash)
+        const saved=await workspace.write('file','ordinary save',original.hash)
         assert.equal(await readFile(target,'utf8'),'ordinary save')
         execFileSync('setfacl',['-m','u:65534:r--',target])
         const aclBefore=execFileSync('getfacl',['-cpn',target],{encoding:'utf8'})
-        await workspace.write('file','ACL-safe in-place save',textHash('ordinary save'))
+        await workspace.write('file','ACL-safe in-place save',saved.hash)
         assert.equal(await readFile(target,'utf8'),'ACL-safe in-place save')
         assert.equal(execFileSync('getfacl',['-cpn',target],{encoding:'utf8'}),aclBefore)
         assert.ok((await readdir(root)).every(name=>!name.startsWith('.arw-')))
     }
 })
 
-test('ordinary saves use one SSH channel and never reread content through SFTP', {skip:process.platform==='win32'},async context=>{
+test('ordinary SFTP saves preserve current permissions and check content conflicts without SSH', {skip:process.platform==='win32'},async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-sftp-save-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const target=join(root,'private.txt');await writeFile(target,'before');await chmod(target,0o600)
@@ -252,12 +377,10 @@ test('ordinary saves use one SSH channel and never reread content through SFTP',
     fixture.session.openSFTP=async()=>sftp
     const workspace=remoteWorkspace(fixture.session as any,root),before=await workspace.read('private.txt')
     await chmod(target,0o640)
-    sftp.open=async()=>{throw Error('Save must not use SFTP')}
-    sftp.stat=async()=>{throw Error('Save must not stat through SFTP')}
     fixture.commands.length=0
     const saved=await workspace.write('private.txt','after',before.hash)
     assert.equal(saved.content,'after');assert.equal(await readFile(target,'utf8'),'after')
-    assert.equal(fixture.commands.length,1)
+    assert.equal(fixture.commands.length,0)
     assert.equal((await stat(target)).mode&0o777,0o640)
     await assert.rejects(workspace.write('private.txt','stale',before.hash),/远端文件已变化|Remote file has changed/)
     assert.equal(workspace.saveIssue?.('private.txt'),undefined)
@@ -431,9 +554,7 @@ test('SFTP editor save verifies authoritative metadata and preserves contents an
     const original=await workspace.read('中文 file')
     fixture.commands.length=0
     await workspace.write('中文 file','updated\n',original.hash)
-    assert.equal(fixture.commands.filter(command=>command.includes('stat -c')).length,1)
-    assert.equal(fixture.commands.length,1,'validation and streaming share a single SSH channel')
-    assert.equal(fixture.commands.filter(command=>command.includes('realpath -e')).length,1)
+    assert.equal(fixture.commands.length,0,'SFTP reads and writes never open an SSH command channel')
     assert.equal(await readFile(target,'utf8'),'updated\n')
     assert.equal((await stat(target)).mode&0o777,0o640)
     assert.deepEqual(await readdir(root),['中文 file'])
@@ -454,14 +575,15 @@ test('single-channel saves reject stale contents and symbolic-link targets', {sk
     assert.equal(workspace.saveIssue?.('file'),undefined)
 })
 
-test('single-channel saves preserve BOM hash semantics and stream content only after validation', {skip:process.platform==='win32'},async context=>{
+test('single-channel saves preserve BOM text and compare metadata versions and stream content only after validation', {skip:process.platform==='win32'},async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-sftp-warm-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const target=join(root,'bom.txt')
     await writeFile(target,Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),Buffer.from('中文 before')]));await chmod(target,0o640)
     const fixture=sessionFixture(root),workspace=remoteWorkspace(fixture.session as any,root)
     const original=await workspace.read('bom.txt')
-    assert.equal(original.hash,textHash('中文 before'))
+    assert.equal(original.content,'中文 before')
+    assert.match(original.hash,/^shell:16:/)
     fixture.commands.length=0
     await workspace.write('bom.txt','中文 changed',original.hash)
     assert.equal(fixture.commands.length,1)
@@ -475,7 +597,7 @@ test('single-channel saves preserve BOM hash semantics and stream content only a
     assert.equal(await readFile(target,'utf8'),'中文 changed')
 })
 
-test('missing remote hashing fails before upload and leaves the file and warning state untouched', {skip:process.platform==='win32'},async context=>{
+test('shell fallback saves do not require remote content hashing', {skip:process.platform==='win32'},async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-save-missing-hash-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const target=join(root,'file');await writeFile(target,'before')
@@ -483,24 +605,43 @@ test('missing remote hashing fails before upload and leaves the file and warning
     const original=await workspace.read('file')
     let uploaded=false
     fixture.hooks.afterInput=async()=>{uploaded=true}
-    fixture.hooks.rewrite=command=>command.replaceAll('sha256sum','arw_missing_sha256sum')
-    await assert.rejects(workspace.write('file','after',original.hash),/arw_missing_sha256sum/)
-    assert.equal(uploaded,false)
-    assert.equal(await readFile(target,'utf8'),'before')
+    fixture.hooks.rewrite=command=>{assert.ok(!command.includes('sha256sum'));return command}
+    const saved=await workspace.write('file','after',original.hash)
+    assert.equal(uploaded,true)
+    assert.match(saved.hash,/^shell:5:/)
+    assert.equal(await readFile(target,'utf8'),'after')
     assert.equal(workspace.saveIssue?.('file'),undefined)
 })
 
-test('special permission restore failure retains the save warning', {skip:process.platform!=='linux'},async context=>{
-    const root=await mkdtemp(join(tmpdir(),'arw-save-special-failure-'))
+test('cleared setuid/setgid bits neither trigger restoration nor block save verification', {skip:process.platform!=='linux'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-save-special-ignored-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
-    const target=join(root,'file');await writeFile(target,'before');await chmod(target,0o6751)
-    const fixture=sessionFixture(root),workspace=remoteWorkspace(fixture.session as any,root)
-    const original=await workspace.read('file')
-    fixture.hooks.rewrite=command=>command.replace('chmod "$_arw_mode" --', 'arw_missing_chmod "$_arw_mode" --')
-    await assert.rejects(workspace.write('file','after',original.hash),/arw_missing_chmod/)
-    assert.ok(workspace.saveIssue?.('file'))
-    assert.equal(await readFile(target,'utf8'),'after')
-    await assert.rejects(workspace.write('file','retry'),/尚未确认/)
+    const target=join(root,'file')
+    for(const withSftp of [false,true]){
+        await writeFile(target,'before');await chmod(target,0o6751)
+        const fixture=sessionFixture(root),sftp=sftpFixture(),open=sftp.open.bind(sftp)
+        if(withSftp){
+            sftp.open=async(path,mode)=>{
+                const file=await open(path,mode),write=file.write.bind(file),close=file.close.bind(file)
+                if(mode&2){
+                    file.write=async bytes=>{await write(bytes);await chmod(target,0o751)}
+                    file.close=async()=>{await close();throw new Error('close reply lost')}
+                }
+                return file
+            }
+            sftp.chmod=async()=>{throw new Error('must not restore special bits')}
+            fixture.session.openSFTP=async()=>sftp
+        }else{
+            fixture.hooks.rewrite=command=>command.replace('exec 3>&-',`exec 3>&-; chmod 751 ${target}; printf "close reply lost" >&2; exit 1`)
+        }
+        const workspace=remoteWorkspace(fixture.session as any,root),original=await workspace.read('file')
+        await assert.rejects(workspace.write('file','after',original.hash),/close reply lost/)
+        assert.ok(workspace.saveIssue?.('file'))
+        assert.equal((await stat(target)).mode&0o7777,0o751)
+        fixture.hooks.rewrite=undefined
+        assert.equal((await workspace.verifySave!('file')).content,'after')
+        assert.equal(workspace.saveIssue?.('file'),undefined)
+    }
 })
 
 test('background metadata checks yield to an in-flight remote save', {skip:process.platform==='win32'},async context=>{
@@ -510,7 +651,12 @@ test('background metadata checks yield to an in-flight remote save', {skip:proce
     const fixture=sessionFixture(root),sftp=sftpFixture()
     let reads=0,releaseWrite!:()=>void,markWriteStarted!:()=>void
     const writeReleased=new Promise<void>(resolve=>{releaseWrite=resolve}),writeStarted=new Promise<void>(resolve=>{markWriteStarted=resolve})
-    fixture.hooks.afterInput=async()=>{markWriteStarted();await writeReleased}
+    const originalOpen=sftp.open.bind(sftp)
+    sftp.open=async(path,mode)=>{
+        const file=await originalOpen(path,mode)
+        if(mode&2){const write=file.write.bind(file);file.write=async bytes=>{markWriteStarted();await writeReleased;await write(bytes)}}
+        return file
+    }
     ;(sftp as any).readdir=async(path:string)=>{reads++;return readdirSync(path).map(name=>{const info=statSync(join(path,name));return {name,isDirectory:info.isDirectory(),isSymlink:info.isSymbolicLink(),size:info.size,modified:info.mtime}})}
     fixture.session.openSFTP=async()=>sftp
     const writer=remoteWorkspace(fixture.session as any,root),watcher=remoteWorkspace(fixture.session as any,root)

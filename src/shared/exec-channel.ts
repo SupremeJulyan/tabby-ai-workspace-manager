@@ -17,7 +17,7 @@ export interface ExecChannel {
 }
 
 export interface ExecOptions {
-  signal?:AbortSignal;maxBytes?:number;timeoutMs?:number;input?:Uint8Array;
+  operation?:string;signal?:AbortSignal;maxBytes?:number;timeoutMs?:number;input?:Uint8Array;
   inputReadyMarker?:string;onStdout?:(output:string)=>void;
 }
 

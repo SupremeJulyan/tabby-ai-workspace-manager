@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, copyFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { relayGit, type RelayTransport } from '../src/arw-tree/git/git-relay';
@@ -37,6 +37,13 @@ test('desktop relay orchestrates pull and push over bundle transport', async t =
     arg === 'https://example.test/project.git' ? upstream : arg), signal, report);
   await writeFile(path.join(seed, 'file'), 'two');
   await git(['-C', seed, 'commit', '-am', 'two']); await git(['-C', seed, 'push', 'origin', 'main']);
+  await writeFile(path.join(remote,'file'),'uncommitted local edit');
+  assert.equal((await relayGit('fetch',transport,{storagePath,local}))?.status,'fetched');
+  assert.equal(await git(['-C',remote,'show','HEAD:file']),'one','fetch must not move HEAD');
+  assert.equal(await readFile(path.join(remote,'file'),'utf8'),'uncommitted local edit','fetch must preserve dirty files');
+  assert.equal(await git(['-C',remote,'show','origin/main:file']),'two');
+  assert.equal((await relayGit('fetch',transport,{storagePath,local}))?.status,'up-to-date');
+  await writeFile(path.join(remote,'file'),'one');
   assert.equal((await relayGit('pull', transport, { storagePath, local }))?.status, 'merged');
   assert.equal(await git(['-C', remote, 'show', 'HEAD:file']), 'two');
   for (const [key, value] of [['user.name', 'Relay Test'], ['user.email', 'relay@example.test']]) {

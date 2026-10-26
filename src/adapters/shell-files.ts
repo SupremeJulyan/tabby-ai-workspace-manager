@@ -1,6 +1,6 @@
 import { t } from '../shared/i18n'
 import { posix } from 'node:path'
-import { type WorkspaceFile, textFileLimit } from '../arw-tree/workspace'
+import { type WorkspaceFile, type WorkspaceText, textFileLimit } from '../arw-tree/workspace'
 import { shellQuote } from '../shared/shell-quote'
 import { TabbyRelayTransport } from './transport'
 
@@ -38,19 +38,25 @@ done`
     return parseShellDirectory(result.stdout,input)
 }
 
-export async function readShellText (transport:TabbyRelayTransport, target:string,signal?:AbortSignal):Promise<string> {
+export async function readShellText (transport:TabbyRelayTransport, target:string,signal?:AbortSignal):Promise<WorkspaceText> {
     const quoted=shellQuote(target)
     const result=await transport.run(t`test -f ${quoted} || { printf '%s\\n' '仅支持读取普通文本文件' >&2; exit 1; }
-size=$(wc -c < ${quoted}) || exit $?
+version=$(stat -c '%s:%y' -- ${quoted}) || exit $?
+size=\${version%%:*}
 test "$size" -le ${textFileLimit} || { printf '%s\\n' '文本文件上限为 500 MiB' >&2; exit 1; }
-base64 < ${quoted}`,signal??AbortSignal.timeout(30000),{maxBytes:Math.ceil(textFileLimit/3)*4+Math.ceil(textFileLimit/57)+1024})
+printf 'ARW_TEXT_VERSION:%s\\n' "$version"
+base64 < ${quoted} || exit $?
+test "$(stat -c '%s:%y' -- ${quoted})" = "$version" || { printf '%s\\n' '远端文件已变化' >&2; exit 1; }`,signal??AbortSignal.timeout(30000),{maxBytes:Math.ceil(textFileLimit/3)*4+Math.ceil(textFileLimit/57)+2048})
     signal?.throwIfAborted()
-    if(result.exitCode!==0)throw new Error(result.stderr.trim()||t('无法通过 SSH 读取远程文本（需要 base64 和 wc）'))
-    const encoded=result.stdout.replace(/[\r\n\t ]/g,'')
+    if(result.exitCode!==0)throw new Error(result.stderr.trim()||t('无法通过 SSH 读取远程文本（需要 base64 和 stat）'))
+    const newline=result.stdout.indexOf('\n'),header=result.stdout.slice(0,newline)
+    if(newline<0||!/^ARW_TEXT_VERSION:\d+:.+$/.test(header))throw new Error(t('无法读取远端文件的修改时间或大小'))
+    const version='shell:'+header.slice('ARW_TEXT_VERSION:'.length)
+    const encoded=result.stdout.slice(newline+1).replace(/[\r\n\t ]/g,'')
     const bytes=Buffer.from(encoded,'base64')
     if(bytes.toString('base64')!==encoded)throw new Error(t('SSH 文本结果不是完整的 Base64 数据'))
     if(bytes.length>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
     if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
-    return new TextDecoder('utf-8',{fatal:true}).decode(bytes)
+    return {content:new TextDecoder('utf-8',{fatal:true}).decode(bytes),hash:version}
 }
 

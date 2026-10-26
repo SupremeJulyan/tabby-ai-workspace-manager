@@ -1,3 +1,5 @@
+import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-recovery'
+import { logOperation } from '../services/operation-log'
 import { setTerminalCommandMode } from '../shared/terminal-command'
 import { openFilePane } from './open-file-pane'
 import { t } from '../shared/i18n'
@@ -350,6 +352,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private saveActiveState(captureScroll=true):void{
         if(!this.activeTab)return
         this.tabStates.set(this.activeTab,this.stateSnapshot(captureScroll))
+        const terminal=this.selection?.terminal
+        if(terminal&&this.browserWorkspace)rememberWorkspace(terminal,this.breadcrumb,this.mode)
     }
     private captureScroll():void{
         if(!this.viewReady||typeof document==='undefined')return
@@ -372,7 +376,16 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     private restoreTabState(key:object,selection:WorkspaceSelection):void{
         const state=this.tabStates.get(key)
-        if(!state){this.resetVisibleState();void this.refresh();return}
+        if(!state){
+            this.resetVisibleState()
+            const saved=workspaceRecoveryState(selection.terminal)
+            if(saved&&selection.workspace){
+                this.mode=saved.mode==='activity'&&!selection.remote?'files':saved.mode
+                const workspace=selection.remote?remoteWorkspace(selection.remote,saved.root):localWorkspace(saved.root)
+                void this.showWorkspace(workspace,true)
+            }else void this.refresh(true)
+            return
+        }
         this.gitAbort?.abort();this.gitAbort=undefined;this.version++;this.treeRequest++;this.gitVersion++
         this.restoreLoadedState(state,selection)
     }
@@ -415,7 +428,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.loading=false;this.gitLoading=false
         this.loadProjects(selection.workspace);this.activeProject=state.activeProject
         this.restoreScroll(state.viewScroll);this.render()
-        if(!this.browserWorkspace){void this.refresh();return}
+        if(!this.browserWorkspace){void this.refresh(true);return}
         this.watchWorkspace()
     }
     private projectContext (workspace: Workspace): Workspace {
@@ -453,7 +466,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(!tabChanged&&this.browserWorkspace)this.saveActiveState()
             this.activeTab=nextTab;this.selection=next
             if(nextTab)this.restoreTabState(nextTab,next)
-            else {this.resetVisibleState();void this.refresh()}
+            else {this.resetVisibleState();void this.refresh(true)}
         })
         this.subscription.add(this.projectStore?.changed?.subscribe(()=>this.render()))
         this.subscription.add(new Subscription(() => this.disposeWorkspaceWatch()))
@@ -473,11 +486,33 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     updateFilter (value:string):void {this.filterText=value;this.rememberIfTabbed()}
     setActivityCategory (value:string):void {this.activityCategory=value;this.rememberIfTabbed()}
     setActivityStatus (value:string):void {this.activityStatus=value;this.rememberIfTabbed()}
+    private autoFetchRequest=0
+    private autoFetch?:Promise<void>
     setMode (mode:'files'|'git'|'activity'):void{
         if(mode==='activity'&&!this.isRemote)return
+        const enteringGit=mode==='git'&&this.mode!=='git'
+        if(mode!==this.mode)this.autoFetchRequest++
         this.mode=mode
         if(this.selection?.workspace)this.rememberBrowsing()
+        if(enteringGit)this.autoFetch=this.fetchOnGitEntry(this.autoFetchRequest)
         this.render()
+    }
+    private async fetchOnGitEntry(request:number):Promise<void>{
+        const tab=this.activeTab,workspace=this.selection?.workspace
+        const active=()=>request===this.autoFetchRequest&&tab===this.activeTab&&workspace===this.selection?.workspace&&this.mode==='git'
+        if(!workspace)return
+        try{
+            if(!this.browserWorkspace)await this.refresh()
+            this.ensureGitScan()
+            await this.gitScan
+            if(!active())return
+            for(const repository of [...this.repositories]){
+                if(!active())return
+                if(repository.busy||repository.loading)continue
+                if(repository.workspace.kind==='remote'&&!['tracked','missing-upstream'].includes(repository.syncState?.kind??''))continue
+                await this.syncGit('fetch',repository,true)
+            }
+        }catch(error){logOperation('自动提取 Git 上游状态',{root:workspace.root,error:String(error)})}
     }
     private loadProjects (workspace?: Workspace): void {
         const root=this.browserWorkspace?this.breadcrumb:workspace?.root
@@ -496,7 +531,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             const backend=this.savedWorkspace(project)
             if(backend)void this.projectStore.open(project,backend,selection?.remote,selection?.sourceTerminal??selection?.terminal).catch(error=>{
                 if(this.selection!==selection)return
-                this.error=t`工作区转发恢复失败：${String(error)}`;this.render()
+                // Automatic forwarding restoration stays silent on failure.
             })
         }
     }
@@ -608,18 +643,18 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.rememberIfTabbed()
     }
     private git (repository:GitRepositoryView): RemoteGit { return workspaceGit(repository.workspace) }
-    private async gitOperation (repository:GitRepositoryView, operation:()=>Promise<void>, message?:string): Promise<void> {
+    private async gitOperation (repository:GitRepositoryView, operation:()=>Promise<void>, message?:string, quiet=false): Promise<void> {
         if(repository.busy)return
         const version=this.version
-        repository.busy=true;repository.error='';repository.message=undefined;this.gitNoticeByRoot.delete(repository.root);this.render()
-        try { await operation(); if(message){repository.message=message;if(version===this.version&&this.repositories.includes(repository))this.gitNoticeByRoot.set(repository.root,{error:'',message})} }
-        catch(error){repository.error=String(error);if(version===this.version&&this.repositories.includes(repository))this.gitNoticeByRoot.set(repository.root,{error:repository.error});this.render()}
+        repository.busy=true;if(!quiet){repository.error='';repository.message=undefined;this.gitNoticeByRoot.delete(repository.root)}this.render()
+        try { await operation(); if(message&&!quiet){repository.message=message;if(version===this.version&&this.repositories.includes(repository))this.gitNoticeByRoot.set(repository.root,{error:'',message})} }
+        catch(error){logOperation(message??'Git 操作',{root:repository.root,background:quiet,error:String(error)});if(!quiet){repository.error=String(error);if(version===this.version&&this.repositories.includes(repository))this.gitNoticeByRoot.set(repository.root,{error:repository.error});this.render()}}
         finally{
             if(version===this.version&&this.repositories.includes(repository)){
                 try{
                     const changes=await this.git(repository).status()
                     if(version===this.version&&this.repositories.includes(repository))this.applyGitChanges(repository,changes)
-                }catch(error){repository.error=String(error)}
+                }catch(error){if(!quiet)repository.error=String(error)}
             }
             repository.busy=false;this.render()
         }
@@ -698,11 +733,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(request===this.manualRefreshRequest){this.manualRefreshing=false;this.render()}
         }
     }
-    async refresh (): Promise<void> {
+    async refresh (background=false): Promise<void> {
         const workspace = this.browserWorkspace ?? this.selection?.workspace
         this.loadProjects(this.selection?.workspace)
-        if(!this.browserWorkspace)await this.showWorkspace(workspace)
-        else await this.refreshFiles()
+        if(!this.browserWorkspace)await this.showWorkspace(workspace,background)
+        else await this.refreshFiles({background})
     }
     private async refreshFiles (options:{preserveError?:boolean; background?:boolean}={}): Promise<void> {
         const workspace=this.browserWorkspace
@@ -736,7 +771,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 }
             }
         }
-        catch(error){if(active()&&!options.background)this.error=String(error)}
+        catch(error){logOperation('读取工作区目录',{root:workspace.root,background:!!options.background,error:String(error)});if(active()&&!options.background)this.error=String(error)}
         finally{
             if(active()&&!options.background){this.loading=false;if(options.preserveError&&!this.nodes.length&&requestError)this.error=requestError;this.ensureGitScan()}
             if(!options.background)this.render()
@@ -832,7 +867,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.render()
         }
     }
-    private async showWorkspace (workspace?: Workspace): Promise<void> {
+    private async showWorkspace (workspace?: Workspace,background=false): Promise<void> {
         this.closeDirectoryCandidates()
         this.directoryListings.clear()
         this.directoryDraft=null
@@ -850,7 +885,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.nodes = files.slice(0,2000).map(file => ({ ...file, depth:0 }))
             this.loadProjects(this.selection?.workspace);this.rememberBrowsing()
             if (files.length>2000) this.error = t('此目录超过 2000 项，仅显示前 2000 项')
-        } catch (error) { if (version===this.version) this.error = String(error) }
+        } catch (error) { logOperation('打开工作区目录',{root:workspace.root,background,error:String(error)});if (!background&&version===this.version) this.error = String(error) }
         finally { if (version===this.version) this.loading = false; this.render() }
     }
     private downloadingNodes=new WeakSet<TreeNode>()
@@ -881,7 +916,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if (!node.directory) {
             this.rememberBrowsing()
             const kind=previewKind(node.path)
-            if(kind){
+            if(kind&&kind!=='markdown'){
                 const paths=workspacePath(workspace.kind),parent=paths.dirname(node.path)
                 const imagePaths=this.nodes.filter(entry=>!entry.directory&&previewKind(entry.path)==='image'&&paths.dirname(entry.path)===parent).map(entry=>entry.path)
                 await openFilePane(this.app,{type:ArwPreviewComponent,inputs:{workspace,filePath:node.path,imagePaths}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
@@ -1009,7 +1044,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             await this.loadGitInspector(repository)
         },t`已切换到 ${branch.name}`)
     }
-    private async loadGitInspector (repository:GitRepositoryView, signal?:AbortSignal):Promise<void>{
+    private async loadGitInspector (repository:GitRepositoryView, signal?:AbortSignal,quiet=false):Promise<void>{
         const git=workspaceGit(repository.workspace,signal,true)
         const version=(repository.inspectorVersion??0)+1
         repository.inspectorVersion=version;repository.inspectorPending=true;this.render()
@@ -1021,7 +1056,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }
         if(commits.status==='fulfilled')repository.commits=commits.value
         repository.syncState=sync.status==='fulfilled'?sync.value:undefined
-        repository.syncError=sync.status==='rejected'?redactSensitiveText(String(sync.reason)):undefined
+        if(!quiet)repository.syncError=sync.status==='rejected'?redactSensitiveText(String(sync.reason)):undefined
         if(commits.status==='fulfilled'){
             try{
                 const history=await readCommitSyncHistory(git,commits.value,repository.syncState,repository.pushedCommits,repository.pulledCommits)
@@ -1030,10 +1065,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             }catch(error){
                 if(signal?.aborted||repository.inspectorVersion!==version||!this.repositories.includes(repository))return
                 repository.commits=commits.value.map(commit=>({...commit,syncStatus:'unknown'}))
-                repository.syncError=redactSensitiveText(String(error))
+                if(!quiet)repository.syncError=redactSensitiveText(String(error))
             }
         }
-        repository.inspectorError=[branches,commits].flatMap(result=>result.status==='rejected'?[String(result.reason)]:[]).join('\n')
+        if(!quiet)repository.inspectorError=[branches,commits].flatMap(result=>result.status==='rejected'?[String(result.reason)]:[]).join('\n')
         this.render()
     }
     private applyGitChanges(entry:GitRepositoryView,changes:GitChange[]):void{
@@ -1073,15 +1108,15 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     private ensureGitScan():void{
         if(!this.browserWorkspace||this.gitLoading)return
-        if((this.gitNeedsScan||this.gitScope!==this.currentGitScope())&&!this.reuseGitScan())void this.gitStatus()
+        if((this.gitNeedsScan||this.gitScope!==this.currentGitScope())&&!this.reuseGitScan())void this.gitStatus(true)
     }
-    gitStatus ():Promise<void>{
+    gitStatus (background=false):Promise<void>{
         if(this.gitLoading)return this.gitScan??Promise.resolve()
-        const scan=this.scanGit()
+        const scan=this.scanGit(background)
         this.gitScan=scan
         return scan
     }
-    private async scanGit (): Promise<void> {
+    private async scanGit (background=false): Promise<void> {
         if(this.gitSetupBusy||this.gitLoading||this.repositories.some(repository=>repository.busy))return
         const selection=this.selection,key=this.browsingKey(selection),workspace=this.currentDirectoryWorkspace(),scope=this.currentGitScope(),version=this.version,request=++this.gitVersion
         if(!workspace)return
@@ -1106,8 +1141,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 const notice=this.selection?.workspace ? this.gitNoticeByRoot.get(entry.root) : undefined
                 if(notice){entry.error=notice.error;entry.message=notice.message}
                 this.applyGitChanges(entry,changes);this.render()
-                await this.loadGitInspector(entry,controller.signal)
-            }catch(error){if(active())entry.error=String(error)}
+                await this.loadGitInspector(entry,controller.signal,background)
+            }catch(error){logOperation('读取 Git 仓库状态',{root:entry.root,background,error:String(error)});if(active()&&!background)entry.error=String(error)}
             finally{
                 if(active()){entry.loading=false;this.gitGroups=repositories.flatMap(repository=>repository.groups);this.render()}
                 const next=waiters.shift();if(next)next();else running--
@@ -1135,7 +1170,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 discovery.skipped.length?t`部分目录无法读取或探测（${discovery.skipped.length} 项）`:''].filter(Boolean).join(' ')
             this.gitScanCache.set(scope,{root:workspace.root,context:this.gitCacheContext(workspace),repositories:[...repositories],complete:!discovery.truncated&&!discovery.skipped.length,notice:this.gitNotice})
             while(this.gitScanCache.size>24)this.gitScanCache.delete(this.gitScanCache.keys().next().value!)
-        }catch(error){controller.abort();if(version===this.version&&request===this.gitVersion){this.error=String(error);this.render()}}
+        }catch(error){logOperation('扫描 Git 仓库',{root:workspace.root,background,error:String(error)});controller.abort();if(version===this.version&&request===this.gitVersion){if(!background)this.error=String(error);this.gitLoading=false;this.render()}}
         finally{
             if(active()){
                 this.gitLoading=false;this.gitAbort=undefined
@@ -1188,38 +1223,52 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             for(const hash of added)repository.pulledCommits.add(hash)
         }
     }
-    async localSync(action:LocalGitSyncAction,repository:GitRepositoryView):Promise<void>{
+    canSyncGit(repository:GitRepositoryView):boolean{
+        return repository.workspace.kind==='local'||Boolean(this.canForward&&this.selection?.remote?.open)
+    }
+    async syncGit(action:LocalGitSyncAction,repository:GitRepositoryView,quiet=false):Promise<void>{
+        if(!this.canSyncGit(repository)||!this.repositories.includes(repository)||repository.busy||repository.loading||this.gitLoading)return
+        if(repository.workspace.kind==='local')await this.localSync(action,repository,quiet)
+        else await this.relay(action,repository,quiet)
+    }
+    async localSync(action:LocalGitSyncAction,repository:GitRepositoryView,quiet=false):Promise<void>{
         if(repository.workspace.kind!=='local'||!this.repositories.includes(repository)||repository.loading||this.gitLoading)return
         const labels={fetch:t('已提取上游状态'),pull:t('已快进拉取'),push:t('已推送到上游分支')}
         await this.gitOperation(repository,async()=>{
+            const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),600_000)
+            if(!quiet)repository.relayProgress={fetch:t('正在提取上游状态…'),pull:t('正在拉取上游更新…'),push:t('正在推送到上游…')}[action]
+            repository.relayCancel=()=>controller.abort();this.render()
             try{
-                const operation=()=>syncLocalGit(repository.workspace.root,action,AbortSignal.timeout(600_000))
+                const operation=()=>syncLocalGit(repository.workspace.root,action,controller.signal)
                 if(action==='fetch')await operation()
                 else await this.recordGitSync(repository,action,operation)
             }
             catch(error){throw new Error(redactSensitiveText(String(error instanceof Error?error.message:error)))}
-            finally{await this.loadGitInspector(repository)}
-        },labels[action])
+            finally{clearTimeout(timeout);repository.relayProgress=undefined;repository.relayCancel=undefined;await this.loadGitInspector(repository,undefined,quiet)}
+        },labels[action],quiet)
     }
-    async relay (direction:'pull'|'push',repository?:GitRepositoryView):Promise<void>{
+    async relay (direction:'fetch'|'pull'|'push',repository?:GitRepositoryView,quiet=false):Promise<void>{
         if(!this.canForward||!this.selection?.workspace)return
         const entry=repository??this.repositories.find(entry=>entry.root===this.breadcrumb)
-        if(!entry||entry.workspace.kind!=='remote')return
+        if(!entry||entry.workspace.kind!=='remote'||entry.loading||this.gitLoading)return
         const source=this.source as any
         await this.gitOperation(entry,async()=>{
             const w=entry.workspace
-            entry.relayProgress=t('正在检查仓库与上游配置…');this.render()
+            if(!quiet)entry.relayProgress=t('正在检查仓库与上游配置…');this.render()
             try{
-                await this.recordGitSync(entry,direction,()=>{
+                const operation=()=>{
                     entry.relayCancel=()=>this.tasks.cancel(source)
                     return this.tasks.run(source,{id:w.id,root:w.root,host:w.host},direction,{
-                        throwOnError:true,
-                        report:message=>{entry.relayProgress=redactSensitiveText(message);this.render()},
+                        throwOnError:true,quiet,
+                        report:message=>{if(!quiet){entry.relayProgress=redactSensitiveText(message);this.render()}},
                     })
-                })
+                }
+                if(direction==='fetch'){
+                    if(!await operation())throw new Error(t('Git 中继未完成，请查看通知中的错误详情。'))
+                }else await this.recordGitSync(entry,direction,operation)
             }finally{entry.relayProgress=undefined;entry.relayCancel=undefined;this.render()}
-        },direction==='push'?t('已通过本地推送已有提交'):t('已通过本地拉取'))
-        if(this.repositories.includes(entry)&&!entry.error)await this.loadGitInspector(entry)
+        },direction==='fetch'?t('已提取上游状态'):direction==='push'?t('已推送到上游分支'):t('已快进拉取'),quiet)
+        if(this.repositories.includes(entry)&&!entry.error)await this.loadGitInspector(entry,undefined,quiet)
     }
     cancelRelay(repository:GitRepositoryView):void{repository.relayCancel?.()}
     get isRemote():boolean{return this.selection?.workspace?.kind==='remote'||Boolean(this.selection?.remote)}
@@ -1290,7 +1339,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     private watchFailed(workspace:Workspace,error:unknown):void{
         if(this.watchController?.signal.aborted||workspace!==this.watchedWorkspace||workspace!==(this.browserWorkspace??this.selection?.workspace))return
-        this.watchController?.abort();this.watchController=undefined;this.watchNotice=redactSensitiveText(error instanceof Error?error.message:String(error))
+        logOperation('监视工作区目录',{root:workspace.root,error:String(error)})
+        this.watchController?.abort();this.watchController=undefined
         this.render()
     }
     private startSnapshotWatch(workspace:Workspace):void{
@@ -1301,7 +1351,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.gitChangedByWatch=true
             this.workspaceChanged(workspace)
         },controller.signal)
-            .catch(error=>{if(!controller.signal.aborted&&this.snapshotController===controller){this.snapshotNotice=redactSensitiveText(error instanceof Error?error.message:String(error));this.render()}})
+            .catch(error=>logOperation('监视远程目录快照',{root:workspace.root,error:String(error)}))
     }
     private snapshotDirectories():string[]{
         const directories=[this.relativePath||'.']
@@ -1353,7 +1403,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                     repository.watchedStatus=content.stdout
                     this.applyGitChanges(repository,changes)
                 }
-            }catch(error){if(active())repository.message=t`自动更新失败：${redactSensitiveText(String(error))}`}
+            }catch(error){logOperation('自动刷新 Git 状态',{root:repository.root,error:String(error)})}
         }
         if(active())this.render()
     }

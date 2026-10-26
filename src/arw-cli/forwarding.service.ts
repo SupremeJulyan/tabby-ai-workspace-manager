@@ -1,3 +1,4 @@
+import { cliWorkspaceFiles } from './workspace-files'
 import { gitRelayOperation } from '../adapters/git-relay-operation'
 import { activityScope } from './agent-activity'
 import { isTerminalCommandMode, runTerminalCommand } from '../shared/terminal-command'
@@ -86,6 +87,7 @@ export class ForwardingService {
             const sftp = await session.openSFTP()
             if (!(await sftp.stat(root)).isDirectory) throw new Error(t('请选择远程目录'))
             const workspace = remoteWorkspace(session, root)
+            const cliFiles = cliWorkspaceFiles(workspace)
             const tabbyConfigPath = this.platform.getConfigPath?.()
             const workspaceId = randomUUID()
             server = new ForwardingServer({
@@ -96,17 +98,17 @@ export class ForwardingService {
                 copy: sftpCopy(() => session.openSFTP(), new RemotePathGuard(root, (command, signal) => workspace.run(command, signal))),
                 list: async (input, signal) => {
                     signal.throwIfAborted()
-                    const files = await workspace.list(input)
+                    const files = await cliFiles.list(input)
                     signal.throwIfAborted()
                     return { entries: files, truncated: false }
                 },
                 read: async (input, signal) => {
                     signal.throwIfAborted()
-                    return { path: input, ...await workspace.read(input) }
+                    return { path: input, ...await cliFiles.read(input) }
                 },
                 write: async (input, content, signal, expectedHash) => {
                     signal.throwIfAborted()
-                    return { path: input, ...await workspace.write(input, content, expectedHash) }
+                    return { path: input, ...await cliFiles.write(input, content, expectedHash) }
                 },
                 run: (command, signal, options) => isTerminalCommandMode(tab)?runTerminalCommand(tab,root,command,signal,options?.maxBytes):workspace.run(command, signal, options),
                 currentFile: () => {

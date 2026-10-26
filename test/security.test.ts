@@ -1,3 +1,4 @@
+import { cliWorkspaceFiles } from '../src/arw-cli/workspace-files';
 import { ipcFetch } from '../src/arw-cli/ipc-client';
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -133,7 +134,7 @@ test('post-execution audit failure reports unknown mutation state instead of inv
     assert.equal(executions, 1)
 })
 
-test('remote workspace adapter enforces canonical paths before SFTP and command forwarding', {skip: process.platform === 'win32'}, async t => {
+test('CLI entry enforces canonical paths before SFTP and command forwarding', {skip: process.platform === 'win32'}, async t => {
     const directory = await mkdtemp(join(tmpdir(), 'arw-adapter-security-'))
     t.after(() => rm(directory, {recursive: true, force: true}))
     const root = join(directory, 'root'), outside = join(directory, 'outside')
@@ -154,7 +155,7 @@ test('remote workspace adapter enforces canonical paths before SFTP and command 
             }, async eof() {child?.stdin?.end()}, async close() {child?.kill()}}
         }, async activateChannel(channel: unknown) {return channel}},
         async openSFTP() {return {
-            async stat(path: string) {const info = await stat(path); return {size: info.size, mode: info.mode}},
+            async stat(path: string) {const info = await stat(path); return {size: info.size, mode: info.mode, modified: info.mtime}},
             chmod, unlink,
             async readdir(path: string) {return (await readdir(path, {withFileTypes: true})).map(entry => ({name: entry.name, isDirectory: entry.isDirectory(), isSymlink: entry.isSymbolicLink()}))},
             async open(path: string, flags: number) {
@@ -166,9 +167,10 @@ test('remote workspace adapter enforces canonical paths before SFTP and command 
         }},
     }
     const workspace = remoteWorkspace(session as any, `${root}/`)
-    await assert.rejects(workspace.read('escape/secret'), /symbolic link/)
-    await assert.rejects(workspace.list('escape'), /symbolic link/)
-    await assert.rejects(workspace.write('escape/new-file', 'unsafe'), /symbolic link/)
+    const cliFiles = cliWorkspaceFiles(workspace)
+    await assert.rejects(cliFiles.read('escape/secret'), /symbolic link/)
+    await assert.rejects(cliFiles.list('escape'), /symbolic link/)
+    await assert.rejects(cliFiles.write('escape/new-file', 'unsafe'), /symbolic link/)
     await assert.rejects(workspace.validateCommand!('touch escape/new-file'), /symbolic link/)
     assert.equal(await readFile(join(outside, 'secret'), 'utf8'), 'private')
     await assert.rejects(stat(join(outside, 'new-file')))
@@ -177,13 +179,17 @@ test('remote workspace adapter enforces canonical paths before SFTP and command 
     assert.ok((await workspace.list('.')).some(entry => entry.name === 'safe'))
     await workspace.validateCommand!('touch safe')
     const server = new ForwardingServer({workspace: {id: 'one', root, host: 'fixture'},
-        list: async path => workspace.list(path), read: async path => workspace.read(path),
-        write: async (path, content) => workspace.write(path, content), run: (command, signal) => workspace.run(command, signal),
+        list: async path => cliFiles.list(path), read: async path => cliFiles.read(path),
+        write: async (path, content) => cliFiles.write(path, content), run: (command, signal) => workspace.run(command, signal),
         validateCommand: workspace.validateCommand!.bind(workspace)}, join(directory, 'audit.jsonl'))
     await server.start()
     try {
         const response = await ipcFetch(server.connection, {method: 'POST', body: JSON.stringify({name: 'run_remote_command', arguments: {workspaceId: 'one', command: 'touch escape/new-file'}})})
         assert.equal((await response.json() as any).result.status, 'error')
+        for(const [name,path] of [['remote_read','escape/secret'],['remote_list','escape'],['remote_write','escape/new-file']]){
+            const denied=await ipcFetch(server.connection,{method:'POST',body:JSON.stringify({name,arguments:{workspaceId:'one',path,content:'unsafe'}})})
+            assert.equal((await denied.json() as any).result.status,'error')
+        }
         await assert.rejects(stat(join(outside, 'new-file')))
     } finally {await server.stop()}
 })

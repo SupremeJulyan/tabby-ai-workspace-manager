@@ -5,7 +5,7 @@ import { RemoteGit, type GitResult } from './remote-git';
 import { createRemoteGitBundle } from './remote-git-bundle';
 import { localGitRunner, pushThroughLocalGit, resolvePushTarget, resolveShallowBoundaries, recordSuccessfulPush,
   type LocalGitRunner } from './local-git-push';
-import { pullThroughLocalGit, resolvePullTarget, type LocalPullResult } from './local-git-pull';
+import { pullThroughLocalGit, resolvePullTarget, fetchThroughLocalGit, resolveFetchTarget, type LocalPullResult } from './local-git-pull';
 
 export interface RelayTransport {
   root: string;
@@ -23,8 +23,9 @@ export interface RelayOptions {
 
 /** Orchestrates bundles only; no local working copy and no remote network access. */
 export async function relayGit(
-  direction: 'pull' | 'push', transport: RelayTransport, options: RelayOptions
+  direction: 'fetch' | 'pull' | 'push', transport: RelayTransport, options: RelayOptions
 ): Promise<LocalPullResult | undefined> {
+  if(direction==='fetch')return relayFetch(transport,options);
   const { signal, report } = options;
   signal?.throwIfAborted();
   const git = new RemoteGit(command => transport.run(command, signal));
@@ -85,4 +86,47 @@ export async function relayGit(
       previous ?? '0'.repeat(pullTarget.oid.length)]);
   }
   return result;
+}
+
+/** Fetch upstream through local credentials, updating only the remote tracking reference. */
+async function relayFetch(transport:RelayTransport,options:RelayOptions):Promise<LocalPullResult> {
+  const {signal,report}=options;
+  signal?.throwIfAborted();
+  const git=new RemoteGit(command=>transport.run(command,signal));
+  const target=await resolveFetchTarget(git);
+  const verifyRemote=async()=>{
+    const current=(await git.probe(['rev-parse','--verify','--quiet',`${target.tracking}^{commit}`]))?.trim()||undefined;
+    if(current!==target.base)throw new Error(t('传输期间远端跟踪引用发生变化，请重新提取。'));
+  };
+  const updateRef=async(oid:string)=>{
+    await verifyRemote();
+    await git.run(['update-ref',target.tracking,oid,target.base??'0'.repeat(oid.length)]);
+  };
+  const temporary=async()=>posix.resolve(transport.root,
+    (await git.run(['rev-parse','--git-path',`arw-${randomBytes(24).toString('hex')}.bundle`])).trim());
+  const cleanup=async(file:string)=>{
+    for(const path of [file,`${file}.lock`])await transport.remove(path).catch(()=>report?.(t('Git 中转临时文件清理失败，请检查远端仓库。')));
+  };
+  return fetchThroughLocalGit({storagePath:options.storagePath,local:options.local??localGitRunner(),target,signal,report,verifyRemote,updateRef,
+    shallowBoundaries:target.base?await resolveShallowBoundaries(git,target.tracking):[],
+    downloadBundle:async(local,exclusions)=>{
+      await verifyRemote();
+      const remote=await temporary();
+      try{
+        await createRemoteGitBundle(git,remote,target.tracking,exclusions);
+        await transport.download(remote,local,signal);
+        await verifyRemote();
+      }finally{await cleanup(remote);}
+    },
+    deliverBundle:async(local,expected)=>{
+      const remote=await temporary(),ref=`refs/arw/fetch/${randomBytes(24).toString('hex')}`;
+      try{
+        await transport.upload(local,remote,signal);
+        await verifyRemote();
+        await git.run(['fetch','--no-tags',remote,`+refs/heads/arw-pull:${ref}`]);
+        if((await git.run(['rev-parse','--verify',`${ref}^{commit}`])).trim()!==expected)throw new Error('Invalid fetched commit');
+        await updateRef(expected);
+      }finally{await git.run(['update-ref','-d',ref]).catch(()=>{});await cleanup(remote);}
+    }
+  });
 }
