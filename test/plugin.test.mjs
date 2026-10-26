@@ -1512,16 +1512,20 @@ test('Git history and branches use the repository backend and preserve dirty wor
     const {tmpdir}=await import('node:os'),{join}=await import('node:path')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
     const root=await mkdtemp(join(tmpdir(),'arw-git-inspector-')),workspace=localWorkspace(root),opened=[],confirmations=[]
+    const current=new BehaviorSubject(null)
     let answer=0
-    const tree=new plugin.TreeComponent({current:new BehaviorSubject({terminal:{},workspace,hint:''})},
+    const tree=new plugin.TreeComponent({current},
         {openNewTab:entry=>opened.push(entry)},{info(){}},{},{},{},{async showMessageBox(options){confirmations.push(options);return {response:answer}}})
     try{
         for(const command of ['git init -b main',"git config user.name 'ARW Test'",'git config user.email arw@example.test'])assert.equal((await workspace.run(command)).exitCode,0)
         await writeFile(join(root,'file.txt'),'first\n')
         for(const command of ['git add file.txt','git commit -m initial','git branch feature'])assert.equal((await workspace.run(command)).exitCode,0)
+        current.next({terminal:{},workspace,hint:''})
         await tree.refresh();await tree.gitStatus()
         const repository=tree.repositories[0]
         assert.equal(repository.inspectorError,'')
+        assert.equal(repository.inspectorPending,false)
+        assert.equal(repository.commits.length,1)
         assert.equal(repository.commits[0].subject,'initial')
         assert.equal(repository.branches.find(branch=>branch.current).name,'main')
         tree.showInspector(repository,'history');assert.equal(repository.inspector,'history')
@@ -1542,6 +1546,40 @@ test('Git history and branches use the repository backend and preserve dirty wor
         assert.equal(await readFile(join(root,'file.txt'),'utf8'),'dirty\n')
         assert.match(plugin.TreeComponent.component.template,/trackBy: trackCommit/)
     }finally{tree.ngOnDestroy();await rm(root,{recursive:true,force:true})}
+})
+
+test('Git status waits for the active inspector scan instead of returning partially loaded history',async()=>{
+    const plugin=load(),{BehaviorSubject}=await import('rxjs')
+    const {mkdtemp,writeFile,rm}=await import('node:fs/promises')
+    const {tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const root=await mkdtemp(join(tmpdir(),'arw-git-inspector-pending-')),workspace=localWorkspace(root)
+    const current=new BehaviorSubject(null),tree=new plugin.TreeComponent({current},{},{},{},{},{},{})
+    let releaseInspector,inspectorStarted
+    const started=new Promise(resolve=>{inspectorStarted=resolve})
+    const released=new Promise(resolve=>{releaseInspector=resolve})
+    const inspect=tree.loadGitInspector.bind(tree)
+    tree.loadGitInspector=async(...args)=>{inspectorStarted();await released;await inspect(...args)}
+    let pending
+    try{
+        for(const command of ['git init -b main',"git config user.name 'ARW Test'",'git config user.email arw@example.test'])assert.equal((await workspace.run(command)).exitCode,0)
+        await writeFile(join(root,'file.txt'),'first\n')
+        for(const command of ['git add file.txt','git commit -m initial'])assert.equal((await workspace.run(command)).exitCode,0)
+        current.next({terminal:{},workspace,hint:''})
+        await started
+        const repository=tree.repositories[0]
+        assert.equal(repository.commits.length,0)
+        assert.equal(tree.gitLoading,true)
+        let completed=false
+        pending=tree.gitStatus().then(()=>{completed=true})
+        await Promise.resolve()
+        assert.equal(completed,false,'joining an active scan must wait for history and branches')
+        releaseInspector();await pending
+        assert.equal(tree.gitLoading,false)
+        assert.equal(repository.inspectorPending,false)
+        assert.equal(repository.commits[0].subject,'initial')
+        assert.equal(repository.branches.find(branch=>branch.current).name,'main')
+    }finally{releaseInspector();tree.ngOnDestroy();await pending;await rm(root,{recursive:true,force:true})}
 })
 
 test('AI activity is a sibling tab with stable expandable entries and category/status filters',async()=>{
