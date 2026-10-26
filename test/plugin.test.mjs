@@ -443,6 +443,7 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     const settings=new (new provider.useClass().getComponentType())(config)
     const defaultSettings=new (new provider.useClass().getComponentType())({store:{omw:{}},async save(){}})
     assert.equal(defaultSettings.command,'codex')
+    assert.equal(defaultSettings.argumentsText,'--sandbox\ndanger-full-access\n--ask-for-approval\non-request')
     assert.equal(defaultSettings.proxyUrl,'')
     assert.equal(defaultSettings.resumeArgumentsText,'resume\n--last')
     settings.proxyUrl=' http://127.0.0.1:7897 '
@@ -456,6 +457,22 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     assert.equal(config.saves,1);assert.equal(settings.saved,true)
     settings.resumeArgumentsText='';await settings.save()
     assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),[])
+})
+
+test('AI launch explains when a command is absent from the Tabby PATH',async()=>{
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const notices=[];let opened=false
+    const command='arw-command-that-does-not-exist'
+    const launcher=new (load().AiLauncherService)({async openNewTabForProfile(){opened=true}},
+        {pin(){}},{error:(...args)=>notices.push(args)},
+        {store:{omw:{agent:{command,args:[]}}}},{},{})
+    await launcher.launchConfigured({terminal:{},workspace:{id:'local',...localWorkspace(process.cwd())},hint:''})
+    assert.equal(opened,false)
+    assert.equal(notices.length,1)
+    assert.equal(notices[0][0],'AI CLI 启动失败')
+    assert.match(notices[0][1],/Tabby PATH/)
+    assert.match(notices[0][1],/绝对路径/)
+    assert.match(notices[0][1],new RegExp(command))
 })
 
 test('saved remote workspaces are isolated by SSH identity and AI uses the saved absolute root',async()=>{
@@ -1120,13 +1137,13 @@ test('remote AI launch uses a persistent placeholder, private session config and
         list:async()=>[],read:async()=>({content:'data',hash:'hash'}),write:async()=>({content:'data',hash:'hash'}),run:async()=>({stdout:'',stderr:'',exitCode:0})}}
     const launcher=new plugin.AiLauncherService({async openNewTabForProfile(value){profile=value;return {destroyed$:destroyed}}},
         {pin:(tab,value)=>pinned=value},{error(message,detail){throw Error(message+detail)}},
-        {store:{omw:{agent:{command:'claude',args:[]}}}},{},{getConfigPath:()=>storage+'/config.yaml'})
+        {store:{omw:{agent:{command:'/bin/bash',args:[]}}}},{},{getConfigPath:()=>storage+'/config.yaml'})
     // The VM bundle's __dirname points at this real release directory.
     await launcher.launchConfigured(selection)
     try{
         assert.equal(pinned,selection)
         assert.notEqual(profile.options.cwd,'/actual/project')
-        assert.equal(profile.name,'claude')
+        assert.equal(profile.name,'/bin/bash')
         assert.equal(profile.disableDynamicTitle,undefined)
         const metadata=JSON.parse(await readFile(profile.options.cwd+'/.awm/workspace.json','utf8'))
         assert.equal(metadata.remoteRoot,'/actual/project');assert.equal(metadata.user,'user')

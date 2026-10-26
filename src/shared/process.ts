@@ -1,5 +1,7 @@
 import { setTimeout, clearTimeout } from 'node:timers';
 import { execFile, spawn } from 'node:child_process';
+import { access, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
@@ -24,6 +26,33 @@ export function commandSearchPath(
 ): string {
   const localBin = path.join(home, '.local', 'bin');
   return inheritedPath ? `${localBin}${path.delimiter}${inheritedPath}` : localBin;
+}
+
+/** Check the exact PATH that will be passed to a child process. */
+export async function commandExistsInPath(
+  command: string, searchPath = process.env.PATH ?? '', cwd = process.cwd()
+): Promise<boolean> {
+  const hasSeparator = command.includes('/') || command.includes('\\');
+  const directories = hasSeparator ? [''] : searchPath.split(path.delimiter);
+  const extensions = process.platform === 'win32' && !path.extname(command)
+    ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';')
+    : [''];
+  const mode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
+  for (const directory of directories) {
+    const base = hasSeparator
+      ? (path.isAbsolute(command) ? command : path.resolve(cwd, command))
+      : path.join(directory || cwd, command);
+    for (const extension of extensions) {
+      try {
+        const candidate = `${base}${extension}`;
+        if (!(await stat(candidate)).isFile()) continue;
+        await access(candidate, mode);
+        return true;
+      }
+      catch { /* try the next PATH entry */ }
+    }
+  }
+  return false;
 }
 
 export async function commandExists(command: string): Promise<boolean> {
