@@ -870,12 +870,14 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }],event)
     }
     async clickNode (node:TreeNode,event:MouseEvent):Promise<void> {
+        if(node.symlink){this.error=t('符号链接不支持在文件浏览器中打开：')+node.path;this.render();return}
         if(node.directory){if(event.detail<2)await this.toggle(node)}
         else await this.open(node)
     }
     async open (node: TreeNode): Promise<void> {
         const workspace = this.browserWorkspace ?? this.selection?.workspace
         if (!workspace || (node.loading && !node.directory)) return
+        if(node.symlink){this.error=t('符号链接不支持在文件浏览器中打开：')+node.path;this.render();return}
         if (!node.directory) {
             this.rememberBrowsing()
             const kind=previewKind(node.path)
