@@ -11,7 +11,8 @@ import { t } from '../shared/i18n';
 
 export interface WorkspaceFile { name: string; path: string; directory: boolean; symlink: boolean }
 export interface WorkspaceText { content: string; hash: string }
-export const textFileLimit=10*1024*1024
+import { textFileLimit } from '../shared/text-file-limit'
+export { textFileLimit } from '../shared/text-file-limit'
 export interface Workspace {
   saveIssue?(path:string):{message:string;busy:boolean}|undefined;
   verifySave?(path:string):Promise<WorkspaceText>;
@@ -68,7 +69,7 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     const info=await lstat(target);
     if(info.isSymbolicLink())throw new Error('Editing symbolic links is not supported yet');
     if(!info.isFile())throw new Error('Only regular files can be read');
-    if(info.size > textFileLimit) throw new Error('Text files are limited to 10 MiB');
+    if(info.size > textFileLimit) throw new Error('Text files are limited to 500 MiB');
     const bytes = await readFile(target);
     if (bytes.length > textFileLimit || bytes.includes(0)) throw new Error('File is too large or binary');
     const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -105,7 +106,7 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     read,
     readBytes:async(input,maxBytes,signal)=>readLocalBytes(filePath(input),maxBytes,signal),
     async write(input, content, expectedHash) {
-      if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 10 MiB');
+      if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 500 MiB');
       const target = filePath(input);
       let before:Awaited<ReturnType<typeof snapshot>>|undefined;
       try{before=await snapshot(target)}catch(error){

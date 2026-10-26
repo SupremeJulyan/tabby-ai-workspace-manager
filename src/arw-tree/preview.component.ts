@@ -1,8 +1,9 @@
+import { textFileLimit } from '../shared/text-file-limit'
 import type { PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { openFilePane } from './open-file-pane'
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, Injector, ViewChild } from '@angular/core'
-import { AppService, BaseTabComponent, NotificationsService, PlatformService, type RecoveryToken } from 'tabby-core'
+import { AppService, BaseTabComponent, NotificationsService, PlatformService, TabsService, type RecoveryToken } from 'tabby-core'
 import { join } from 'node:path'
 import type { Workspace } from './workspace'
 import { remoteWorkspaceSession } from '../adapters/remote-workspace'
@@ -62,6 +63,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     private removePaneHeader?:()=>void
     private platform:PlatformService
     private app:AppService
+    private tabs:TabsService
     private notifications:NotificationsService
     private detector:ChangeDetectorRef
     @ViewChild('pdfCanvasHost') pdfCanvasHost?:ElementRef<HTMLElement>
@@ -70,10 +72,10 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     readonly search=new TextSearch(()=>this.text,()=>{},()=>this.textPreview?.nativeElement,
         ()=>this.findInput?.nativeElement,()=>false,()=>{this.source=true},()=>this.edit(true))
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(this.isText&&!this.loading&&!this.error)this.search.key(event)}
-    constructor(injector:Injector){super(injector);this.platform=injector.get(PlatformService);this.app=injector.get(AppService);this.notifications=injector.get(NotificationsService);this.detector=injector.get(ChangeDetectorRef)}
+    constructor(injector:Injector){super(injector);this.platform=injector.get(PlatformService);this.app=injector.get(AppService);this.tabs=injector.get(TabsService);this.notifications=injector.get(NotificationsService);this.detector=injector.get(ChangeDetectorRef)}
     get kind(){return previewKind(this.filePath)}
     get isText(){return this.kind==='markdown'||this.kind==='csv'}
-    get canEdit(){return this.isText&&this.encoding==='UTF-8'&&this.byteLength<=10*1024*1024&&!this.loading&&!this.error}
+    get canEdit(){return this.isText&&this.encoding==='UTF-8'&&this.byteLength<=textFileLimit&&!this.loading&&!this.error}
     get waitingForConnection(){return Boolean(this.workspace?.waitForConnection)}
     get connectionStatus(){return this.workspace?.connectionStatus}
     get imageIndex(){return this.imagePaths.indexOf(this.filePath)}
@@ -188,7 +190,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         this.csvPage=1
     }
     changeCsvPage(delta:number):void{this.csvPage=Math.max(1,Math.min(this.csvPages,this.csvPage+delta))}
-    edit(replace=false):void{if(this.canEdit)void openFilePane(this.app,{type:ArwEditorComponent,inputs:{workspace:this.workspace,filePath:this.filePath,...(replace?{initialFind:{...this.search.state,replaceVisible:true}}:{})}},this,this.config?.store.omw?.fileLayout).catch(error=>{this.error=String(error);this.render()})}
+    edit(replace=false):void{if(this.canEdit)void openFilePane(this.app,{type:ArwEditorComponent,inputs:{workspace:this.workspace,filePath:this.filePath,...(replace?{initialFind:{...this.search.state,replaceVisible:true}}:{})}},this,this.config?.store.omw?.fileLayout,this.tabs).catch(error=>{this.error=String(error);this.render()})}
     markdownClick(event:MouseEvent):void{
         const anchor=(event.target as Element)?.closest?.('a');if(!anchor)return
         event.preventDefault();const href=anchor.getAttribute('href')??''

@@ -292,6 +292,35 @@ test('closing a recovered file cancels its wait without cancelling shared authen
     provider.ngOnDestroy();assert.equal(refs,0)
 })
 
+test('preview Edit and Replace create editors inside the current split',async()=>{
+    for(const layout of ['tiled','stacked'])for(const replace of [false,true]){
+        const plugin=load(),created=[],panes=[],workspace={kind:'local',root:'/project'}
+        let focused,selected
+        const split={getAllTabs:()=>panes,async add(file){panes.push(file)},focus(file){focused=file}}
+        const app={tabs:[split],activeTab:split,getParentTab:()=>split,selectTab(tab){selected=tab},
+            openNewTab(){throw Error('Editor must stay inside the split')}}
+        const tabs={create(params){created.push(params);return {arwFilePane:true,...params.inputs}}}
+        const preview=new plugin.PreviewComponent({get:token=>token===core.AppService?app:token===core.TabsService?tabs:{}})
+        Object.assign(preview,{workspace,filePath:'README.md',loading:false,encoding:'UTF-8',config:{store:{omw:{fileLayout:layout}}}})
+        panes.push(preview)
+        preview.search.query='needle'
+        preview.edit(replace)
+        await new Promise(resolve=>setImmediate(resolve))
+        assert.equal(preview.error,'')
+        assert.equal(created.length,1)
+        assert.equal(created[0].type,plugin.EditorComponent)
+        assert.equal(created[0].inputs.workspace,workspace)
+        assert.equal(created[0].inputs.filePath,'README.md')
+        assert.equal(created[0].inputs.arwPaneLayout,layout)
+        assert.equal(created[0].inputs.initialFind?.replaceVisible,replace?true:undefined)
+        if(replace)assert.equal(created[0].inputs.initialFind.query,'needle')
+        assert.equal(panes.length,2)
+        assert.equal(focused,panes[1])
+        assert.equal(selected,split)
+        assert.deepEqual(app.tabs,[split])
+    }
+})
+
 test('preview replacement opens an editor with find options and changes stay buffered until save',async()=>{
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js'),root=await fs.mkdtemp(join(tmpdir(),'arw-find-ui-'))

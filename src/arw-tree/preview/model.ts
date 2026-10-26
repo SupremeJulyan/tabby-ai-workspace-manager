@@ -1,3 +1,4 @@
+import { textFileLimit } from '../../shared/text-file-limit'
 import { t } from '../../shared/i18n'
 import { Marked, Renderer } from 'marked';
 import { workspacePath } from '../../shared/workspace-path';
@@ -14,7 +15,7 @@ export function previewKind(path:string):PreviewKind|undefined {
   if(['csv','tsv'].includes(ext))return 'csv';
   return undefined;
 }
-export const previewMaxBytes=(kind:PreviewKind)=>({image:32,pdf:64,markdown:10,csv:10}[kind])*1024*1024;
+export const previewMaxBytes=(kind:PreviewKind)=>({image:32*1024*1024,pdf:64*1024*1024,markdown:textFileLimit,csv:textFileLimit}[kind]);
 export function decodePreviewText(bytes:Uint8Array):{text:string;encoding:string} {
   const decode=(encoding:string)=>new TextDecoder(encoding,{fatal:true}).decode(bytes);
   if(bytes[0]===0xff&&bytes[1]===0xfe)return {text:decode('utf-16le'),encoding:'UTF-16 LE'};
