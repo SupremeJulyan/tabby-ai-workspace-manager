@@ -442,6 +442,8 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     const plugin=load(),config={store:{omw:{agent:{command:'codex',args:[]}}},saves:0,async save(){this.saves++}}
     const agent=config.store.omw.agent
     Object.defineProperty(config.store.omw,'agent',{get:()=>agent})
+    const proportions={workspaceWidth:50,aiWidth:50,fileHeight:60,terminalHeight:40}
+    Object.defineProperty(config.store.omw,'paneProportions',{enumerable:true,get:()=>proportions})
     const provider=plugin.default.ngModule.providers.find(entry=>entry.provide===SettingsTabProvider)
     const shell={id:'local:default',name:'Bash',type:'local',isBuiltin:true,options:{command:'/bin/bash',args:['--login'],env:{LANG:'C.UTF-8'},shellType:'unix'}}
     const profiles={async getProfiles(){return [shell]}}
@@ -480,6 +482,8 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     assert.deepEqual(Array.from(config.store.omw.agent.args),['--noprofile','--norc','argument with spaces'])
     assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),['--resume','session-id','--model','recovery-model'])
     assert.equal(config.saves,1);assert.equal(settings.saved,true)
+    assert.equal(config.store.omw.paneProportions,proportions)
+    assert.equal(settings.error,'')
     const reopened=new (new provider.useClass().getComponentType())(config,profiles)
     assert.equal(reopened.workspaceWidth,65);assert.equal(reopened.aiWidth,35);assert.equal(reopened.fileHeight,70);assert.equal(reopened.terminalHeight,30)
     assert.equal(reopened.fileLayout,'stacked');assert.equal(reopened.aiLayout,'stacked')
