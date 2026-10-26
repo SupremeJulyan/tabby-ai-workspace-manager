@@ -1,3 +1,4 @@
+import { WorkspaceRecoveryProvider } from './providers/workspace-recovery.provider'
 import { logOperation } from './services/operation-log'
 import { setArwLocale } from './shared/i18n'
 import { ArwTranslatePipe } from './shared/translate.pipe'
@@ -49,6 +50,7 @@ import { FileRecoveryProvider } from './providers/file-recovery.provider'
         { provide:ToolbarButtonProvider,useClass:WorkspaceToolbarProvider,multi:true },
         { provide:SettingsTabProvider,useClass:ArwSettingsTabProvider,multi:true },
         { provide:TabRecoveryProvider,useClass:FileRecoveryProvider,multi:true },
+        { provide:TabRecoveryProvider,useClass:WorkspaceRecoveryProvider,multi:true },
     ],
 })
 export default class ArwModule {

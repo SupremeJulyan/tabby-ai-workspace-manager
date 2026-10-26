@@ -17,7 +17,7 @@ class TerminalDecorator { detach() {} }
 const core = { BaseTabComponent, TabContextMenuItemProvider, ConfigProvider, ToolbarButtonProvider, TabRecoveryProvider,
     TabsService:class{},
     AppService:class{}, ProfilesService:class{},ConfigService:class{},
-    NotificationsService: class {}, PlatformService: class {}, PromptModalComponent: class {}, LogService: class {} }
+    TabRecoveryService:class{}, NotificationsService: class {}, PlatformService: class {}, PromptModalComponent: class {}, LogService: class {} }
 function load(ssh = { SSHTabComponent }, dom = {}) {
     const module = { exports: {} }
     const reflect = Object.create(Reflect)
@@ -2904,4 +2904,45 @@ test('workspace browser and terminal cwd survive JSON recovery in a fresh plugin
         assert.equal(second.tree.mode,'git')
         assert.equal(second.tree.nodes[0].name,'remembered.txt')
     }finally{first?.tree.ngOnDestroy();second?.tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
+})
+
+test('workspace recovery prepares SSH startup before the host creates the shell',async()=>{
+    const plugin=load()
+    const Provider=plugin.default.ngModule.providers.filter(entry=>entry.provide===TabRecoveryProvider).at(-1).useClass
+    let started
+    const provider=new Provider({get(){return {async newTabParametersForProfile(profile){
+        started=profile
+        assert.equal(profile.options.scripts[0].send," cd -- '/home/user/project'")
+        return {type:SSHTabComponent,inputs:{profile:{...profile,options:{scripts:profile.options.scripts}}}}
+    }}}})
+    const token={type:'arw-workspace:ssh',profile:{type:'ssh',options:{arwWorkspace:{root:'/home/user/project',mode:'files'},scripts:[{expect:'prompt',send:'echo ready'}]}},savedState:'screen'}
+    assert.equal(await provider.applicableTo(token),true)
+    assert.equal(await provider.applicableTo({type:'app:ssh-tab'}),false)
+    const recovered=await provider.recover(JSON.parse(JSON.stringify(token)))
+    assert.equal(recovered.inputs.profile.options.arwWorkspace.root,'/home/user/project')
+    assert.equal(recovered.inputs.profile.options.scripts,started.options.scripts)
+    assert.equal(recovered.inputs.savedState,'screen')
+    assert.equal(token.profile.options.scripts.length,1,'saved connection profile remains unchanged')
+})
+
+test('decorated workspace changes save the host recovery snapshot immediately',async()=>{
+    const {BehaviorSubject}=require('rxjs'),plugin=load(),snapshots=[]
+    const profile={type:'local',options:{}}
+    const terminal={profile,session:{getWorkingDirectory:async()=>'/home/user'},getRecoveryToken:async()=>({type:'app:local-tab',profile})}
+    const app={tabs:[terminal]}
+    const recovery={async saveTabs(tabs){snapshots.push(await tabs[0].getRecoveryToken())}}
+    const decorator=new plugin.WorkspaceTerminalDecorator({register(){}},undefined,undefined,app,undefined,recovery)
+    decorator.attach(terminal)
+    const current=new BehaviorSubject(null)
+    const tree=new plugin.TreeComponent({current},{},{},{disable:async()=>{}},{},{},{})
+    tree.ensureGitScan=()=>{}
+    try{
+        const workspace={kind:'local',root:'/home/user/project',list:async()=>[],run:async()=>({exitCode:128,stdout:'',stderr:''})}
+        current.next({terminal,workspace,hint:''})
+        await tree.refresh()
+        await new Promise(resolve=>setImmediate(resolve))
+        assert.ok(snapshots.length)
+        assert.equal(snapshots.at(-1).profile.options.arwWorkspace.root,'/home/user/project')
+        assert.equal(snapshots.at(-1).profile.options.arwWorkspace.cwd,'/home/user')
+    }finally{tree.ngOnDestroy();decorator.ngOnDestroy()}
 })
