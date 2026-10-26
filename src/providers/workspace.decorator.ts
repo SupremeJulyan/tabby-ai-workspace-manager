@@ -5,7 +5,7 @@ import { setTerminalCommandMode } from '../shared/terminal-command'
 import { t } from '../shared/i18n'
 import { Injectable } from '@angular/core'
 import { TerminalDecorator, BaseTerminalTabComponent } from 'tabby-terminal'
-import { AppService, ConfigService, PlatformService, NotificationsService } from 'tabby-core'
+import { AppService, ConfigService, PlatformService, NotificationsService, TabRecoveryService } from 'tabby-core'
 import { dirname, join } from 'node:path'
 import { AutomaticAiTiling } from '../arw-ai-cli/tiling'
 import { addAiCloseButton } from '../arw-ai-cli/close-button'
@@ -17,7 +17,7 @@ export class WorkspaceTerminalDecorator extends TerminalDecorator {
     private unregisterPaneProportions?:()=>void
     private automaticTiling?:AutomaticAiTiling
     private closeButtons=new Map<BaseTerminalTabComponent<any>,()=>void>()
-    constructor (private registry: WorkspaceRegistry, private platform?:PlatformService, private notifications?:NotificationsService, private app?:AppService, private config?:ConfigService) {
+    constructor (private registry: WorkspaceRegistry, private platform?:PlatformService, private notifications?:NotificationsService, private app?:AppService, private config?:ConfigService, private recovery?:TabRecoveryService) {
         super()
         if(app)this.unregisterPaneProportions=registerPaneProportions(app,()=>this.config?.store.omw?.paneProportions)
         if(app?.tabsChanged$)this.automaticTiling=new AutomaticAiTiling(app,error=>logOperation('AI 终端自动平铺',{error:String(error)}))
@@ -33,7 +33,9 @@ export class WorkspaceTerminalDecorator extends TerminalDecorator {
             const remove=addAiCloseButton(terminal,this.app,error=>this.notifications?.error(t('关闭 AI 终端失败'),String(error)))
             if(remove)this.closeButtons.set(terminal,remove)
         }
-        prepareWorkspaceRecovery(terminal)
+        prepareWorkspaceRecovery(terminal,()=>{
+            if(this.recovery&&this.app)void this.recovery.saveTabs(this.app.tabs).catch(error=>logOperation('保存工作区恢复快照',{error:String(error)}))
+        })
         this.registry.register(terminal)
     }
     detach (terminal: BaseTerminalTabComponent<any>): void { setTerminalCommandMode(terminal,false);this.closeButtons.get(terminal)?.();this.closeButtons.delete(terminal);this.registry.unregister(terminal); super.detach(terminal) }

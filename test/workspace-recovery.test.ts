@@ -34,3 +34,29 @@ test('local recovery uses the terminal cwd and leaves AI recovery untouched',asy
     const original=ai.getRecoveryToken;prepareWorkspaceRecovery(ai)
     assert.equal(ai.getRecoveryToken,original)
 })
+
+test('changing workspace requests an immediate snapshot without waiting for the host timer',async()=>{
+    const profile={type:'ssh',options:{}}
+    const tab={profile,getRecoveryToken:async()=>({profile})}
+    const snapshots:Promise<any>[]=[]
+    prepareWorkspaceRecovery(tab,()=>{snapshots.push(tab.getRecoveryToken())})
+    rememberWorkspace(tab,'/home/user','files')
+    rememberWorkspace(tab,'/home/user/project','git')
+    assert.equal(snapshots.length,2,'workspace changes save even when no tabs are opened or closed')
+    const token=await snapshots.at(-1)
+    assert.equal(token.type,'arw-workspace:ssh')
+    assert.equal(token.profile.options.arwWorkspace.root,'/home/user/project')
+    rememberWorkspace(tab,'/home/user/project','git')
+    assert.equal(snapshots.length,2,'unchanged background refresh does not save again')
+})
+
+test('legacy host ConfigProxy does not hide saved workspace metadata on restore',()=>{
+    const saved={root:'/home/user/project',mode:'files'}
+    const options={scripts:[],__getValue:(key:string)=>key==='arwWorkspace'?saved:undefined}
+    const profile={type:'ssh',options}
+    const tab={profile,getRecoveryToken:async()=>({profile})}
+    prepareWorkspaceRecovery(tab)
+    assert.equal(workspaceRecoveryState(tab)?.root,saved.root)
+    assert.equal((tab.profile.options as any).arwWorkspace.root,saved.root)
+    assert.equal((tab.profile.options as any).scripts[0].send," cd -- '/home/user/project'")
+})
