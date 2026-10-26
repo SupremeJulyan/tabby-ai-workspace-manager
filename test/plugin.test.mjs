@@ -458,6 +458,14 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     assert.equal(defaultSettings.resumeArgumentsText,'resume\n--last')
     assert.equal(defaultSettings.fileLayout,'tiled')
     assert.equal(defaultSettings.aiLayout,'tiled')
+    assert.equal(defaultSettings.workspaceWidth,50);assert.equal(defaultSettings.aiWidth,50)
+    assert.equal(defaultSettings.fileHeight,60);assert.equal(defaultSettings.terminalHeight,40)
+    settings.workspaceWidth=70;assert.equal(settings.aiWidth,30)
+    settings.aiWidth=35;assert.equal(settings.workspaceWidth,65)
+    settings.fileHeight=75;assert.equal(settings.terminalHeight,25)
+    settings.terminalHeight=30;assert.equal(settings.fileHeight,70)
+    settings.workspaceWidth=0;settings.fileHeight=NaN
+    assert.equal(settings.workspaceWidth,65);assert.equal(settings.fileHeight,70)
     settings.fileLayout='stacked';settings.aiLayout='stacked'
     settings.proxyUrl=' http://127.0.0.1:7897 '
     settings.resumeArgumentsText=' --resume \r\n session-id\n --model\n recovery-model '
@@ -465,6 +473,7 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     await settings.save()
     assert.equal(config.store.omw.agent.command,'/bin/bash')
     assert.deepEqual(JSON.parse(JSON.stringify(config.store.omw.agent.shell)),{id:'local:default',name:'Bash',command:'/bin/bash',args:['--login'],env:{LANG:'C.UTF-8'},shellType:'unix'})
+    assert.deepEqual(JSON.parse(JSON.stringify(config.store.omw.paneProportions)),{workspaceWidth:65,aiWidth:35,fileHeight:70,terminalHeight:30})
     assert.equal(config.store.omw.fileLayout,'stacked')
     assert.equal(config.store.omw.aiLayout,'stacked')
     assert.equal(config.store.omw.agent.proxyUrl,'http://127.0.0.1:7897')
@@ -472,6 +481,7 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),['--resume','session-id','--model','recovery-model'])
     assert.equal(config.saves,1);assert.equal(settings.saved,true)
     const reopened=new (new provider.useClass().getComponentType())(config,profiles)
+    assert.equal(reopened.workspaceWidth,65);assert.equal(reopened.aiWidth,35);assert.equal(reopened.fileHeight,70);assert.equal(reopened.terminalHeight,30)
     assert.equal(reopened.fileLayout,'stacked');assert.equal(reopened.aiLayout,'stacked')
     settings.resumeArgumentsText='';settings.fileLayout='tiled';settings.aiLayout='tabs';await settings.save()
     assert.equal(config.store.omw.fileLayout,'tiled')

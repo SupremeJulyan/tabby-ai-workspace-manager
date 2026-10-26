@@ -1,3 +1,4 @@
+import { workspacePaneProportions } from '../shared/pane-proportions'
 import { stackedGroup, stackedHiddenPanes, selectedStackedPane, selectStackedPane } from '../shared/pane-layout'
 import type { WorkspacePaneKind } from '../shared/pane-kind'
 import { collapsedAiPanes, orderedAiPanes } from './collapsed-panes'
@@ -47,8 +48,9 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
         return hidden.length?container('h',[visibleGrid,...hidden],[1,...hidden.map(()=>0)]):visibleGrid
     }
     const fileGrid=paneGrid(files,'file'),aiGrid=paneGrid(ai,'ai'),others=keepOthers(split.root)
-    const workspace=fileGrid&&others?container('v',[fileGrid,others],[.6,.4]):fileGrid??others
-    const root=workspace&&aiGrid?container('h',[workspace,aiGrid],[.68,.32]):workspace??aiGrid
+    const proportions=workspacePaneProportions(app)
+    const workspace=fileGrid&&others?container('v',[fileGrid,others],[proportions.fileHeight/100,proportions.terminalHeight/100]):fileGrid??others
+    const root=workspace&&aiGrid?container('h',[workspace,aiGrid],[proportions.workspaceWidth/100,proportions.aiWidth/100]):workspace??aiGrid
     if(!root)return false
     const focused=split.getFocusedTab()
     split.maximize(null)

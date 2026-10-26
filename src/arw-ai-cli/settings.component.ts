@@ -1,3 +1,4 @@
+import { paneProportions, panePercentage } from '../shared/pane-proportions'
 import { paneLayout, type PaneLayout } from '../shared/pane-layout'
 import { Component, Injectable } from '@angular/core'
 import { ConfigService, ProfilesService } from 'tabby-core'
@@ -19,6 +20,7 @@ import type { AgentShell } from './shell'
           <select id="arw-file-layout" class="form-control" [(ngModel)]="fileLayout"><option value="tiled">{{ '平铺' | arwTranslate }}</option><option value="stacked">{{ '叠放' | arwTranslate }}</option><option value="tabs">{{ '标签页' | arwTranslate }}</option></select></div>
         <div class="form-group"><label for="arw-ai-layout">{{ 'AI 终端布局' | arwTranslate }}</label>
           <select id="arw-ai-layout" class="form-control" [(ngModel)]="aiLayout"><option value="tiled">{{ '平铺' | arwTranslate }}</option><option value="stacked">{{ '叠放' | arwTranslate }}</option><option value="tabs">{{ '标签页' | arwTranslate }}</option></select></div>
+        <div class="arguments-grid"><div class="form-group"><label for="arw-workspace-width">{{ '工作区宽度（%）' | arwTranslate }}</label><input id="arw-workspace-width" type="number" min="1" max="99" step="1" class="form-control" [(ngModel)]="workspaceWidth"></div><div class="form-group"><label for="arw-ai-width">{{ 'AI 窗格宽度（%）' | arwTranslate }}</label><input id="arw-ai-width" type="number" min="1" max="99" step="1" class="form-control" [(ngModel)]="aiWidth"></div><div class="form-group"><label for="arw-file-height">{{ '文件区高度（%）' | arwTranslate }}</label><input id="arw-file-height" type="number" min="1" max="99" step="1" class="form-control" [(ngModel)]="fileHeight"></div><div class="form-group"><label for="arw-terminal-height">{{ '主终端高度（%）' | arwTranslate }}</label><input id="arw-terminal-height" type="number" min="1" max="99" step="1" class="form-control" [(ngModel)]="terminalHeight"></div></div><small>{{ '左右宽度与上下高度分别合计 100%，修改一项会联动另一项；新开窗格或重新排列时生效，标签页布局不受影响。' | arwTranslate }}</small>
         <small>{{ '布局设置对新打开的文件和 AI 终端生效。' | arwTranslate }}</small>
       </section><section class="settings-section"><h4>{{ 'AI 命令' | arwTranslate }}</h4>
       <div class="form-group"><label for="arw-shell">{{ '启动 Shell' | arwTranslate }}</label>
@@ -61,6 +63,15 @@ import type { AgentShell } from './shell'
     `],
 })
 export class ArwSettingsComponent {
+    private proportions=paneProportions(undefined)
+    get workspaceWidth():number {return this.proportions.workspaceWidth}
+    set workspaceWidth(value:number) {const width=panePercentage(value,this.workspaceWidth);this.proportions.workspaceWidth=width;this.proportions.aiWidth=100-width}
+    get aiWidth():number {return this.proportions.aiWidth}
+    set aiWidth(value:number) {const width=panePercentage(value,this.aiWidth);this.proportions.aiWidth=width;this.proportions.workspaceWidth=100-width}
+    get fileHeight():number {return this.proportions.fileHeight}
+    set fileHeight(value:number) {const height=panePercentage(value,this.fileHeight);this.proportions.fileHeight=height;this.proportions.terminalHeight=100-height}
+    get terminalHeight():number {return this.proportions.terminalHeight}
+    set terminalHeight(value:number) {const height=panePercentage(value,this.terminalHeight);this.proportions.terminalHeight=height;this.proportions.fileHeight=100-height}
     fileLayout: PaneLayout
     aiLayout: PaneLayout
     command: string
@@ -73,6 +84,7 @@ export class ArwSettingsComponent {
     saved = false
     error = ''
     constructor (private config: ConfigService, private profiles: ProfilesService) {
+        this.proportions=paneProportions(config.store.omw?.paneProportions)
         const agent = config.store.omw?.agent
         this.shellId=typeof agent?.shell?.id==='string'?agent.shell.id:''
         this.fileLayout=paneLayout(config.store.omw?.fileLayout)
@@ -101,6 +113,7 @@ export class ArwSettingsComponent {
             if (!shell) throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
             aiProxyEnvironment(this.proxyUrl)
             this.config.store.omw ??= {}
+            this.config.store.omw.paneProportions={...this.proportions}
             this.config.store.omw.fileLayout=this.fileLayout
             this.config.store.omw.aiLayout=this.aiLayout
             this.config.store.omw.agent ??= { command: 'codex', args: defaultAgentArguments('codex') }
