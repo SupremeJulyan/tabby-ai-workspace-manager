@@ -1,5 +1,10 @@
 /** English translations keyed by the original Chinese UI text. */
 export const englishMessages: Record<string,string> = {
+    "工作区宽度（%）": "Workspace width (%)",
+    "AI 窗格宽度（%）": "AI pane width (%)",
+    "文件区高度（%）": "File area height (%)",
+    "主终端高度（%）": "Main terminal height (%)",
+    "左右宽度与上下高度分别合计 100%，修改一项会联动另一项；新开窗格或重新排列时生效，标签页布局不受影响。": "Each width/height pair totals 100%; changing one updates the other. Applies when opening or rearranging panes; tabbed layouts are unaffected.",
     "配置工作区使用的本机 AI CLI、会话参数与代理。": "Configure the local AI CLI, session arguments, and proxy used by workspaces.",
     "查找和替换": "Find and Replace",
     "查找": "Find",

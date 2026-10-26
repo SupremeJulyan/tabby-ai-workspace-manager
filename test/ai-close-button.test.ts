@@ -72,7 +72,7 @@ test('collapsing AI panes releases their layout area and increments the adjacent
         click(1,'.arw-ai-toggle-button')
         assert.equal(area(split.root,panes[1]),0)
         assert.equal(count(2),'2')
-        assert.equal(area(split.root,panes[2]),.32)
+        assert.equal(area(split.root,panes[2]),.5)
         tileAiTerminals(app,split,true)
         assert.equal(area(split.root,panes[0]),0,'automatic retiling preserves collapsed panes')
         click(2,'.arw-ai-expand-button')

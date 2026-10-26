@@ -1,3 +1,4 @@
+import { registerPaneProportions, paneProportions } from '../src/shared/pane-proportions'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { openFilePane } from '../src/arw-tree/open-file-pane'
@@ -68,4 +69,31 @@ test('opening four files never publishes their host views as top-level tabs',asy
     assert.deepEqual(split.getAllTabs(),[...created,terminal])
     assert.equal(attached.size,4)
     assert.equal(split.root.children[1],terminal)
+})
+
+test('configured proportions are read dynamically for workspace splits',()=>{
+    const terminal={},file={arwFilePane:true},ai={profile:{options:{env:{ARW_WORKSPACE_ROOT:'/project'}}}}
+    const split:any={root:new Container(),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>null,maximize(){},layout(){}}
+    split.root.children=[terminal,file,ai]
+    const app:any={activeTab:split,emitTabsChanged(){}}
+    let settings={workspaceWidth:65,fileHeight:75}
+    const unregister=registerPaneProportions(app,()=>settings)
+    try{
+        tileWorkspacePanes(app)
+        assert.deepEqual(split.root.ratios,[.65,.35])
+        assert.deepEqual(split.root.children[0].ratios,[.75,.25])
+        settings={workspaceWidth:40,fileHeight:55}
+        tileWorkspacePanes(app)
+        assert.deepEqual(split.root.ratios,[.4,.6])
+        assert.deepEqual(split.root.children[0].ratios,[.55,.45])
+    }finally{unregister()}
+    tileWorkspacePanes(app)
+    assert.deepEqual(split.root.ratios,[.5,.5])
+})
+
+test('invalid proportions fall back to usable complementary defaults',()=>{
+    for(const value of [undefined,null,NaN,0,100,-1,Infinity,'60',33.3]){
+        assert.deepEqual(paneProportions({workspaceWidth:value,fileHeight:value}),{workspaceWidth:50,aiWidth:50,fileHeight:60,terminalHeight:40})
+    }
+    assert.deepEqual(paneProportions({workspaceWidth:1,fileHeight:99}),{workspaceWidth:1,aiWidth:99,fileHeight:99,terminalHeight:1})
 })
