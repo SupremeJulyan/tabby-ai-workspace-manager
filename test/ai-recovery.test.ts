@@ -40,7 +40,10 @@ test('fresh AI launch stays fresh; persisted and legacy tabs resume with a worki
         assert.equal(token.profile.options.env.ARW_CONFIG,undefined)
         assert.equal(token.profile.options.env.ARW_AI_FRESH_START,undefined)
         const binary=join(token.profile.options.env.PATH.split(delimiter)[0],process.platform==='win32'?'arw.cmd':'arw')
-        assert.equal((await execute(process.execPath,[binary,'--version'])).stdout.trim(),`arw ${JSON.parse(await readFile(join(process.cwd(),'package.json'),'utf8')).version}`)
+        const version=process.platform==='win32'
+            ?await execute(process.env.ComSpec??'cmd.exe',['/d','/s','/c',`""${binary}" --version"`])
+            :await execute(process.execPath,[binary,'--version'])
+        assert.equal(version.stdout.trim(),`arw ${JSON.parse(await readFile(join(process.cwd(),'package.json'),'utf8')).version}`)
         const restored={profile:token.profile,sessionOptions:options,async getRecoveryToken(){return {type:'app:local-tab',profile:this.profile,savedState:'new screen'}}}
         prepareAiRecovery(restored,storage,source)
         assert.deepEqual(restored.profile.options.args,['resume','--last','--model','custom'])
