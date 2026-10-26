@@ -134,7 +134,7 @@ test('post-execution audit failure reports unknown mutation state instead of inv
     assert.equal(executions, 1)
 })
 
-test('CLI entry enforces canonical paths before SFTP and command forwarding', {skip: process.platform === 'win32'}, async t => {
+test('CLI reads may leave the workspace while writes and command forwarding enforce canonical boundaries', {skip: process.platform === 'win32'}, async t => {
     const directory = await mkdtemp(join(tmpdir(), 'arw-adapter-security-'))
     t.after(() => rm(directory, {recursive: true, force: true}))
     const root = join(directory, 'root'), outside = join(directory, 'outside')
@@ -168,8 +168,8 @@ test('CLI entry enforces canonical paths before SFTP and command forwarding', {s
     }
     const workspace = remoteWorkspace(session as any, `${root}/`)
     const cliFiles = cliWorkspaceFiles(workspace)
-    await assert.rejects(cliFiles.read('escape/secret'), /symbolic link/)
-    await assert.rejects(cliFiles.list('escape'), /symbolic link/)
+    assert.equal((await cliFiles.read('escape/secret')).content,'private')
+    assert.equal((await cliFiles.list('escape'))[0].name,'secret')
     await assert.rejects(cliFiles.write('escape/new-file', 'unsafe'), /symbolic link/)
     await assert.rejects(workspace.validateCommand!('touch escape/new-file'), /symbolic link/)
     assert.equal(await readFile(join(outside, 'secret'), 'utf8'), 'private')
@@ -179,7 +179,7 @@ test('CLI entry enforces canonical paths before SFTP and command forwarding', {s
     assert.ok((await workspace.list('.')).some(entry => entry.name === 'safe'))
     await workspace.validateCommand!('touch safe')
     const server = new ForwardingServer({workspace: {id: 'one', root, host: 'fixture'},
-        list: async path => cliFiles.list(path), read: async path => cliFiles.read(path),
+        list: async path => ({entries:await cliFiles.list(path)}), read: async path => cliFiles.read(path),
         write: async (path, content) => cliFiles.write(path, content), run: (command, signal) => workspace.run(command, signal),
         validateCommand: workspace.validateCommand!.bind(workspace)}, join(directory, 'audit.jsonl'))
     await server.start()
@@ -187,8 +187,10 @@ test('CLI entry enforces canonical paths before SFTP and command forwarding', {s
         const response = await ipcFetch(server.connection, {method: 'POST', body: JSON.stringify({name: 'run_remote_command', arguments: {workspaceId: 'one', command: 'touch escape/new-file'}})})
         assert.equal((await response.json() as any).result.status, 'error')
         for(const [name,path] of [['remote_read','escape/secret'],['remote_list','escape'],['remote_write','escape/new-file']]){
-            const denied=await ipcFetch(server.connection,{method:'POST',body:JSON.stringify({name,arguments:{workspaceId:'one',path,content:'unsafe'}})})
-            assert.equal((await denied.json() as any).result.status,'error')
+            const denied=await ipcFetch(server.connection,{method:'POST',body:JSON.stringify({name,arguments:{workspaceId:'one',path,...(name==='remote_write'?{content:'unsafe'}:{})}})})
+            const result=(await denied.json() as any).result
+            if(name==='remote_write')assert.equal(result.status,'error')
+            else assert.notEqual(result.status,'error',JSON.stringify(result))
         }
         await assert.rejects(stat(join(outside, 'new-file')))
     } finally {await server.stop()}

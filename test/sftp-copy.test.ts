@@ -45,3 +45,18 @@ test('manual forwards are discoverable without a connection option and survive s
   await remove();
   assert.deepEqual(await readWorkspaceCatalog(catalog), {workspaces:[]});
 });
+
+test('download sources may leave the workspace while upload destinations cannot',async t=>{
+  const fs=await import('node:fs/promises');
+  const directory=await mkdtemp(join(tmpdir(),'arw-copy-scope-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const root=join(directory,'project'),outside=join(directory,'reference');await fs.mkdir(root);await fs.writeFile(outside,'download');
+  const workspace=localWorkspace(root),signal=new AbortController().signal;
+  const copy=sftpCopy(async()=>sftpFixture(),new RemotePathGuard(root,(command,current)=>workspace.run(command,current)));
+  const invoke=(args:Record<string,unknown>)=>copy(args,signal) as Promise<Record<string,unknown>>;
+  assert.equal((await invoke({action:'stat',path:outside})).exists,true);
+  const transfer=await invoke({action:'open-read',path:outside});
+  assert.equal(Buffer.from(String((await invoke({action:'read',transferId:transfer.transferId})).data),'base64').toString(),'download');
+  await invoke({action:'close',transferId:transfer.transferId});
+  await assert.rejects(invoke({action:'open-write',path:outside+'-new'}),/outside workspaceRoot/);
+  await assert.rejects(invoke({action:'mkdir',path:'../new-dir'}),/outside workspaceRoot/);
+});

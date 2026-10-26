@@ -70,7 +70,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
         const sftp = await optionalSftp(session)
         signal?.throwIfAborted()
         if (sftp) return readSftpText(sftp,posix.resolve(root,input),signal)
-        const target = await guard.resolve(input,false,signal)
+        const target = await guard.resolveRead(input,signal)
         return readShellText(transport, target,signal)
     }
     const workspace: Workspace = {
@@ -82,7 +82,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
             const snapshot=async(input:string)=>{
                 signal.throwIfAborted()
                 await waitForForegroundWrites(priority,signal)
-                const target = sftp?posix.resolve(root,input):await guard.resolveDirectory(input, signal)
+                const target = sftp?posix.resolve(root,input):await guard.resolveRead(input, signal)
                 await waitForForegroundWrites(priority,signal)
                 if(sftp){
                     const entries=await sftp.readdir(target)
@@ -140,7 +140,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
         },
         async listForGit(input,limit,signal) {
             signal?.throwIfAborted()
-            const target=await guard.resolveDirectory(input,signal??AbortSignal.timeout(3000))
+            const target=await guard.resolveRead(input,signal??AbortSignal.timeout(3000))
             // Stream only a bounded prefix; SFTP readdir materializes the entire directory.
             const result=await transport.run(`cd -- ${shellQuote(target)} || exit $?
 printf 'ARW_DIRECTORY_V1\\000'
@@ -154,7 +154,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             signal?.throwIfAborted()
             if (!session.open) throw new Error(t('SSH 已断开'))
             const sftp = await optionalSftp(session)
-            if(!sftp)return listShellDirectory(transport,await guard.resolveDirectory(input,signal??AbortSignal.timeout(30000)),input,signal)
+            if(!sftp)return listShellDirectory(transport,await guard.resolveRead(input,signal??AbortSignal.timeout(30000)),input,signal)
             signal?.throwIfAborted()
             const files=await sftp.readdir(posix.resolve(root,input))
             signal?.throwIfAborted()

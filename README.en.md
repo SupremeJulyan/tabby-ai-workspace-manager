@@ -120,3 +120,5 @@ CI covers Linux, macOS, and Windows with Node.js 22 and 24. Linux runs the full 
 ## License
 
 [MIT](LICENSE)
+
+ARW reads, directory listings, searches, and download sources may use paths outside the workspace, subject to account permissions. Writes, deletes, moves, permission changes, and upload destinations remain confined to the workspace.
