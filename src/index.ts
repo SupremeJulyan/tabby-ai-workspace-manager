@@ -1,3 +1,4 @@
+import { logOperation } from './services/operation-log'
 import { setArwLocale } from './shared/i18n'
 import { ArwTranslatePipe } from './shared/translate.pipe'
 import { t } from './shared/i18n'
@@ -41,7 +42,7 @@ import { FileRecoveryProvider } from './providers/file-recovery.provider'
         { provide: ProjectStore, useFactory: (config:ConfigService, platform?:PlatformService, notifications?:NotificationsService) => {
             const configPath=platform?.getConfigPath()
             const store=new ProjectStore(config,configPath?join(dirname(configPath), 'omw', 'workspaces.json'):undefined)
-            void (platform?store.restoreLocal():store.syncCatalog()).catch(error=>notifications?.error(t('ARW 工作区转发恢复失败'),String(error)))
+            void (platform?store.restoreLocal():store.syncCatalog()).catch(error=>logOperation('自动恢复工作区转发',{error:String(error)}))
             return store
         }, deps: [ConfigService,PlatformService,NotificationsService] },
         { provide:ConfigProvider,useClass:ArwConfigProvider,multi:true },

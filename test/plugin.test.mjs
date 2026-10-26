@@ -67,7 +67,7 @@ test('editor, preview and Diff tabs round-trip through JSON recovery with file i
     const plugin=load(),provider=new plugin.FileRecoveryProvider({get:()=>({tabs:[]})})
     const create=async(token)=>{
         const params=await provider.recover(JSON.parse(JSON.stringify(token)))
-        const instance=new params.type({get:()=>({detectChanges(){}})})
+        const instance=new params.type({get:()=>({detectChanges(){},showMessageBox:async()=>({response:0})})})
         instance.setTitle=()=>{}
         Object.assign(instance,params.inputs)
         await instance.ngOnInit()
@@ -89,7 +89,7 @@ test('editor, preview and Diff tabs round-trip through JSON recovery with file i
         assert.equal(restored.arwPaneLayout,'stacked')
         assert.equal(restored.content,'# Unsaved');assert.equal(restored.original,'# Original');assert.equal(restored.dirty,true)
         await restored.save()
-        assert.ok(restored.error,'restored edits keep the original conflict hash')
+        assert.equal(restored.error,'');assert.equal(restored.content,'# External change');assert.equal(restored.dirty,false)
         assert.equal(await fs.readFile(join(root,'notes.md'),'utf8'),'# External change')
         const preview=await create({type:'arw-preview',workspace:token.workspace,filePath:'notes.md',state:{imagePaths:[],arwPaneLayout:'stacked'}});instances.push(preview)
         assert.equal(preview.arwPaneLayout,'stacked')
@@ -224,7 +224,7 @@ test('file recovery acquires one pooled session before terminal activation and r
                 const marker=command.match(/ARW_EXIT_[a-f0-9]+/)[0]
                 data$.next(Buffer.from(`/project\n/project/notes.py\n\0${marker}:0\0`));closed$.next()
             },async eof(){},async close(){}}
-        }},async openSFTP(){return {async stat(){return {size:Buffer.byteLength(content)}},async open(){
+        }},async openSFTP(){return {async stat(){return {size:Buffer.byteLength(content),modified:new Date(1700000000000)}},async open(){
             let sent=false
             return {async read(){reads++;if(sent)return Buffer.alloc(0);sent=true;return Buffer.from(content)},async close(){}}
         }}}}
@@ -365,29 +365,30 @@ test('file tabs hide the sidebar and release its width without changing the term
         assert.equal(sidebar.host.style.display,'none')
         assert.equal(classes.has('arw-tree-layout'),false)
     }
-    activate(new BaseTabComponent())
-    assert.equal(sidebar.host.style.display,'')
+    const first=new BaseTabComponent(),second=new BaseTabComponent()
+    activate(first)
     sidebar.toggle()
-    activate(Object.create(EditorComponent.prototype))
-    activate(new BaseTabComponent())
+    assert.equal(sidebar.host.style.display,'none')
+    activate(second)
+    assert.equal(sidebar.host.style.display,'','another tab has its own visibility')
+    activate(first)
     assert.equal(sidebar.host.style.display,'none')
     sidebar.toggle()
-    assert.equal(sidebar.host.style.display,'')
-    activate({getFocusedTab:()=>Object.create(PreviewComponent.prototype)})
-    assert.equal(sidebar.host.style.display,'none')
-    let focused,focusChanged,unsubscribed=false
     const editor=Object.create(EditorComponent.prototype)
-    activate({getFocusedTab:()=>focused,getAllTabs:()=>[editor],focusChanged$:{subscribe(callback){focusChanged=callback;return {unsubscribe(){unsubscribed=true}}}}})
-    assert.equal(sidebar.host.style.display,'none','new file split is hidden before its focus is initialized')
-    assert.equal(classes.has('arw-tree-layout'),false)
-    focused=new BaseTabComponent()
-    focusChanged()
-    assert.equal(sidebar.host.style.display,'')
-    focused=editor
-    focusChanged()
+    const source={profile:{type:'ssh',options:{}}}
+    const ai={profile:{type:'local',options:{env:{ARW_WORKSPACE_ROOT:'/remote'}}}}
+    let focused=source,focusChanged
+    const split={getFocusedTab:()=>focused,getAllTabs:()=>[source,editor,ai],focusChanged$:{subscribe(callback){focusChanged=callback;return {unsubscribe(){}}}}}
+    activate(split)
+    for(const pane of [source,editor,ai]){
+        focused=pane;focusChanged()
+        assert.equal(sidebar.host.style.display,'','pane focus cannot change the tab sidebar')
+    }
+    activate({getAllTabs:()=>[editor]})
     assert.equal(sidebar.host.style.display,'none')
-    activate(new BaseTabComponent())
-    assert.equal(unsubscribed,true)
+    activate({getAllTabs:()=>[ai]})
+    assert.equal(sidebar.host.style.display,'none')
+    activate(split)
     assert.equal(sidebar.host.style.display,'')
 })
 function fixture() {
@@ -480,7 +481,8 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     const defaultConfig={store:{omw:{}},async save(){}}
     const defaultSettings=new (new provider.useClass().getComponentType())(defaultConfig,profiles)
     await new Promise(resolve=>setImmediate(resolve))
-    defaultSettings.shellId='local:default';await defaultSettings.save()
+    assert.equal(defaultSettings.shellId,'local:default')
+    await defaultSettings.save()
     assert.equal(defaultConfig.store.omw.agent.shell.command,'/bin/bash')
     settings.shellId='local:default'
     assert.equal(defaultSettings.command,'codex')
@@ -523,17 +525,20 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
 })
 
 const failureText=(notices)=>notices.map(entry=>entry.join(': ')).join('\n')
-test('AI launch resolves the executable inside the selected shell',async()=>{
+for (const savedShell of [true,false]) test(`AI launch resolves the executable inside the ${savedShell?'selected':'default unsaved'} shell`,async()=>{
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
     const notices=[];let opened=false
     const command='arw-command-that-does-not-exist'
     const shell=process.platform==='win32'?'pwsh.exe':'/bin/bash'
     const profiles={async getProfiles(){return [{id:'local:default',name:'Shell',type:'local',options:{command:shell,args:[],env:{}}}]}}
     let profile
+    const config={store:{omw:{agent:{command,args:[],...(savedShell?{shell:{id:'local:default',command:shell,args:[],env:{}}}:{})}}}}
+    const before=JSON.stringify(config)
     const launcher=new (load().AiLauncherService)({async getProfiles(){return profiles.getProfiles()},async openNewTabForProfile(value){profile=value;opened=true;return {destroyed$:{subscribe(){return {unsubscribe(){}}}}}}},
         {pin(){}},{error:(...args)=>notices.push(args)},
-        {store:{omw:{agent:{command,args:[],shell:{id:'local:default',command:shell,args:[],env:{}}}}}},{},{})
+        config,{},{})
     await launcher.launchConfigured({terminal:{},workspace:{id:'local',...localWorkspace(process.cwd())},hint:''})
+    assert.equal(JSON.stringify(config),before,'launch must not persist a default shell')
     assert.equal(opened,true,failureText(notices))
     assert.equal(notices.length,0,failureText(notices))
     assert.equal(profile.options.command,shell)
@@ -777,6 +782,8 @@ test('sidebar relay failures do not duplicate error notifications while menu cal
     assert.equal(messages.length,1)
     await assert.rejects(tasks.run({},undefined,'push',{throwOnError:true}),/请先绑定已连接/)
     assert.equal(messages.length,1,'sidebar failures appear only in the repository panel')
+    assert.equal(await tasks.run({},undefined,'fetch',{quiet:true}),false)
+    assert.equal(messages.length,1,'automatic failures never notify')
 })
 
 test('sidebar relay displays progress, cancels its original source and retains failure details',async()=>{
@@ -1463,11 +1470,8 @@ test('Git view stages, unstages and commits the saved project through its actual
         await tree.localSync('push',remoteEntry)
         assert.equal(remoteEntry.error,repository.error,'local synchronization ignores remote repositories')
         const template=plugin.TreeComponent.component.template
-        assert.match(template,/repository.workspace.kind==='local'/)
-        assert.match(template,/localSync\('fetch',repository\)/)
-        assert.match(template,/localSync\('pull',repository\)/)
-        assert.match(template,/localSync\('push',repository\)/)
-        assert.match(template,/repository.workspace.kind==='remote' && canForward/)
+        for(const action of ['fetch','pull','push'])assert.equal(template.split(`syncGit('${action}',repository)`).length-1,1)
+        assert.doesNotMatch(template,/localSync\(|relay\(/)
         assert.equal(fullRefreshes,0)
         await writeFile(join(root,'second.txt'),'second')
         await tree.gitStatus()
@@ -1515,7 +1519,10 @@ test('diff editor parses templates, renders structured escaped text and navigate
     editor.nextHunk();assert.equal(editor.activeHunk,1)
     editor.previousHunk();assert.equal(editor.activeHunk,0)
     assert.equal(editor.diff.hunks[0].lines[1].text,'<img src=x onerror=alert(1)>')
-    assert.doesNotMatch(plugin.EditorComponent.component.template,/innerHTML/)
+    const template=plugin.EditorComponent.component.template
+    const diffSection=template.slice(template.indexOf('<ng-container *ngIf="isDiff'),template.indexOf('<div *ngIf="markdownPreview'))
+    assert.doesNotMatch(diffSection,/innerHTML/)
+    await editor.toggleMarkdown();assert.equal(editor.markdownPreview,false,'Diff content never enters the Markdown renderer')
     assert.match(plugin.EditorComponent.component.template,/diffMode='split'/)
     assert.match(plugin.EditorComponent.component.template,/diffMode='unified'/)
     await editor.save();assert.equal(editor.dirty,false)
@@ -1947,7 +1954,7 @@ test('remote sidebar right-click downloads files and folders through native Tabb
             return folderTransfer
         }}
     const remote={open:true,willDestroy$:new Subject(),ref(){references++},unref(){references--},profile:{options:{host:'fixture'}},async openSFTP(){return {
-        async stat(path){const info=await fs.stat(path);return {name:path.split('/').pop(),fullPath:path,isDirectory:info.isDirectory(),mode:info.mode,size:info.size}},
+        async stat(path){const info=await fs.stat(path);return {name:path.split('/').pop(),fullPath:path,isDirectory:info.isDirectory(),mode:info.mode,size:info.size,modified:info.mtime}},
         async readdir(path){return Promise.all((await fs.readdir(path,{withFileTypes:true})).map(async entry=>{const info=await fs.stat(join(path,entry.name));return {name:entry.name,fullPath:join(path,entry.name),isDirectory:entry.isDirectory(),isSymlink:entry.isSymbolicLink(),mode:info.mode,size:info.size}}))},
         async download(path,transfer){assert.equal(references,1);downloads.push(path);if(downloadFailure)throw Error('fixture download failed');if(disconnectDuringDownload)remote.willDestroy$.next();const content=await fs.readFile(path);for(let offset=0;offset<content.length;offset+=262144)await transfer.write(content.subarray(offset,offset+262144));transfer.close()},
     }}}
@@ -2076,7 +2083,7 @@ test('deleting local Git metadata offers initialization and cloning without an S
     await git(['init','-b','main',root])
     const workspace=localWorkspace(root),tree=new plugin.TreeComponent({current:new BehaviorSubject({terminal:{},workspace,hint:''})},{},{},{},{},{},{})
     try{
-        await tree.refresh();await tree.showGit();await tree.gitStatus()
+        await tree.refresh();await tree.showGit();await tree.autoFetch;await tree.gitStatus()
         assert.equal(tree.canSetupGit,false)
         await fs.rm(join(root,'.git'),{recursive:true,force:true})
         await tree.gitStatus()
@@ -2203,7 +2210,7 @@ test('saved forwarding replaces an obsolete SSH session even when its open flag 
     const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory({store:{omw:{projects:{}}},async save(){}},{getConfigPath:()=>join(directory,'config.yaml')})
     const context={kind:'remote',host:JSON.stringify(['fixture',22,'user'])},project=await store.add(context,'/project')
     const owner=()=>({open:true,ssh:{},willDestroy$:new Subject(),refs:0,ref(){this.refs++},unref(){this.refs--}})
-    const old=owner(),current=owner(),source={sshSession:old},backend=content=>({...context,root:project.root,read:async()=>{if(content==='obsolete')throw Error('SendError');return {content}},list:async()=>[],write:async()=>({}),run:async()=>({exitCode:0,stdout:'',stderr:''})})
+    const old=owner(),current=owner(),source={sshSession:old},backend=content=>({...context,root:project.root,read:async()=>{if(content==='obsolete')throw Error('SendError');return {content}},list:async()=>[],write:async()=>({}),run:async()=>({exitCode:0,stdout:'/project\n/project/result.out\n',stderr:''})})
     const read=async()=>{const config=JSON.parse(await fs.readFile(store.connection(project.id),'utf8'));return (await(await ipcFetch(config,{method:'POST',body:JSON.stringify({name:'remote_read',arguments:{workspaceId:project.id,path:'result.out'}})})).json()).result}
     try{
         await store.open(project,backend('obsolete'),old,source)
@@ -2277,7 +2284,7 @@ test('workspace forwarding indicators follow startup, request failures, recovery
     const observation=store.changed.subscribe(()=>events.push(store.state(project.id).phase))
     const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{},{},store,{detectChanges(){renders++}})
     tree.viewReady=true
-    const backend={kind:'remote',host:'fixture',root:'/project',list:async()=>[],read:async()=>{if(fail)throw Error('SendError token=private-secret');return {content:'recovered'}},write:async()=>({}),run:async()=>({stdout:'',stderr:'',exitCode:7})}
+    const backend={kind:'remote',host:'fixture',root:'/project',list:async()=>[],read:async()=>{if(fail)throw Error('SendError token=private-secret');return {content:'recovered'}},write:async()=>({}),run:async command=>command.includes('realpath')?{stdout:'/project\n/project/file\n',stderr:'',exitCode:0}:{stdout:'',stderr:'',exitCode:7}}
     try{
         tree.selection={workspace:backend,remote}
         assert.equal(store.state(project.id).phase,'saved')
@@ -2606,6 +2613,93 @@ test('local workspaces open AI directly without forwarding or forwarding status'
 })
 
 
+test('editor conflict choices overwrite explicitly or reload the latest file',async()=>{
+    const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js'),plugin=load()
+    const root=await fs.mkdtemp(join(tmpdir(),'arw-conflict-choice-'))
+    try{
+        for(const response of [0,1]){
+            const path=join(root,'file.txt');await fs.writeFile(path,'original')
+            const prompts=[],writes=[],workspace=localWorkspace(root),write=workspace.write.bind(workspace)
+            workspace.write=async(...args)=>{writes.push(args);return write(...args)}
+            const editor=new plugin.EditorComponent({get:()=>({showMessageBox:async options=>{prompts.push(options);return {response}}})})
+            editor.setTitle=()=>{};editor.workspace=workspace;editor.filePath='file.txt'
+            try{
+                await editor.ngOnInit();editor.content='local draft'
+                await fs.writeFile(path,'latest external content')
+                await editor.save()
+                assert.equal(prompts.length,1);assert.equal(prompts[0].defaultId,0)
+                assert.match(prompts[0].message,/覆盖|Overwrite/)
+                const expected=response===1?'local draft':'latest external content'
+                assert.equal(await fs.readFile(path,'utf8'),expected)
+                assert.equal(editor.content,expected);assert.equal(editor.original,expected)
+                assert.equal(editor.hash,(await workspace.read('file.txt')).hash)
+                assert.equal(editor.dirty,false);assert.equal(editor.error,'');assert.equal(editor.saving,false)
+                assert.equal(writes.length,response===1?2:1)
+                if(response===1)assert.equal(writes[1][2],undefined,'only explicit overwrite bypasses the old version')
+            }finally{editor.ngOnDestroy()}
+        }
+    }finally{await fs.rm(root,{recursive:true,force:true})}
+})
+
+test('conflict resolution failures retain the draft and ordinary failures never prompt for overwrite',async()=>{
+    const {FileConflictError}=require('../.build/shared/file-conflict.js'),plugin=load()
+    for(const scenario of ['reload-fails','overwrite-fails','ordinary-failure']){
+        let prompts=0,writes=0,reads=0
+        const editor=new plugin.EditorComponent({get:()=>({showMessageBox:async()=>{prompts++;return {response:scenario==='overwrite-fails'?1:0}}})})
+        editor.setTitle=()=>{};editor.filePath='file.txt'
+        editor.workspace={read:async()=>{
+            if(reads++)throw new Error('reload failed')
+            return {content:'original',hash:'original-version'}
+        },write:async()=>{
+            writes++
+            if(scenario==='ordinary-failure'||writes>1)throw new Error('write failed')
+            throw new FileConflictError('changed')
+        }}
+        try{
+            await editor.ngOnInit();editor.content='local draft';await editor.save()
+            assert.equal(editor.content,'local draft');assert.equal(editor.original,'original');assert.equal(editor.dirty,true)
+            assert.equal(editor.saving,false);assert.match(editor.error,/failed/)
+            assert.equal(prompts,scenario==='ordinary-failure'?0:1)
+            assert.equal(writes,scenario==='overwrite-fails'?2:1)
+        }finally{editor.ngOnDestroy()}
+    }
+})
+
+test('Markdown opens as editable source and previews the unsaved buffer in the same tab',async()=>{
+    const {BehaviorSubject}=await import('rxjs'),plugin=load(),opened=[],writes=[]
+    const workspace={id:'markdown',kind:'local',root:'/project',host:'localhost',name:'project',label:'project',
+        read:async()=>({content:'# Original',hash:'version'}),write:async(...args)=>{writes.push(args);return {content:args[1],hash:'saved'}},
+        readBytes:async()=>Buffer.from('image bytes')}
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{openNewTab:entry=>opened.push(entry)},{},{},{},{},{})
+    tree.selection={terminal:{},workspace}
+    let editor
+    try{
+        for(const path of ['README.md','notes.MD','notes.markdown','notes.mdown','notes.mkd']){
+            await tree.open({name:path,path,directory:false,symlink:false,depth:0})
+            assert.equal(opened.at(-1).type,plugin.EditorComponent)
+        }
+        await tree.open({name:'image.png',path:'image.png',directory:false,symlink:false,depth:0})
+        assert.equal(opened.at(-1).type,plugin.PreviewComponent,'image routing is preserved')
+        editor=new plugin.EditorComponent({get:()=>({})});editor.setTitle=()=>{}
+        Object.assign(editor,opened[0].inputs);await editor.ngOnInit()
+        assert.equal(editor.readonly,false);assert.equal(editor.markdownPreview,false)
+        editor.content='# Unsaved heading\n\n![diagram](diagram.png)\n\n<script>bad()</script>'
+        await editor.toggleMarkdown()
+        assert.equal(editor.markdownPreview,true);assert.match(editor.markdown,/<h1[^>]*>Unsaved heading<\/h1>/)
+        assert.match(editor.markdown,/data:image\/png;base64,/);assert.doesNotMatch(editor.markdown,/<script>/)
+        assert.equal(writes.length,0);assert.equal(editor.dirty,true)
+        await editor.toggleMarkdown();assert.equal(editor.markdownPreview,false);assert.match(editor.content,/# Unsaved heading/)
+        await editor.toggleMarkdown();editor.search.open();assert.equal(editor.markdownPreview,false,'find returns to editable source')
+        editor.search.close();editor.content=editor.original;await editor.toggleMarkdown()
+        workspace.read=async()=>({content:'# Refreshed remotely',hash:'new-version'})
+        await editor.reloadOpenFile()
+        assert.equal(editor.markdownPreview,true);assert.match(editor.markdown,/Refreshed remotely/)
+        assert.match(plugin.EditorComponent.component.template,/toggleMarkdown\(\)/)
+        assert.match(plugin.EditorComponent.component.template,/!isDiff && !markdownPreview/)
+    }finally{editor?.ngOnDestroy();tree.ngOnDestroy()}
+})
+
 test('editor retains unconfirmed content, verifies without discarding newer edits, and confirms reload',async()=>{
     const plugin=load()
     let response=0,writes=0,reloads=0,retries=0,issue
@@ -2696,5 +2790,118 @@ test('background Git refresh queries each repository once, throttles bursts, and
     tree.gitWatchLastRefresh=0;truncated=true
     await tree.refreshWatchedGit()
     assert.equal(applied,1)
-    assert.match(repository.message,/变更过多/)
+    assert.equal(repository.message,undefined,'incomplete background status stays silent')
+})
+
+
+test('tab workspace belongs to its source terminal across AI close, preview focus and background events',async()=>{
+    const {Subject}=await import('rxjs'),plugin=load()
+    const terminal=(root)=>({profile:{type:'local',options:{}},hasFocus:false,focused$:new Subject(),sessionChanged$:new Subject(),destroyed$:new Subject(),
+        session:{getWorkingDirectory:async()=>root,oscProcessor:{cwdReported$:new Subject()},output$:new Subject(),destroyed$:new Subject()}})
+    const source=terminal('/source'),ai=terminal('/agent'),local=terminal('/local'),preview={}
+    ai.profile.options.env={ARW_WORKSPACE_ROOT:'/source'}
+    let panes=[source,ai,preview],focused=source
+    const split={getAllTabs:()=>panes,getFocusedTab:()=>focused}
+    const app={tabs:[split,local],activeTab:split,activeTabChange$:new Subject(),getParentTab:t=>panes.includes(t)?split:undefined}
+    const registry=new plugin.WorkspaceRegistry(app,{run:fn=>fn()})
+    try{
+        for(const pane of [source,ai,local])registry.register(pane)
+        await new Promise(resolve=>setTimeout(resolve,0))
+        const original=registry.current.value
+        assert.equal(original.terminal,source)
+        const events=[];const sub=registry.current.subscribe(value=>events.push(value))
+        registry.pin(ai,{terminal:source,workspace:{kind:'remote',root:'/ai-project'},hint:''})
+        focused=ai;ai.focused$.next()
+        assert.equal(registry.current.value,original,'AI context never replaces the source workspace')
+        focused=preview
+        registry.unregister(ai);panes=[source,preview]
+        assert.equal(registry.current.value,original,'closing AI does not clear or restore the source selection')
+        assert.equal(events.length,1,'AI focus and close emit no sidebar changes')
+        app.activeTab=local;app.activeTabChange$.next(local)
+        const localSelection=registry.current.value
+        source.hasFocus=true;source.focused$.next()
+        source.session.oscProcessor.cwdReported$.next()
+        await new Promise(resolve=>setTimeout(resolve,0))
+        assert.equal(registry.current.value,localSelection,'background focus and cwd cannot select another tab')
+        app.activeTab=split;app.activeTabChange$.next(split)
+        assert.equal(registry.current.value.terminal,source,'preview focus does not prevent selecting the source tab')
+        sub.unsubscribe()
+    }finally{for(const pane of [source,ai,local])registry.unregister(pane)}
+})
+
+test('entering Git fetches once after discovery and abandons requests when leaving the page',async()=>{
+    const {BehaviorSubject}=require('rxjs'),plugin=load()
+    const workspace={kind:'local',root:'/fixture',label:'fixture',list:async()=>[],run:async()=>({stdout:'',stderr:'',exitCode:128})}
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{disable:async()=>{}},{},{},{})
+    tree.selection={terminal:{},workspace,hint:''};tree.activeTab={};tree.browserWorkspace=workspace
+    const repository={workspace,root:workspace.root,busy:false,loading:false}
+    tree.repositories=[repository]
+    let finish,scans=0
+    tree.ensureGitScan=()=>{scans++;tree.gitScan=new Promise(resolve=>{finish=resolve})}
+    const calls=[];tree.localSync=async(action,repo,quiet)=>calls.push([action,repo,quiet])
+    try{
+        tree.setMode('git')
+        assert.equal(calls.length,0,'wait for repository discovery')
+        finish();await tree.autoFetch
+        assert.equal(calls.length,1);assert.equal(calls[0][0],'fetch');assert.equal(calls[0][1],repository);assert.equal(calls[0][2],true)
+        tree.setMode('git');await tree.autoFetch
+        assert.equal(scans,1,'selecting an already active Git page does not fetch again')
+        tree.setMode('files');tree.setMode('git')
+        const pending=tree.autoFetch
+        tree.setMode('files');finish();await pending
+        assert.equal(calls.length,1,'leaving Git before discovery completes cancels the automatic request')
+        tree.setMode('git');finish();await tree.autoFetch
+        assert.equal(calls.length,2,'reentering Git fetches again')
+        assert.match(plugin.TreeComponent.component.template,/syncGit\('fetch',repository\)/)
+    }finally{tree.ngOnDestroy()}
+})
+
+
+test('background Git operations preserve notices while manual failures remain visible',async()=>{
+    const {BehaviorSubject}=require('rxjs'),plugin=load()
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{disable:async()=>{}},{},{},{})
+    const repository={root:'/fixture',error:'previous error',message:'previous message'}
+    tree.repositories=[repository]
+    tree.git=()=>({status:async()=>{throw new Error('status failed')}})
+    try{
+        await tree.gitOperation(repository,async()=>{throw new Error('fetch failed')},'fetched',true)
+        assert.equal(repository.error,'previous error')
+        assert.equal(repository.message,'previous message')
+        assert.equal(tree.gitNoticeByRoot.size,0)
+        await tree.gitOperation(repository,async()=>{},'fetched',true)
+        assert.equal(repository.message,'previous message','automatic success is silent too')
+        await tree.gitOperation(repository,async()=>{throw new Error('manual failed')})
+        assert.match(tree.gitNoticeByRoot.get(repository.root).error,/manual failed/)
+    }finally{tree.ngOnDestroy()}
+})
+
+test('workspace browser and terminal cwd survive JSON recovery in a fresh plugin instance',async()=>{
+    const {BehaviorSubject}=require('rxjs')
+    const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const root=await fs.mkdtemp(join(tmpdir(),'arw-workspace-recovery-'))
+    await fs.writeFile(join(root,'remembered.txt'),'content')
+    const create=(plugin,profile)=>{
+        const terminal={profile,session:{getWorkingDirectory:async()=>root},getRecoveryToken:async()=>({type:'app:local-tab',profile:terminal.profile})}
+        const decorator=new plugin.WorkspaceTerminalDecorator({register(){}})
+        decorator.attach(terminal)
+        const current=new BehaviorSubject(null)
+        const tree=new plugin.TreeComponent({current},{},{},{disable:async()=>{}},{},{},{})
+        tree.ensureGitScan=()=>{}
+        return {terminal,current,tree}
+    }
+    let first,second
+    try{
+        const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+        first=create(load(),{type:'local',options:{cwd:'/old'}})
+        first.current.next({terminal:first.terminal,workspace:localWorkspace(root),hint:''})
+        await first.tree.refresh();first.tree.setMode('git')
+        const token=JSON.parse(JSON.stringify(await first.terminal.getRecoveryToken()))
+        assert.equal(token.profile.options.cwd,root)
+        second=create(load(),token.profile)
+        second.current.next({terminal:second.terminal,workspace:localWorkspace(tmpdir()),hint:''})
+        for(let i=0;i<100&&second.tree.loading;i++)await new Promise(resolve=>setTimeout(resolve,5))
+        assert.equal(second.tree.breadcrumb,root)
+        assert.equal(second.tree.mode,'git')
+        assert.equal(second.tree.nodes[0].name,'remembered.txt')
+    }finally{first?.tree.ngOnDestroy();second?.tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
 })

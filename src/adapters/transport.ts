@@ -1,3 +1,5 @@
+import { logOperation } from '../services/operation-log'
+import { redactSensitiveText } from '../shared/redact'
 import { t } from '../shared/i18n'
 import { open } from 'fs/promises'
 import { OPEN_CREATE, OPEN_READ, OPEN_TRUNCATE, OPEN_WRITE } from 'russh'
@@ -19,6 +21,11 @@ export class TabbyRelayTransport implements RelayTransport {
             const channel = await client.activateChannel(await client.openSessionChannel())
             return await executeChannel(channel, command, this.root, { ...options, signal })
         } catch(error){
+            const operation=options.operation??'执行 SSH 命令'
+            const context={host:this.session.profile.options.host,root:this.root,command:command.slice(0,2000),error:String(error)}
+            logOperation(operation,context)
+            if(!/\bSendError\b/.test(error instanceof Error?error.message:String(error)))
+                throw new Error(redactSensitiveText(`${operation}失败：${context.host}:${this.root}；命令：${command.split('\n')[0].slice(0,160)}；${String(error)}`),{cause:error})
             if(/\bSendError\b/.test(error instanceof Error?error.message:String(error)))throw new Error(t('SSH 通道已失效（SendError），请检查来源 SSH 终端的连接。命令没有自动重试。'),{cause:error})
             throw error
         }

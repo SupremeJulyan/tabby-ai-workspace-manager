@@ -51,9 +51,9 @@ test('directory input and actions align with the indented workspace rows',()=>{
 
 test('editor actions use hollow SVG icons without filled Bootstrap buttons',()=>{
     const header=EDITOR_TEMPLATE.slice(0,EDITOR_TEMPLATE.indexOf('</header>'))
-    assert.equal((header.match(/class="file-icon-button"/g)??[]).length,3)
-    assert.equal((header.match(/fill="none"/g)??[]).length,3)
-    assert.equal((header.match(/aria-label/g)??[]).length,3)
+    assert.equal((header.match(/class="file-icon-button"/g)??[]).length,4)
+    assert.equal((header.match(/fill="none"/g)??[]).length,4)
+    assert.equal((header.match(/aria-label/g)??[]).length,4)
     assert.doesNotMatch(header,/btn-primary|btn-secondary/)
 })
 

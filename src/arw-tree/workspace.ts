@@ -8,8 +8,10 @@ import type { GitResult } from './git/remote-git';
 import { watchLocalDirectory } from '../shared/watch-directory';
 import { inheritedWorkspaceName, leafName } from '../shared/workspace-name';
 import { t } from '../shared/i18n';
+import { FileConflictError } from '../shared/file-conflict';
 
 export interface WorkspaceFile { name: string; path: string; directory: boolean; symlink: boolean }
+// `hash` is an opaque revision token: remote files use modification time and size.
 export interface WorkspaceText { content: string; hash: string }
 import { textFileLimit } from '../shared/text-file-limit'
 export { textFileLimit } from '../shared/text-file-limit'
@@ -112,20 +114,19 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
       try{before=await snapshot(target)}catch(error){
         if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error
       }
-      if (expectedHash !== undefined && (await read(input)).hash !== expectedHash) throw new Error('File changed on disk. Reopen it before saving.');
+      if (expectedHash !== undefined && (await read(input)).hash !== expectedHash) throw new FileConflictError('File changed on disk. Reopen it before saving.');
       const file=await open(target,before?'r+':'wx',0o600);
       try{
         if(before){
           const current=await snapshot(target);
-          if(!sameSnapshot(before,current)||!sameSnapshot(before,await file.stat()))throw new Error('File metadata changed on disk. Reopen it before saving.');
+          if(!sameSnapshot(before,current)||!sameSnapshot(before,await file.stat()))throw new FileConflictError('File metadata changed on disk. Reopen it before saving.');
         }
         await file.truncate(0);
         await file.writeFile(content,'utf8');
         if(before){
-          if(before.mode&0o6000)await file.chmod(before.mode&0o7777);
           const after=await snapshot(target);
           if(after.dev!==before.dev||after.ino!==before.ino)throw new Error('File changed on disk during save.');
-          if(after.uid!==before.uid||after.gid!==before.gid||(after.mode&0o7777)!==(before.mode&0o7777))throw new Error('File permissions changed during save.');
+          if(after.uid!==before.uid||after.gid!==before.gid||(after.mode&0o1777)!==(before.mode&0o1777))throw new Error('File permissions changed during save.');
         }
       }finally{await file.close()}
       return { content, hash: textHash(content) };

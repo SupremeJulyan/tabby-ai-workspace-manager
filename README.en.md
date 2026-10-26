@@ -39,7 +39,9 @@ On Linux/macOS, installation or first plugin load creates `~/.local/bin/arw` and
 - Drop local files or folders on a remote folder to upload there, or on empty space to upload to the current directory. Right-click remote items to download. Transfers require SFTP and do not silently overwrite existing targets.
 - Plugin operations update the file tree immediately. Local monitoring watches visible directories; remote metadata checks run every five seconds. Background checks are bounded, so refresh manually for changes in unopened subdirectories.
 
-UTF-8 editing supports files up to 500 MiB. Saves detect external changes and write in place, preserving permissions, ACLs, and extended attributes. Remote editing rejects symbolic links and hard links and requires GNU `realpath`, `stat`, `sha256sum`, and standard file tools.
+UTF-8 editing supports files up to 500 MiB. Remote files are read and saved in place through SFTP, preserving permissions, ACLs, and extended attributes. Remote saves compare modification time and size without hashing or rereading the contents. Sidebar access follows server permissions; workspace boundaries are enforced at the arw CLI entry. When SFTP is unavailable, the SSH fallback requires GNU `realpath`, `stat`, and standard file tools.
+
+Markdown opens as editable source. Click Preview to render the current buffer, including unsaved edits, in the same tab; click Source to return to editing. Save conflicts ask whether to overwrite. Choosing No reloads and displays the latest file contents.
 
 Text tabs support find and replace: `Ctrl/Cmd+F` to find, `Ctrl/Cmd+H` to replace, `F3` / `Shift+F3` to navigate, and `Esc` to close. Case-sensitive, whole-word, and regular-expression searches are supported. Searching Markdown/CSV previews switches to source; replacing opens an editor. Replacements stay in the buffer until you save. Replace All is disabled above 10000 matches.
 

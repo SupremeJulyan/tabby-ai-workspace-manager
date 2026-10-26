@@ -1,3 +1,5 @@
+import { prepareWorkspaceRecovery } from '../shared/workspace-recovery'
+import { logOperation } from '../services/operation-log'
 import { registerPaneProportions } from '../shared/pane-proportions'
 import { setTerminalCommandMode } from '../shared/terminal-command'
 import { t } from '../shared/i18n'
@@ -18,7 +20,7 @@ export class WorkspaceTerminalDecorator extends TerminalDecorator {
     constructor (private registry: WorkspaceRegistry, private platform?:PlatformService, private notifications?:NotificationsService, private app?:AppService, private config?:ConfigService) {
         super()
         if(app)this.unregisterPaneProportions=registerPaneProportions(app,()=>this.config?.store.omw?.paneProportions)
-        if(app?.tabsChanged$)this.automaticTiling=new AutomaticAiTiling(app,error=>this.notifications?.error(t('AI 终端自动平铺失败'),String(error)))
+        if(app?.tabsChanged$)this.automaticTiling=new AutomaticAiTiling(app,error=>logOperation('AI 终端自动平铺',{error:String(error)}))
     }
     ngOnDestroy():void {this.automaticTiling?.dispose();this.unregisterPaneProportions?.()}
     attach (terminal: BaseTerminalTabComponent<any>): void {
@@ -31,6 +33,7 @@ export class WorkspaceTerminalDecorator extends TerminalDecorator {
             const remove=addAiCloseButton(terminal,this.app,error=>this.notifications?.error(t('关闭 AI 终端失败'),String(error)))
             if(remove)this.closeButtons.set(terminal,remove)
         }
+        prepareWorkspaceRecovery(terminal)
         this.registry.register(terminal)
     }
     detach (terminal: BaseTerminalTabComponent<any>): void { setTerminalCommandMode(terminal,false);this.closeButtons.get(terminal)?.();this.closeButtons.delete(terminal);this.registry.unregister(terminal); super.detach(terminal) }

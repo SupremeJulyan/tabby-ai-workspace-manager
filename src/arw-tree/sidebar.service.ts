@@ -15,6 +15,7 @@ export class SidebarService {
     private host?: HTMLElement
     private container?: HTMLElement
     private visible = true
+    private tabVisibility = new WeakMap<object, boolean>()
     private installed = false
     private focusSubscription?:{unsubscribe():void}
     private subscriptions:Array<{unsubscribe():void}>=[]
@@ -98,21 +99,24 @@ export class SidebarService {
     }
     toggle ():void {
         this.visible=!this.visible
+        if(this.app.activeTab)this.tabVisibility.set(this.app.activeTab,this.visible)
         if(!this.component)this.mount()
         this.updateVisibility()
     }
     private updateVisibility():void {
         const tab=this.app.activeTab
-        const focused=tab&&'getFocusedTab' in tab?((tab as any).getFocusedTab()??(tab as any).getAllTabs?.()[0]):tab
-        const isFile=(pane:unknown)=>pane instanceof ArwEditorComponent||pane instanceof ArwPreviewComponent
-        const hasTerminal=tab&&'getAllTabs' in tab&&(tab as any).getAllTabs().some((pane:unknown)=>!isFile(pane))
-        const visible=this.visible&&(!isFile(focused)||Boolean(hasTerminal))
+        const panes=tab&&'getAllTabs' in tab?(tab as any).getAllTabs():[tab]
+        const hasSource=panes.some((pane:any)=>pane?.profile && !pane.profile.options?.env?.ARW_WORKSPACE_ROOT)
+        const fileOnly=panes.every((pane:any)=>pane instanceof ArwEditorComponent||pane instanceof ArwPreviewComponent)
+        const aiOnly=panes.every((pane:any)=>Boolean(pane?.profile?.options?.env?.ARW_WORKSPACE_ROOT))
+        const visible=this.visible&&(hasSource||(!fileOnly&&!aiOnly))
         if(this.host)this.host.style.display=visible?'':'none'
         this.container?.classList.toggle('arw-tree-layout',visible)
     }
     private watchActiveTab():void {
         this.focusSubscription?.unsubscribe()
         const tab=this.app.activeTab
+        this.visible=tab?(this.tabVisibility.get(tab)??true):true
         this.focusSubscription=tab&&'focusChanged$' in tab?(tab as any).focusChanged$.subscribe(()=>this.updateVisibility()):undefined
         this.updateVisibility()
     }

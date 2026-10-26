@@ -32,12 +32,12 @@ test('local saves keep the inode and permissions, truncate shorter contents, and
   if(process.platform!=='win32')assert.equal((await stat(join(root,'new'))).mode&0o777,0o600);
 });
 
-test('local saves preserve setuid/setgid bits along with ordinary permissions',{skip:process.platform==='win32'},async context=>{
+test('local saves preserve ordinary permissions without restoring setuid/setgid',{skip:process.platform==='win32'},async context=>{
   const root=await mkdtemp(join(tmpdir(),'arw-special-mode-'));context.after(()=>rm(root,{recursive:true,force:true}));
   const target=join(root,'file');await writeFile(target,'original');await chmod(target,0o6751);
   const workspace=localWorkspace(root),original=await workspace.read('file');
   await workspace.write('file','new',original.hash);
-  assert.equal(await readFile(target,'utf8'),'new');assert.equal((await stat(target)).mode&0o7777,0o6751);
+  assert.equal(await readFile(target,'utf8'),'new');assert.equal((await stat(target)).mode&0o1777,0o751);
 });
 
 test('local workspace refuses binary/oversized text and symlink replacement',async t=>{

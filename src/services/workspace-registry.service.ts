@@ -1,3 +1,5 @@
+import { workspaceRecoveryState } from '../shared/workspace-recovery'
+import { logOperation } from './operation-log'
 import { t } from '../shared/i18n'
 import { Injectable, NgZone } from '@angular/core'
 import { AppService, BaseTabComponent } from 'tabby-core'
@@ -34,11 +36,32 @@ export class WorkspaceRegistry {
     private pinnedSelections = new WeakMap<BaseTerminalTabComponent<any>, WorkspaceSelection>()
     constructor (private app: AppService, private zone: NgZone) {
         this.app.tabsChanged$?.subscribe(()=>this.refreshTerminalTitles())
-        this.app.activeTabChange$.subscribe(tab => {
-            const focused = tab && 'getFocusedTab' in tab ? (tab as any).getFocusedTab() : tab
-            if (focused && this.entries.has(focused)) this.activate(focused)
-        })
+        this.app.activeTabChange$.subscribe(tab => this.selectTab(tab))
     }
+    private topTab(tab: any): any {
+        const visited = new Set<object>()
+        while (tab && !visited.has(tab)) {
+            visited.add(tab)
+            const parent = this.app.getParentTab?.(tab)
+            if (!parent || visited.has(parent)) break
+            tab = parent
+        }
+        return tab
+    }
+    private owner(tab: any): BaseTerminalTabComponent<any>|undefined {
+        if (!tab) return undefined
+        const terminals = (tab.getAllTabs?.() ?? [tab]) as BaseTerminalTabComponent<any>[]
+        const registered = terminals.filter(terminal => this.entries.has(terminal))
+        const source = registered.find(terminal => !this.entries.get(terminal)?.pinned
+            && !terminal.profile?.options?.env?.ARW_WORKSPACE_ROOT)
+        return source ?? registered[0]
+    }
+    private selectTab(tab: any): void {
+        this.restoreBindings()
+        const owner = this.owner(tab)
+        this.emit(owner ? this.entries.get(owner)!.selection : null)
+    }
+
     private refreshTerminalTitles():void {
         for(const terminal of this.entries.keys())titleTerminalTab(terminal)
         for(const tab of this.app.tabs??[]){
@@ -50,6 +73,14 @@ export class WorkspaceRegistry {
         }
     }
     private emit(value:WorkspaceSelection|null):void{
+        // Pane focus and late background updates must never select another top-level tab.
+        const active = this.app.activeTab
+        if (active && value) {
+            if (this.topTab(value.terminal) !== active) return
+            const owner = this.owner(active)
+            if (owner) value = this.entries.get(owner)!.selection
+        }
+        if(this.current.value===value)return
         this.refreshTerminalTitles()
         const env=value?.terminal.profile?.options?.env
         if(env?.ARW_WORKSPACE_ROOT&&value?.workspace){
@@ -126,7 +157,7 @@ export class WorkspaceRegistry {
         if(!pending){
             // Tabby's SFTP API exposes no realpath('.'). Resolve the login channel's initial
             // directory once, then validate it through SFTP. This is not the interactive shell's cwd.
-            pending=new TabbyRelayTransport(remote,'.').run('pwd -P',AbortSignal.timeout(15000)).then(result=>{
+            pending=new TabbyRelayTransport(remote,'.').run('pwd -P',AbortSignal.timeout(15000),{operation:'检测 SSH 登录初始目录'}).then(result=>{
                 const root=result.stdout.replace(/\r?\n$/,'')
                 if(result.exitCode!==0||!root.startsWith('/')||root.includes('\n')||root.includes('\0')){
                     throw new Error(t`无法解析远程初始目录：${result.stderr||t('pwd 未返回绝对路径')}`)
@@ -177,7 +208,8 @@ export class WorkspaceRegistry {
                 let pathSource:'terminal'|'sftp'='terminal'
                 if(!root && remote && isSshTab(terminal)){
                     // Use the same authenticated session and browser path as Tabby's native SFTP panel.
-                    const browser=terminal.sftpPath
+                    const saved=workspaceRecoveryState(terminal)
+                    const browser=(terminal.sftpPanelVisible||entry.root)?terminal.sftpPath:(saved?.cwd??saved?.root??terminal.sftpPath)
                     root=browser?.startsWith('/')&&(browser!=='/'||terminal.sftpPanelVisible||entry.root)
                         ?browser:await this.initialDirectory(remote)
                     if(version!==entry.version||this.entries.get(terminal)!==entry||entry.pinned)return
@@ -203,7 +235,7 @@ export class WorkspaceRegistry {
                             const sftp=await optionalSftp(remote)
                             if(sftp){if(!(await sftp.stat(directory)).isDirectory)throw new Error(t('Tabby SFTP 当前路径不是目录'))}
                             else{
-                                const result=await new TabbyRelayTransport(remote,directory).run('test -d . && test -r . && test -x .',AbortSignal.timeout(15000))
+                                const result=await new TabbyRelayTransport(remote,directory).run('test -d . && test -r . && test -x .',AbortSignal.timeout(15000),{operation:'验证 SSH 工作区目录可访问性'})
                                 if(result.exitCode!==0)throw new Error(result.stderr||t('SSH 当前路径不是可读取的目录'))
                             }
                         })()}
@@ -219,7 +251,9 @@ export class WorkspaceRegistry {
                 if(this.current.value?.terminal===terminal||terminal.hasFocus)this.emit(entry.selection)
             } catch (error) {
                 if (version !== entry.version || entry.pinned) return
-                entry.selection = { terminal, remote:isSshTab(terminal)?terminal.sshSession??undefined:undefined, hint: String(error) }
+                logOperation('自动检测终端工作目录',{host:isSshTab(terminal)?terminal.sshSession?.profile.options.host:undefined,error:String(error)})
+                if(entry.selection.workspace)return
+                entry.selection = { terminal, remote:isSshTab(terminal)?terminal.sshSession??undefined:undefined, hint:t('等待终端报告当前目录…') }
                 if (this.current.value?.terminal === terminal) this.emit(entry.selection)
             } finally {
                 if (isSshTab(terminal)) this.restoreBindings()
@@ -264,6 +298,9 @@ export class WorkspaceRegistry {
         entry?.subscriptions.forEach(subscription => subscription.unsubscribe())
         this.entries.delete(terminal)
         this.restoreBindings()
-        if (this.current.value?.terminal === terminal) this.emit(null)
+        if (this.current.value?.terminal === terminal) {
+            const tab = this.app.activeTab ?? this.topTab(terminal)
+            this.selectTab(tab)
+        }
     }
 }

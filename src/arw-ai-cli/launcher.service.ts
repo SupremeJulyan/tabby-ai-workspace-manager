@@ -3,6 +3,7 @@ import { orderedAiPanes } from './collapsed-panes'
 import { isAiPane } from '../shared/pane-kind'
 import { tileWorkspacePanes } from './tiling'
 import { placeAdjacentTab } from '../shared/open-adjacent-tab'
+import { cliWorkspaceFiles } from '../arw-cli/workspace-files'
 import { gitRelayOperation } from '../adapters/git-relay-operation'
 import { activityScope } from '../arw-cli/agent-activity'
 import { isTerminalCommandMode, runTerminalCommand } from '../shared/terminal-command'
@@ -29,6 +30,7 @@ import { titleAiTabs, workspaceNames } from '../shared/workspace-name'
 import { agentShellFromOptions } from './agent-profile'
 import { shellCommandLine, shellCommand, shellEnvironment, shellPathEnvironment, type AgentShell } from './shell'
 import { sameShell, selectableShells } from './shell-selection'
+import { defaultShell } from './default-shell'
 
 @Injectable()
 export class AiLauncherService {
@@ -76,12 +78,12 @@ export class AiLauncherService {
         const args = configuredArgs.map((argument:string)=>argument.trim()).filter(Boolean)
         let shell:AgentShell|undefined
         try {
-            const selected=configured?.shell as Partial<AgentShell>|undefined
+            const profiles=await this.profiles.getProfiles({includeBuiltin:true})
+            const available=selectableShells(profiles as any[])
+            const selected=(configured?.shell ?? defaultShell(available,this.config.store.terminal?.profile)) as Partial<AgentShell>|undefined
             if (!selected||typeof selected.command!=='string'||!selected.command.trim()) {
                 throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
             }
-            const profiles=await this.profiles.getProfiles({includeBuiltin:true})
-            const available=selectableShells(profiles as any[])
             const current=available.find(candidate=>sameShell(selected,candidate))
             if (!current) {
                 throw new Error(t('所选 Shell 已不可用，请在 Tabby 设置 → ai-workspace-manager 中重新选择'))
@@ -126,13 +128,14 @@ export class AiLauncherService {
                 if (workspace.kind==='remote'&&!remote?.open) throw new Error(t('原 SSH 会话已断开'))
                 if(remote){remote.ref(); retained = true}
                 if (!shared) {
+                    const cliFiles=cliWorkspaceFiles(workspace)
                     server = new ForwardingServer({ activityScope: remote ? activityScope(source) : undefined, workspace: { id: workspace.id, root: workspace.root, host: workspace.host },
                         terminalOnly:()=>isTerminalCommandMode(source),
                         git:remote?gitRelayOperation(remote,workspace.root,join(dirname(this.auditFile??workspaceCatalogPath()),'git-relay')):undefined,
                         copy: remote?sftpCopy(() => remote.openSFTP(), new RemotePathGuard(workspace.root, (command, signal) => workspace.run(command, signal))):undefined,
-                        list: async path => ({ entries: await workspace.list(path) }),
-                        read: async path => ({ path, ...await workspace.read(path) }),
-                        write: async (path, content, _signal, expectedHash) => ({ path, ...await workspace.write(path, content, expectedHash) }),
+                        list: async path => ({ entries: await cliFiles.list(path) }),
+                        read: async path => ({ path, ...await cliFiles.read(path) }),
+                        write: async (path, content, _signal, expectedHash) => ({ path, ...await cliFiles.write(path, content, expectedHash) }),
                         run: (value, signal, options) => isTerminalCommandMode(source)?runTerminalCommand(source,workspace.root,value,signal,options?.maxBytes):workspace.run(value, signal, options),
                         validateCommand: workspace.validateCommand?.bind(workspace),
                     }, this.auditFile)
