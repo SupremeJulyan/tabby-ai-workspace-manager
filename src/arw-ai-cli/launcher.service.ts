@@ -96,6 +96,7 @@ export class AiLauncherService {
         let unregister:(()=>Promise<void>)|undefined
         let server: ForwardingServer|undefined
         let retained = false
+        const releaseForwarding=workspace.kind==='remote'?this.projects?.retainForAi(workspace.id):undefined
         let agentCwd:string|undefined
         const remote = selection.remote
         let disconnected: {unsubscribe():void}|undefined
@@ -105,6 +106,7 @@ export class AiLauncherService {
             await server?.stop()
             if(directory)await rm(directory, { recursive: true, force: true })
             if (retained) { retained = false; remote?.unref() }
+            releaseForwarding?.()
         }
         try {
             const source=selection.sourceTerminal??selection.terminal

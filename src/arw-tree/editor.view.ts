@@ -56,6 +56,8 @@ export const EDITOR_STYLES = scaleTypography(`
 ${TEXT_SEARCH_STYLES}
 ${MARKDOWN_STYLES}
 :host{font-family:var(--arw-font-family,inherit);font-size:12px;line-height:1.45}
+:host ::ng-deep > .arw-ai-header{margin:-12px -12px 0}
+@media(max-width:650px){:host ::ng-deep > .arw-ai-header{margin:-8px -8px 0}}
 .diff-description{padding:8px 14px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-height:120px;overflow:auto;flex:none}
 .split-diff{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.diff-pane{min-width:0;overflow-x:auto;scrollbar-width:thin}.diff-pane+.diff-pane{border-left:1px solid var(--diff-border)}.diff-pane>.diff-cell,.diff-pane>.diff-cell+.diff-cell{overflow:visible;min-width:max-content;border-left:0}
 :host{--diff-border:color-mix(in srgb,currentColor 12%,transparent);--diff-muted:color-mix(in srgb,currentColor 50%,transparent);--diff-added:#75c79b;--diff-removed:#ed9d96;display:flex;height:100%;min-height:0;flex-direction:column;gap:8px;padding:12px;background:var(--theme-bg,#202124);color:var(--theme-fg,inherit)}

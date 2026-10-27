@@ -57,6 +57,7 @@ export class ProjectStore {
     private disposed = false
     private catalogWrite: Promise<void> = Promise.resolve()
     private forwards = new Map<string,ProjectForwarding>()
+    private aiUsers = new Map<string,number>()
     constructor (private config: ConfigService, private catalogFile?: string) {}
     connection (id: string, source?: object): string|undefined {
         const entry=this.forwards.get(id)
@@ -81,7 +82,7 @@ export class ProjectStore {
             ? current.remote?.open && current.client===current.remote.ssh && ownerCurrent
                 && (current.remote===remote || Boolean(source&&current.source&&source!==current.source))
             : !current.remote)) return current.ready
-        if (current) await this.close(project.id)
+        if (current) await this.close(project.id,new Error(t('替换失效的 SSH 转发')))
         if(this.disposed||!Object.values(this.store.projects??{}).some(projects=>Array.isArray(projects)&&projects.some(entry=>entry.id===project.id)))return
         if (workspace.kind==='remote' && !remote?.open) {
             const error=new Error(t('SSH 会话已断开'));this.setState(project.id,'error',t('启动转发'),error);throw error
@@ -133,6 +134,7 @@ export class ProjectStore {
         return entry.ready
     }
     async close (id: string, error?:unknown): Promise<void> {
+        if(this.aiUsers.has(id)&&error===undefined)return
         const entry=this.forwards.get(id)
         if (!entry) return
         this.forwards.delete(id)
@@ -141,6 +143,18 @@ export class ProjectStore {
         await this.cleanup(entry)
         await this.syncCatalog()
     }
+    retainForAi(id:string):()=>void {
+        this.aiUsers.set(id,(this.aiUsers.get(id)??0)+1)
+        let released=false
+        return ()=>{
+            if(released)return
+            released=true
+            const count=(this.aiUsers.get(id)??1)-1
+            if(count>0)this.aiUsers.set(id,count)
+            else {this.aiUsers.delete(id);void this.close(id)}
+        }
+    }
+    hasAiUsers(id:string):boolean {return this.aiUsers.has(id)}
     async restoreLocal (): Promise<void> {
         for (const [key,projects] of Object.entries(this.store.projects ?? {})) {
             if (!key.startsWith('local:') || !Array.isArray(projects)) continue
@@ -202,7 +216,8 @@ export class ProjectStore {
         if (!projects) return
         const key = this.key(workspace)
         this.store.projects = { ...projects, [key]: (projects[key] ?? []).filter(entry => entry.id !== project.id) }
-        await this.close(project.id)
+        this.aiUsers.delete(project.id)
+        await this.close(project.id,new Error(t('工作区已移除')))
         this.states.delete(project.id);this.changed.next()
         await this.config.save()
         await this.syncCatalog()
