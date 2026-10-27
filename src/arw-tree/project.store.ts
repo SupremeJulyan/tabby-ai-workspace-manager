@@ -155,6 +155,11 @@ export class ProjectStore {
         }
     }
     hasAiUsers(id:string):boolean {return this.aiUsers.has(id)}
+    findRemoteProject(workspace:Workspace,remote:SSHSession):ArwProject|undefined {
+        const identity=JSON.stringify([remote.profile.options.host,remote.profile.options.port??22,
+            remote.authUsername??remote.profile.options.user??''])
+        return this.store.projects?.[`remote:${identity}`]?.find(project=>project.root===workspace.root)
+    }
     async restoreLocal (): Promise<void> {
         for (const [key,projects] of Object.entries(this.store.projects ?? {})) {
             if (!key.startsWith('local:') || !Array.isArray(projects)) continue
@@ -164,6 +169,7 @@ export class ProjectStore {
     }
     async ngOnDestroy (): Promise<void> {
         this.disposed=true
+        this.aiUsers.clear()
         await Promise.all([...this.forwards.keys()].map(id=>this.close(id)))
     }
     syncCatalog (): Promise<void> {
