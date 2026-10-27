@@ -30,7 +30,7 @@ test('AI close button respects cancellation, closes only its split pane, and det
     const tab:any={profile:{options:{env:{ARW_WORKSPACE_ROOT:'/project',ARW_WORKSPACE_NAME:'我的项目'}}},element:{nativeElement:host},canClose:async()=>allow,destroy(){closed++},effectivelyPinned:false}
     const source={destroy(){sourceClosed++}},app:any={tabs:[],getParentTab:()=>({getAllTabs:()=>[source,tab]})}
     const cleanup=addAiCloseButton(tab,app,error=>{throw error})!
-    assert.equal(host.querySelector('.arw-ai-header span')?.textContent,'local->project')
+    assert.equal(host.querySelector('.arw-ai-header span')?.textContent,'Local · project')
     assert.equal(host.firstElementChild?.className,'arw-ai-header')
     const toggle=host.querySelector<HTMLButtonElement>('.arw-ai-toggle-button')!
     assert.equal(toggle.disabled,true,'the last visible AI pane keeps recovery controls accessible')

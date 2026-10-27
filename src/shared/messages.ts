@@ -395,6 +395,8 @@ export const englishMessages: Record<string,string> = {
     "操作已取消，请检查远程目录的实际状态后再重试。": "Operation canceled. Check the remote directory before trying again.",
     "下载目录到本地…": "Download folder…",
     "下载到本地…": "Download…",
+    "复制路径": "Copy path",
+    "路径已复制": "Path copied",
     "子目录超过 2000 项，仅显示前 2000 项": "Subdirectory contains more than 2000 items; showing only the first 2000 items",
     "父提交 → 当前提交": "Parent commit → Current commit",
     "切换到分支 ": "Switch to branch ",

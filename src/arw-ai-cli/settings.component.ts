@@ -14,7 +14,7 @@ import type { AgentShell } from './shell'
 
 @Component({
     selector: 'arw-settings',
-    template: `<div class="settings-page"><header><h3>ai-workspace-manager</h3>
+    template: `<div class="settings-page"><header><h3>AI Workspace Manager</h3>
       <p>{{ '配置工作区使用的本机 AI CLI、会话参数与代理。' | arwTranslate }}</p></header>
       <section class="settings-section"><h4>{{ '布局' | arwTranslate }}</h4>
         <div class="form-group"><label for="arw-file-layout">{{ '打开文件' | arwTranslate }}</label>
@@ -135,6 +135,6 @@ export class ArwSettingsComponent {
 export class ArwSettingsTabProvider extends SettingsTabProvider {
     id = 'arw'
     icon = 'code'
-    title = 'ai-workspace-manager'
+    title = 'AI Workspace Manager'
     getComponentType (): typeof ArwSettingsComponent { return ArwSettingsComponent }
 }

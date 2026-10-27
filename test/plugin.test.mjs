@@ -442,7 +442,7 @@ test('workspace tree saves the browsed root and opens files and AI against the s
     const provider=plugin.default.ngModule.providers.find(entry=>entry.useFactory)
     const store=provider.useFactory(config)
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
-    const terminal={}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
+    const terminal={session:{open:true},sendInput(value){this.lastInput=value}}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
     const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(){}},{},{},{launchConfigured:async value=>launched.push(value)},{},store)
     try {
         await mkdir(join(root,'src'));await writeFile(join(root,'src/main.ts'),'main')
@@ -454,6 +454,7 @@ test('workspace tree saves the browsed root and opens files and AI against the s
         await tree.addProject();assert.equal(tree.projects.length,1)
         await tree.selectProject(project)
         assert.equal(tree.breadcrumb,join(root,'src'))
+        assert.equal(terminal.lastInput,` cd -- '${project.root}'\r`,'selecting a saved workspace also changes the source terminal directory')
         assert.equal(tree.nodes[0].path,'main.ts')
         await tree.open(tree.nodes[0]);assert.equal(opened[0].inputs.workspace.root,project.root)
         await tree.launchProject(project)
@@ -1869,7 +1870,7 @@ test('remote Git actions and refreshes keep the browsed project, expanded tree a
         tree.projectStore={list:()=>[{id:'saved',name:'project',root:project}],async open(entry,backend,remote){rebound.push(remote)}}
         const replacement={...remote,ssh:remote.ssh}
         current.next({...selection,remote:replacement})
-        assert.ok(rebound.includes(replacement),'restoring a remembered directory also rebinds saved forwarding')
+        assert.equal(rebound.length,0,'browsing a remembered directory does not acquire forwarding')
         assert.equal(tree.breadcrumb,project)
         for(let attempt=0;attempt<50&&tree.loading;attempt++)await new Promise(resolve=>setTimeout(resolve,5))
     }finally{tree.ngOnDestroy();await fs.rm(home,{recursive:true,force:true})}
@@ -1947,7 +1948,8 @@ test('remote sidebar right-click downloads files and folders through native Tabb
         const chunks=[];let cancelled=false
         return lastSink={isCancelled:()=>cancelled,cancel(){cancelled=true},async write(bytes){chunks.push(Buffer.from(bytes))},close(){saved.set(name,Buffer.concat(chunks))}}
     }
-    const platform={popupContextMenu(items){menu=items},async startDownload(name,mode,size){dialogs.push({name,mode,size});return chooseSave?fileSink(name):null},
+    let clipboard
+    const platform={popupContextMenu(items){menu=items},setClipboard(value){clipboard=value.text},async startDownload(name,mode,size){dialogs.push({name,mode,size});return chooseSave?fileSink(name):null},
         async startDownloadDirectory(name){
             dialogs.push({folder:name});folderTransfer={isCancelled:()=>false,cancel(){},close(){},setTotalSize(){},setStatus(){},setCompleted(value){this.completed=value},
                 async createDirectory(path){saved.set(name+'/'+path,'directory')},async createFile(path){return fileSink(name+'/'+path)}}
@@ -1960,7 +1962,7 @@ test('remote sidebar right-click downloads files and folders through native Tabb
     }}}
     const workspace={...localWorkspace(root),kind:'remote',host:'fixture'}
     const current=new BehaviorSubject({terminal:{},remote,workspace,hint:''})
-    const tree=new plugin.TreeComponent({current},{},{error(...args){notices.push(args)}},{},{},{},platform)
+    const tree=new plugin.TreeComponent({current},{},{error(...args){notices.push(args)},info(){}},{},{},{},platform)
     const event={preventDefault(){},stopPropagation(){}}
     try{
         await fs.mkdir(join(directory,'nested'),{recursive:true});await fs.writeFile(join(directory,'c.bin'),binary);await fs.writeFile(join(directory,'nested/child.txt'),'child')
@@ -1968,12 +1970,15 @@ test('remote sidebar right-click downloads files and folders through native Tabb
         const nodes=tree.nodes
         tree.showNodeContextMenu(tree.nodes.find(node=>node.name==='c.bin'),event)
         assert.equal(menu[0].enabled,true);assert.match(menu[0].label,/下载/)
+        assert.equal(menu[1].label,'复制路径')
+        menu[1].click();assert.equal(clipboard,join(directory,'c.bin'),'copy path resolves remote relative entries against their workspace root')
         await menu[0].click()
         assert.deepEqual(saved.get('c.bin'),binary);assert.equal(dialogs[0].name,'c.bin');assert.equal(dialogs[0].size,binary.length)
         chooseSave=false;await menu[0].click();assert.equal(downloads.length,1);chooseSave=true
         await tree.up()
         const before=tree.nodes,breadcrumb=tree.breadcrumb
         tree.showNodeContextMenu(tree.nodes.find(node=>node.name==='B'),event)
+        assert.equal(menu[1].label,'复制路径');menu[1].click();assert.equal(clipboard,join(root,'A/B'))
         await menu[0].click()
         assert.deepEqual(saved.get('B/c.bin'),binary);assert.equal(saved.get('B/nested'),'directory');assert.equal(saved.get('B/nested/child.txt').toString(),'child')
         assert.equal(folderTransfer.completed,true);assert.equal(tree.nodes,before);assert.equal(tree.breadcrumb,breadcrumb)
@@ -1991,9 +1996,10 @@ test('remote sidebar right-click downloads files and folders through native Tabb
         current.next({terminal:{},workspace:localWorkspace(root),hint:''})
         await captured.click()
         assert.equal(downloads.at(-1),join(directory,'c.bin'));assert.equal(references,0)
-        const previousMenu=menu
         tree.showNodeContextMenu({name:'local',path:'local',directory:false},event)
-        assert.equal(menu,previousMenu,'local files must not expose remote SFTP actions')
+        assert.equal(menu.length,1,'local files expose copy path without remote SFTP actions')
+        assert.equal(menu[0].label,'复制路径')
+        menu[0].click();assert.equal(clipboard,join(root,'local'))
         for(let attempt=0;attempt<50&&tree.loading;attempt++)await new Promise(resolve=>setTimeout(resolve,5))
         assert.match(plugin.TreeComponent.component.template,/\(contextmenu\)="showNodeContextMenu\(node,\$event\)"/)
         assert.ok(nodes.some(node=>node.name==='c.bin'))
@@ -2876,13 +2882,13 @@ test('background Git operations preserve notices while manual failures remain vi
 })
 
 test('workspace browser and terminal cwd survive JSON recovery in a fresh plugin instance',async()=>{
-    const {BehaviorSubject}=require('rxjs')
+    const {BehaviorSubject,Subject}=require('rxjs')
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const root=await fs.mkdtemp(join(tmpdir(),'arw-workspace-recovery-'))
     await fs.writeFile(join(root,'remembered.txt'),'content')
     const create=(plugin,profile)=>{
         const terminal={profile,session:{getWorkingDirectory:async()=>root},getRecoveryToken:async()=>({type:'app:local-tab',profile:terminal.profile})}
-        const decorator=new plugin.WorkspaceTerminalDecorator({register(){}})
+        const decorator=new plugin.WorkspaceTerminalDecorator({register(){},selectionChanged:new Subject()})
         decorator.attach(terminal)
         const current=new BehaviorSubject(null)
         const tree=new plugin.TreeComponent({current},{},{},{disable:async()=>{}},{},{},{})
@@ -2926,12 +2932,12 @@ test('workspace recovery prepares SSH startup before the host creates the shell'
 })
 
 test('decorated workspace changes save the host recovery snapshot immediately',async()=>{
-    const {BehaviorSubject}=require('rxjs'),plugin=load(),snapshots=[]
+    const {BehaviorSubject,Subject}=require('rxjs'),plugin=load(),snapshots=[]
     const profile={type:'local',options:{}}
     const terminal={profile,session:{getWorkingDirectory:async()=>'/home/user'},getRecoveryToken:async()=>({type:'app:local-tab',profile})}
     const app={tabs:[terminal]}
     const recovery={async saveTabs(tabs){snapshots.push(await tabs[0].getRecoveryToken())}}
-    const decorator=new plugin.WorkspaceTerminalDecorator({register(){}},undefined,undefined,app,undefined,recovery)
+    const decorator=new plugin.WorkspaceTerminalDecorator({register(){},selectionChanged:new Subject()},undefined,undefined,app,undefined,recovery)
     decorator.attach(terminal)
     const current=new BehaviorSubject(null)
     const tree=new plugin.TreeComponent({current},{},{},{disable:async()=>{}},{},{},{})

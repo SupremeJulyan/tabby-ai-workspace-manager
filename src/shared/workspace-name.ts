@@ -59,9 +59,9 @@ export function titleAiTabs (tabs:NamedTab[]):void {
         const name=inheritedWorkspaceName(kind,env.ARW_WORKSPACE_NAME||env.ARW_WORKSPACE_ROOT)
         return [{tab,kind,root:env.ARW_WORKSPACE_ROOT,name}]
     })
-    const titles=workspaceNames(entries)
+    const titles=workspaceNames(entries,false)
     entries.forEach((entry,index)=>{
-        aiTitles.set(entry.tab,titles[index])
+        aiTitles.set(entry.tab,`${entry.kind==='local'?'Local':'Remote'} · ${titles[index]}`)
         titleTerminalTab(entry.tab)
     })
 }
