@@ -4,7 +4,7 @@ import { t } from '../shared/i18n'
 import { Injectable, NgZone } from '@angular/core'
 import { AppService, BaseTabComponent } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
-import { BehaviorSubject, Subscription, auditTime } from 'rxjs'
+import { BehaviorSubject, Subject, Subscription, auditTime } from 'rxjs'
 import { isAbsolute, join } from 'path'
 import { readFile } from 'node:fs/promises'
 import { Workspace, localWorkspace } from '../arw-tree/workspace'
@@ -31,6 +31,7 @@ interface RecordEntry { selection: WorkspaceSelection; root?: string; session?: 
 @Injectable()
 export class WorkspaceRegistry {
     readonly current = new BehaviorSubject<WorkspaceSelection|null>(null)
+    readonly selectionChanged = new Subject<{terminal:BaseTerminalTabComponent<any>;selection:WorkspaceSelection}>()
     private initialDirectories = new WeakMap<SSHSession, Promise<string>>()
     private entries = new Map<BaseTerminalTabComponent<any>, RecordEntry>()
     private pinnedSelections = new WeakMap<BaseTerminalTabComponent<any>, WorkspaceSelection>()
@@ -102,7 +103,7 @@ export class WorkspaceRegistry {
                     if(entry.selection.remote!==remote){
                         if(remote){
                             const backend=remoteWorkspace(remote,pinned.workspace.root)
-                            const selection={...pinned,remote,workspace:{...backend,sourceWorkspace:backend,id:pinned.workspace.id}}
+                            const selection={...pinned,remote,sourceTerminal:source,workspace:{...backend,sourceWorkspace:backend,id:pinned.workspace.id}}
                             entry.selection=selection;this.pinnedSelections.set(terminal,selection)
                         }else entry.selection={terminal,sourceTerminal:source,hint:t('等待来源终端重新连接 SSH…')}
                         if(this.current.value?.terminal===terminal)this.emit(entry.selection)
@@ -124,6 +125,7 @@ export class WorkspaceRegistry {
             entry.selection = remote ? { terminal, sourceTerminal: source, remote, hint: '', pathSource: 'terminal',
                 workspace: remoteWorkspace(remote, metadata.remoteRoot) }
                 : { terminal, hint: t`等待连接远程工作区：${metadata.host}:${metadata.port} ${metadata.remoteRoot}` }
+            this.selectionChanged.next({terminal,selection:entry.selection})
             if (this.current.value?.terminal === terminal) this.emit(entry.selection)
         }
     }
