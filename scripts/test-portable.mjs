@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 const cwd=fileURLToPath(new URL('../',import.meta.url))
 const files=['platform-path','workspace-git','windows-cli','cli-lifecycle','user-cli','workspace','preview','text-search',
-    'agent-cwd','ai-shell-launch','ai-recovery','file-pane-layout','stacked-pane-layout','ai-close-button','scrollbar-styles','split-divider','forwarding-server','network-error','open-adjacent-tab','opened-files','workspace-name','fonts']
+    'agent-cwd','ai-shell-launch','ai-recovery','file-pane-layout','stacked-pane-layout','ai-close-button','scrollbar-styles','split-divider','forwarding-server','network-error','opened-files','workspace-name','workspace-pane-matching','fonts']
 const suites=[
     ['--import','tsx','--test',...files.map(name=>`test/${name}.test.ts`)],
     ['--test','test/package.test.mjs','test/pdf-preview.test.mjs','test/ai-environment-settings.test.mjs'],

@@ -21,6 +21,7 @@ import { addFileCloseButton } from '../arw-ai-cli/close-button'
 @Component({selector:'arw-preview',template:PREVIEW_TEMPLATE,styles:[PREVIEW_STYLES]})
 export class ArwPreviewComponent extends BaseTabComponent implements AfterViewInit {
     readonly arwFilePane=true
+    get arwWorkspaceIdentity(){return this.workspace&&fileWorkspaceToken(this.workspace)}
     arwPaneLayout:PaneLayout='tiled'
     workspace!:Workspace
     filePath=''

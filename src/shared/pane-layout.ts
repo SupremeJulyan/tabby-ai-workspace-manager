@@ -1,12 +1,12 @@
 import type { WorkspacePaneKind } from './pane-kind'
 
-export type PaneLayout = 'tiled' | 'tabs' | 'stacked'
+export type PaneLayout = 'tiled' | 'stacked'
 type LayoutPane = {arwPaneLayout?:unknown;profile?:{options?:{env?:Record<string,string>}}}
 const selections = new WeakMap<object,Partial<Record<WorkspacePaneKind,{pane:object;index:number}>>>()
 export const stackedHiddenPanes = new WeakSet<object>()
 
 export function paneLayout(value:unknown):PaneLayout {
-    return value==='tabs'||value==='stacked'?value:'tiled'
+    return value==='stacked'?'stacked':'tiled'
 }
 
 export function stackedGroup(panes:object[]):boolean {
