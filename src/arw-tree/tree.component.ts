@@ -34,6 +34,7 @@ import { addedFilePatch } from './git/diff-model'
 import { agentActivity, AgentActivity, activityScope } from '../arw-cli/agent-activity'
 import { initializeRemoteGit, setupLocalGit, validateGitIdentity, cloneDirectory } from './git/git-bootstrap'
 import { redactSensitiveText } from '../shared/redact'
+import { shellQuote } from '../shared/shell-quote'
 import { GitBranch, GitCommit } from './git/git-history'
 import { GitSyncState, readGitSyncState, readCommitSyncHistory, syncStateLabel } from './git/git-sync-state'
 import { LocalGitSyncAction, syncLocalGit } from './git/local-git-sync'
@@ -546,6 +547,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     async selectProject (project: ArwProject): Promise<void> {
         const workspace = this.savedWorkspace(project)
         if (!workspace) return
+        const terminal=this.selection?.sourceTerminal??this.selection?.terminal
+        if(terminal?.session?.open&&!terminal.alternateScreenActive){
+            try{terminal.sendInput(` cd -- ${shellQuote(workspace.root)}\r`)}
+            catch(error){logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})}
+        }
             this.mode = 'files'
         this.filterText = ''
         this.activeProject = project.id
@@ -892,8 +898,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     showNodeContextMenu (node:TreeNode, event:MouseEvent):void {
         event.preventDefault();event.stopPropagation()
         const workspace=this.browserWorkspace??this.selection?.workspace,remote=this.selection?.remote
-        if(workspace?.kind!=='remote'||!remote)return
-        this.platform.popupContextMenu([{
+        const items:Array<{label:string;enabled?:boolean;click:()=>void|Promise<void>}>=[{
+            label:t('复制路径'),
+            click:()=>{const path=workspace?workspacePath(workspace.kind).resolve(workspace.root,node.path):node.path;this.platform.setClipboard({text:path});this.notifications.info(t('路径已复制'))},
+        }]
+        if(workspace?.kind==='remote'&&remote)items.unshift({
             label:node.directory?t('下载目录到本地…'):t('下载到本地…'),
             enabled:remote.open&&!node.symlink&&!node.loading&&!this.downloadingNodes.has(node),
             click:async()=>{
@@ -902,7 +911,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 try{await downloadSftpItem(remote,workspace,node.path,this.platform,this.notifications)}
                 finally{this.downloadingNodes.delete(node)}
             },
-        }],event)
+        })
+        this.platform.popupContextMenu(items,event)
     }
     async clickNode (node:TreeNode,event:MouseEvent):Promise<void> {
         if(node.symlink){this.error=t('符号链接不支持在文件浏览器中打开：')+node.path;this.render();return}

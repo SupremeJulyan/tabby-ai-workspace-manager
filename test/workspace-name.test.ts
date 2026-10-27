@@ -19,14 +19,14 @@ test('workspace names keep the leaf and expand only duplicate trailing paths',()
 test('AI tab titles derive kind and leaf from runtime environment and retitle duplicates',()=>{
     const tabs=Array.from({length:2},()=>({title:'old',profile:{name:'absolute profile name',options:{env:{ARW_WORKSPACE_ROOT:'/srv/c2_tests',ARW_WORKSPACE_NAME:'remote->c2_tests',ARW_WORKSPACE_KIND:'remote'}}}}))
     titleAiTabs(tabs)
-    assert.deepEqual(tabs.map(aiPaneTitle),['remote->c2_tests','remote->c2_tests'])
+    assert.deepEqual(tabs.map(aiPaneTitle),['Remote · c2_tests','Remote · c2_tests'])
     assert.deepEqual(tabs.map(tab=>tab.title),['old','old'])
     assert.equal(tabs[0].profile.name,'absolute profile name')
     const local={title:'bash',profile:{options:{env:{ARW_WORKSPACE_ROOT:'/home/user/tabby-ai-workspace-manager',ARW_WORKSPACE_NAME:'tabby-ai-workspace-manager'}}}}
     const remote={title:'ssh',profile:{options:{env:{ARW_WORKSPACE_ROOT:'/srv/tabby-ai-workspace-manager',ARW_WORKSPACE_NAME:'tabby-ai-workspace-manager',ARW_WORKSPACE_KIND:'remote'}}}}
     titleAiTabs([local,remote])
-    assert.equal(aiPaneTitle(local),'local->tabby-ai-workspace-manager')
-    assert.equal(aiPaneTitle(remote),'remote->tabby-ai-workspace-manager')
+    assert.equal(aiPaneTitle(local),'Local · tabby-ai-workspace-manager')
+    assert.equal(aiPaneTitle(remote),'Remote · tabby-ai-workspace-manager')
     assert.equal(local.title,'bash')
     assert.equal(remote.title,'ssh')
 })
@@ -39,7 +39,7 @@ test('AI titles hide the native custom-title overlay on creation and restore',()
     titleAiTabs([tab])
     assert.equal(tab.title,'old')
     assert.equal(tab.customTitle,'AI command')
-    assert.equal(aiPaneTitle(tab),'remote->tests')
+    assert.equal(aiPaneTitle(tab),'Remote · tests')
     assert.equal(tab.customTitleVisible,false)
     tab.customTitleVisible=true
     titleAiTabs([tab])
@@ -60,8 +60,8 @@ test('restored remote AI tabs use placeholder metadata even without a kind field
     const legacy={title:'old',profile:{options:{env:{ARW_WORKSPACE_ROOT:'/home/share/user/HW_TESTS',ARW_LOCAL_WORKSPACE_ROOT:'/config/omw/agent-cwd/server/hash'}}}}
     const restored={title:'old',profile:{options:{cwd:'C:\\Tabby\\omw\\agent-cwd\\server\\hash',env:{ARW_WORKSPACE_ROOT:'/srv/c2_tests',ARW_WORKSPACE_KIND:'local'}}}}
     titleAiTabs([legacy,restored])
-    assert.equal(aiPaneTitle(legacy),'remote->HW_TESTS')
-    assert.equal(aiPaneTitle(restored),'remote->c2_tests')
+    assert.equal(aiPaneTitle(legacy),'Remote · HW_TESTS')
+    assert.equal(aiPaneTitle(restored),'Remote · c2_tests')
 })
 
 test('terminal labels stay at the profile name while file labels remain untouched',()=>{
