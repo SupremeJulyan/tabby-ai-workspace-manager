@@ -46,6 +46,8 @@ function addPaneCloseButton (tab:BaseTabComponent,app:AppService,onError:(error:
     const header=host.ownerDocument.createElement('div')
     header.className='arw-ai-header'
     header.dataset.arwPaneKind=kind
+    // Match the file header typography for both files and AI terminals.
+    Object.assign(header.style,{fontFamily:'var(--bs-body-font-family,sans-serif)',fontSize:'12px',fontWeight:'400',fontStyle:'normal',lineHeight:'var(--arw-line-height,1.45)',letterSpacing:'normal'})
     Object.assign(header.style,{display:'grid',gridTemplateColumns:'22px minmax(0, 1fr) auto 22px',alignItems:'center',flex:'0 0 30px',minHeight:'30px',gap:'6px',padding:'0 8px',borderBottom:'1px solid #8882',color:'inherit'})
     const title=host.ownerDocument.createElement('span')
     if(kind==='ai')titleAiTabs([tab])

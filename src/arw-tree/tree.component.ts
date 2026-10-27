@@ -525,15 +525,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.restoreProjectForwarding()
     }
     private restoreProjectForwarding():void {
-        if(this.terminalMode||!this.isRemote||!this.projectStore)return
-        const selection=this.selection
-        for(const project of this.projects){
-            const backend=this.savedWorkspace(project)
-            if(backend)void this.projectStore.open(project,backend,selection?.remote,selection?.sourceTerminal??selection?.terminal).catch(error=>{
-                if(this.selection!==selection)return
-                // Automatic forwarding restoration stays silent on failure.
-            })
-        }
+        // Remote forwarding is acquired by AI terminals, not by browsing a workspace.
     }
     get currentFolder (): string { return this.breadcrumb }
     async addProject (): Promise<void> {
@@ -725,6 +717,14 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const request=++this.manualRefreshRequest
         this.manualRefreshing=true;this.render()
         try{
+            const selection=this.selection,source=selection?.sourceTerminal??selection?.terminal
+            if(selection?.workspace?.kind==='remote'&&selection.remote?.open&&this.projectStore){
+                for(const project of this.projects){
+                    if(!this.projectStore.hasAiUsers(project.id))continue
+                    const workspace=this.savedWorkspace(project)
+                    if(workspace)await this.projectStore.open(project,workspace,selection.remote,source)
+                }
+            }
             if(this.mode==='git')await this.gitStatus()
             else await this.refresh()
             const workspace=this.browserWorkspace??this.selection?.workspace
