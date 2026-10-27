@@ -31,12 +31,7 @@ test('tiled file opening reuses the existing top-level split',async()=>{
     assert.deepEqual(split.getAllTabs(),[file,terminal])
 })
 
-test('tab layout retains the previous adjacent top-level opening behavior',async()=>{
-    const terminal={},file={}
-    const app:any={tabs:[terminal],activeTab:terminal,openNewTab(){this.tabs.push(file);return file},getParentTab:()=>null,emitTabsChanged(){}}
-    assert.equal(await openFilePane(app,{type:class {} as any},null,'tabs'),file)
-    assert.deepEqual(app.tabs,[file,terminal])
-})
+
 
 test('four files tile above the full workspace terminal with AI on the right',()=>{
     const files=Array.from({length:4},()=>({arwFilePane:true})),terminal={name:'main'}

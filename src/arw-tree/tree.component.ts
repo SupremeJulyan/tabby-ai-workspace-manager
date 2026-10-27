@@ -27,6 +27,8 @@ import { previewKind } from './preview/model'
 import { ArwEditorComponent } from './editor.component'
 import { refreshOpenedWorkspaceFiles } from '../services/opened-files.service'
 import { workspaceNames } from '../shared/workspace-name'
+import { activateWorkspacePanes } from '../shared/activate-workspace-panes'
+import { fileWorkspaceToken } from './file-recovery'
 import { ArwProject, ProjectStore } from './project.store'
 
 import { TREE_TEMPLATE, TREE_STYLES } from './tree.view'
@@ -544,22 +546,36 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             catch (error) { if(tab===this.activeTab){this.error=t`工作区已保存，但转发开启失败：${String(error)}`;this.render()} }
         }
     }
+    switchingWorkspace=false
+    private projectSelectionRequest=0
     async selectProject (project: ArwProject): Promise<void> {
+        if(this.switchingWorkspace)return
+        const request=++this.projectSelectionRequest,tab=this.activeTab
         const workspace = this.savedWorkspace(project)
         if (!workspace) return
-        const terminal=this.selection?.sourceTerminal??this.selection?.terminal
-        if(terminal?.session?.open&&!terminal.alternateScreenActive){
-            try{terminal.sendInput(` cd -- ${shellQuote(workspace.root)}\r`)}
-            catch(error){logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})}
-        }
+        this.switchingWorkspace=true
+        try {
+            const terminal=this.selection?.sourceTerminal??this.selection?.terminal
+            if(terminal?.session?.open&&!terminal.alternateScreenActive){
+                try{terminal.sendInput(` cd -- ${shellQuote(workspace.root)}\r`)}
+                catch(error){logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})}
+            }
             this.mode = 'files'
-        this.filterText = ''
-        this.activeProject = project.id
-        this.render()
-        await this.showWorkspace(workspace)
+            this.filterText = ''
+            this.activeProject = project.id
+            this.render()
+            await this.showWorkspace(workspace)
+            if(request!==this.projectSelectionRequest||tab!==this.activeTab||this.browserWorkspace!==workspace)return
+            const identity=fileWorkspaceToken(workspace)
+            if(identity)activateWorkspacePanes(this.app,identity)
+        } finally {
+            this.switchingWorkspace=false
+            this.render()
+        }
     }
     async removeProject (project: ArwProject, event?: Event): Promise<void> {
         event?.stopPropagation()
+        if(this.switchingWorkspace)return
         if(this.terminalMode)return
         const base = this.selection?.workspace
         if (!base || !this.projectStore) return
@@ -571,16 +587,18 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     async launchProject (project: ArwProject, event?: Event): Promise<void> {
         event?.stopPropagation()
+        if(this.switchingWorkspace||this.activeProject!==project.id)return
         const workspace = this.savedWorkspace(project)
         if (!workspace) return
-        const tab=this.activeTab
+        const tab=this.activeTab,request=this.projectSelectionRequest,selection=this.selection
+        if(!selection)return
         if (workspace.kind === 'remote' && this.projectStore && !this.terminalMode) {
-            try { await this.projectStore.open(project,workspace,this.selection?.remote,this.selection?.sourceTerminal??this.selection?.terminal) }
+            try { await this.projectStore.open(project,workspace,selection.remote,selection.sourceTerminal??selection.terminal) }
             catch (error) { if(tab===this.activeTab){this.error=t`工作区转发开启失败：${String(error)}`;this.render()}return }
             if (!this.projectStore.connection(project.id)) return
         }
-        if(tab!==this.activeTab)return
-        await this.ai.launchConfigured({ ...(this.selection as WorkspaceSelection), workspace,terminalMode:this.terminalMode })
+        if(tab!==this.activeTab||request!==this.projectSelectionRequest||this.switchingWorkspace||this.activeProject!==project.id)return
+        await this.ai.launchConfigured({ ...selection, workspace,terminalMode:this.terminalMode })
     }
     get visibleNodes (): TreeNode[] {
         const query=this.filterText.trim().toLocaleLowerCase()

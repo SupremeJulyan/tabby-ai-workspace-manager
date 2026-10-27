@@ -519,9 +519,9 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     const reopened=new (new provider.useClass().getComponentType())(config,profiles)
     assert.equal(reopened.workspaceWidth,65);assert.equal(reopened.aiWidth,35);assert.equal(reopened.fileHeight,70);assert.equal(reopened.terminalHeight,30)
     assert.equal(reopened.fileLayout,'stacked');assert.equal(reopened.aiLayout,'stacked')
-    settings.resumeArgumentsText='';settings.fileLayout='tiled';settings.aiLayout='tabs';await settings.save()
+    settings.resumeArgumentsText='';settings.fileLayout='tiled';settings.aiLayout='stacked';await settings.save()
     assert.equal(config.store.omw.fileLayout,'tiled')
-    assert.equal(config.store.omw.aiLayout,'tabs')
+    assert.equal(config.store.omw.aiLayout,'stacked')
     assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),[])
 })
 
@@ -727,22 +727,7 @@ test('AI terminal opens as the right split pane of the workspace terminal',async
     aiClosed.next()
 })
 
-test('AI tab layout opens immediately right of the active top-level tab without splitting',async()=>{
-    const {Subject}=await import('rxjs')
-    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
-    const plugin=load(),aiClosed=new Subject(),source={},left={},right={},aiTab={destroyed$:aiClosed}
-    const wrapper={getAllTabs:()=>[aiTab]}
-    let changes=0
-    const app={tabs:[left,source,right],activeTab:source,getParentTab(tab){return tab===aiTab?wrapper:null},emitTabsChanged(){changes++}}
-    const launcher=new plugin.AiLauncherService({async getProfiles(){return [{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{}}}]},async openNewTabForProfile(){app.tabs.push(wrapper);app.activeTab=wrapper;return aiTab}},
-        {pin(){}},{error(message,detail){throw Error(message+detail)}},
-        {store:{omw:{aiLayout:'tabs',agent:{command:'codex',args:[],shell:{id:'local:default',command:'/bin/bash',args:[],env:{}}}}}},{}, {}, undefined, app)
-    await launcher.launchConfigured({terminal:source,workspace:{id:'local',...localWorkspace(process.cwd())},hint:''})
-    assert.deepEqual(app.tabs,[left,source,wrapper,right])
-    assert.equal(app.activeTab,wrapper)
-    assert.equal(changes,1)
-    aiClosed.next()
-})
+
 
 test('AI launch also pairs a legacy unwrapped workspace terminal into a left/right split',async()=>{
     const {Subject}=await import('rxjs')
@@ -1603,7 +1588,7 @@ test('terminal mode synchronizes its source once; refresh preserves the selected
         assert.match(template,/toggleTerminalMode\(\)/)
         assert.match(template,/\*ngIf="terminalMode" class="fas fa-terminal"/)
         assert.match(template,/\*ngIf="!terminalMode" class="workspace-icon"/)
-        assert.match(template,/class="project-ai" \(click\)="launchProject\(project,\$event\)"/)
+        assert.match(template,/class="project-ai"[^>]* \(click\)="launchProject\(project,\$event\)"/)
         assert.match(template,/stageChange\(change,repository\)/)
         assert.match(template,/commit\(repository\)/)
     }finally{await store.ngOnDestroy?.();tree.ngOnDestroy();await rm(root,{recursive:true,force:true})}
@@ -2612,6 +2597,9 @@ test('local workspaces open AI directly without forwarding or forwarding status'
         assert.equal(tree.terminalMode,false)
         assert.match(plugin.TreeComponent.component.template,/\*ngIf="isRemote" class="icon-button" \[class.terminal-mode\]/)
         await tree.launchProject(project)
+        assert.equal(launched,undefined,'unselected workspace cannot launch AI')
+        tree.activeProject=project.id
+        await tree.launchProject(project)
         assert.equal(launched.workspace.root,root)
         assert.equal(launched.workspace.kind,'local')
         assert.match(plugin.TreeComponent.component.template,/isRemote && !terminalMode.*class="forwarding-status"/)
@@ -2951,4 +2939,38 @@ test('decorated workspace changes save the host recovery snapshot immediately',a
         assert.equal(snapshots.at(-1).profile.options.arwWorkspace.root,'/home/user/project')
         assert.equal(snapshots.at(-1).profile.options.arwWorkspace.cwd,'/home/user')
     }finally{tree.ngOnDestroy();decorator.ngOnDestroy()}
+})
+
+test('workspace switching blocks repeated selection and releases buttons after failures',async()=>{
+    const plugin=load()
+    let finish,loads=0
+    const tree=Object.assign(Object.create(plugin.TreeComponent.prototype),{
+        switchingWorkspace:false,projectSelectionRequest:0,activeTab:{},selection:{},app:{tabs:[]},
+        savedWorkspace:()=>({kind:'local',root:'/project'}),render(){},
+        showWorkspace(workspace){this.browserWorkspace=workspace;loads++;return new Promise(resolve=>{finish=resolve})},
+    })
+    const pending=tree.selectProject({id:'one'})
+    assert.equal(tree.switchingWorkspace,true)
+    await tree.selectProject({id:'two'})
+    assert.equal(loads,1)
+    finish();await pending
+    assert.equal(tree.switchingWorkspace,false)
+    tree.showWorkspace=async()=>{throw Error('directory failure')}
+    await assert.rejects(tree.selectProject({id:'two'}),/directory failure/)
+    assert.equal(tree.switchingWorkspace,false)
+})
+
+test('AI launch stops if workspace selection changes while forwarding starts',async()=>{
+    const plugin=load()
+    let finish,launched=0
+    const tree=Object.assign(Object.create(plugin.TreeComponent.prototype),{
+        switchingWorkspace:false,activeProject:'one',projectSelectionRequest:1,activeTab:{},selection:{terminal:{}},
+        savedWorkspace:()=>({kind:'remote',root:'/project'}),terminalMode:false,
+        projectStore:{open(){return new Promise(resolve=>{finish=resolve})},connection(){return {}}},
+        ai:{async launchConfigured(){launched++}},
+    })
+    const pending=tree.launchProject({id:'one'})
+    tree.projectSelectionRequest++;tree.activeProject='two'
+    finish();await pending
+    assert.equal(launched,0)
 })

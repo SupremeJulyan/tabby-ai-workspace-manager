@@ -2,7 +2,6 @@ import { paneLayout, selectStackedPane } from '../shared/pane-layout'
 import { orderedAiPanes } from './collapsed-panes'
 import { isAiPane } from '../shared/pane-kind'
 import { tileWorkspacePanes } from './tiling'
-import { placeAdjacentTab } from '../shared/open-adjacent-tab'
 import { cliWorkspaceFiles } from '../arw-cli/workspace-files'
 import { gitRelayOperation } from '../adapters/git-relay-operation'
 import { activityScope } from '../arw-cli/agent-activity'
@@ -44,7 +43,6 @@ export class AiLauncherService {
     /** Keep the AI tab in the same top-level split, immediately to the right of the workspace terminal. */
     private async placeBesideWorkspace (tab: BaseTerminalTabComponent<any>, selection: WorkspaceSelection): Promise<void> {
         const app = this.app
-        if(this.config.store.omw?.aiLayout==='tabs')return
         const source = selection.sourceTerminal ?? selection.terminal
         if (!app || !source || source === tab) return
         const sourceSplit = app.getParentTab(source)
@@ -124,6 +122,11 @@ export class AiLauncherService {
                 ARW_AGENT_COMMAND: command.trim(), ARW_AGENT_ARGS: JSON.stringify(args),
                 ARW_AGENT_SHELL_COMMAND: shell.command, ARW_AGENT_SHELL_ARGS: JSON.stringify(shell.args??[]),
             }
+            if(workspace.kind==='remote'){
+                env.ARW_WORKSPACE_HOST=remote?.profile.options.host??workspace.host
+                env.ARW_WORKSPACE_PORT=String(remote?.profile.options.port??22)
+                env.ARW_WORKSPACE_USER=remote?.authUsername??remote?.profile.options.user??''
+            }
             if (shell.shellType) env.ARW_AGENT_SHELL_TYPE=shell.shellType
             let agentCwd = workspace.root
             if (workspace.kind === 'remote'||terminalMode) {
@@ -167,7 +170,6 @@ export class AiLauncherService {
             }
             const shellOptions=shellEnvironment(shell,env)
             const launch=shellCommand({command:shell.command,args:shell.args??[],env:shellOptions,shellType:shell.shellType??null},[command.trim()].concat(args))
-            const anchor=this.app?.activeTab
             const opened = await this.profiles.openNewTabForProfile({ type: 'local', name: shellCommandLine(launch),
                 options: { command: launch.command, args: launch.args, cwd: agentCwd, env: launch.env,
                     shellType: launch.shellType, pauseAfterExit: true } })
@@ -179,9 +181,7 @@ export class AiLauncherService {
             }),tab] as any[])
             this.registry.pin(tab, selection)
             try {
-                if(this.config.store.omw?.aiLayout==='tabs'){
-                    if(this.app)placeAdjacentTab(this.app,opened,anchor,'right')
-                } else await this.placeBesideWorkspace(tab, selection)
+                await this.placeBesideWorkspace(tab, selection)
             }
             catch (error) { this.notifications.error(t('AI 终端已启动，但无法放入右侧分屏'), String(error)) }
             tab.destroyed$.subscribe(() => { void cleanup() })

@@ -1,3 +1,4 @@
+import { workspaceHiddenPanes } from '../shared/workspace-pane-visibility'
 import { collapsedAiPanes, orderedAiPanes, orderedFilePanes } from './collapsed-panes'
 import { tileWorkspacePanes } from './tiling'
 import { t, observeArwLocale } from '../shared/i18n'
@@ -24,7 +25,7 @@ function orderedSiblings (split:{getAllTabs():BaseTabComponent[]},kind:Workspace
 
 function controlsFor (tab:BaseTabComponent,app:AppService,kind:WorkspacePaneKind):BaseTabComponent[] {
     const split=app.getParentTab(tab)
-    const panes=(split?.getAllTabs()??[tab]).filter(item=>workspacePaneKind(item)===kind)
+    const panes=(split?.getAllTabs()??[tab]).filter(item=>workspacePaneKind(item)===kind&&!workspaceHiddenPanes.has(item))
     return split?orderedSiblings(split,kind,panes):panes
 }
 
@@ -66,7 +67,7 @@ function addPaneCloseButton (tab:BaseTabComponent,app:AppService,onError:(error:
     const toggle=host.ownerDocument.createElement('button')
     toggle.type='button';toggle.className='arw-ai-toggle-button'
     const style=host.ownerDocument.createElement('style')
-    style.textContent='.arw-ai-header > button{opacity:.55;transition:opacity .12s,background .12s}.arw-ai-header > button:hover{opacity:1;background:#8882 !important}.arw-ai-header > button:focus-visible{opacity:1;outline:1px solid currentColor;outline-offset:1px}.arw-ai-header > button:disabled{opacity:.22;cursor:default}.arw-ai-header > button:disabled:hover{background:transparent !important}.arw-ai-collapsed,.arw-stacked-hidden{display:none !important}'
+    style.textContent='.arw-ai-header > button{opacity:.55;transition:opacity .12s,background .12s}.arw-ai-header > button:hover{opacity:1;background:#8882 !important}.arw-ai-header > button:focus-visible{opacity:1;outline:1px solid currentColor;outline-offset:1px}.arw-ai-header > button:disabled{opacity:.22;cursor:default}.arw-ai-header > button:disabled:hover{background:transparent !important}.arw-workspace-hidden,.arw-ai-collapsed,.arw-stacked-hidden{display:none !important}'
     const restore=host.ownerDocument.createElement('button')
     restore.type='button';restore.className='arw-ai-expand-button'
     let assigned:BaseTabComponent[]=[]
@@ -78,6 +79,7 @@ function addPaneCloseButton (tab:BaseTabComponent,app:AppService,onError:(error:
         const panes=siblings(),text=labels(),stacked=panes.length>0&&stackedGroup(panes)
         const split=app.getParentTab(tab)
         const selected=stacked?(split?selectedStackedPane(split,kind,panes):panes[0]):undefined
+        host.classList.toggle('arw-workspace-hidden',workspaceHiddenPanes.has(tab))
         host.classList.toggle('arw-stacked-hidden',stacked&&tab!==selected)
         host.classList.toggle('arw-ai-collapsed',!stacked&&collapsedAiPanes.has(tab))
         toggle.classList.toggle('arw-stack-previous',stacked)
@@ -202,5 +204,5 @@ function addPaneCloseButton (tab:BaseTabComponent,app:AppService,onError:(error:
     updateAll()
     header.append(toggle,title,restore,button)
     host.prepend(header,style)
-    return ()=>{disposed=true;controls.delete(entry);titleSubscription?.unsubscribe();subscription?.unsubscribe();collapsedAiPanes.delete(tab);stackedHiddenPanes.delete(tab);updateAll();restore.removeEventListener('mousedown',stop);restore.removeEventListener('click',expand);stopLocale();button.removeEventListener('mousedown',stop);button.removeEventListener('click',close);toggle.removeEventListener('mousedown',stop);toggle.removeEventListener('click',collapse);host.classList.remove('arw-ai-collapsed','arw-stacked-hidden');header.remove();style.remove()}
+    return ()=>{disposed=true;controls.delete(entry);titleSubscription?.unsubscribe();subscription?.unsubscribe();collapsedAiPanes.delete(tab);stackedHiddenPanes.delete(tab);updateAll();restore.removeEventListener('mousedown',stop);restore.removeEventListener('click',expand);stopLocale();button.removeEventListener('mousedown',stop);button.removeEventListener('click',close);toggle.removeEventListener('mousedown',stop);toggle.removeEventListener('click',collapse);host.classList.remove('arw-workspace-hidden','arw-ai-collapsed','arw-stacked-hidden');header.remove();style.remove()}
 }

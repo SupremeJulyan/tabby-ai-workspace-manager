@@ -1,3 +1,4 @@
+import { updateWorkspaceVisibility, workspaceHiddenPanes } from '../shared/workspace-pane-visibility'
 import { workspacePaneProportions } from '../shared/pane-proportions'
 import { stackedGroup, stackedHiddenPanes, selectedStackedPane, selectStackedPane } from '../shared/pane-layout'
 import type { WorkspacePaneKind } from '../shared/pane-kind'
@@ -13,10 +14,12 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     const split=('getAllTabs' in active?active:app.getParentTab(active)) as SplitTabComponent|null
     if(!split?.root||typeof split.layout!=='function')return false
     const tabs=split.getAllTabs()
-    const ai=orderedAiPanes(split,tabs.filter(isAiPane))
-    const files=orderedFilePanes(split,tabs.filter(isFilePane))
-    if(files.length===0&&ai.length<(allowSingle?1:2))return false
-    const Constructor=split.root.constructor as new()=>SplitContainer,managed=new Set<BaseTabComponent>([...ai,...files])
+    updateWorkspaceVisibility(split,tabs)
+    const hidden=tabs.filter(tab=>workspaceHiddenPanes.has(tab))
+    const ai=orderedAiPanes(split,tabs.filter(tab=>isAiPane(tab)&&!workspaceHiddenPanes.has(tab)))
+    const files=orderedFilePanes(split,tabs.filter(tab=>isFilePane(tab)&&!workspaceHiddenPanes.has(tab)))
+    if(!hidden.length&&files.length===0&&ai.length<(allowSingle?1:2))return false
+    const Constructor=split.root.constructor as new()=>SplitContainer,managed=new Set<BaseTabComponent>([...ai,...files,...hidden])
     const container=(orientation:'h'|'v',children:(BaseTabComponent|SplitContainer)[],ratios=children.map(()=>1/children.length))=>{
         const result=new Constructor();result.orientation=orientation;result.children=children;result.ratios=ratios;return result
     }
@@ -50,7 +53,8 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     const fileGrid=paneGrid(files,'file'),aiGrid=paneGrid(ai,'ai'),others=keepOthers(split.root)
     const proportions=workspacePaneProportions(app)
     const workspace=fileGrid&&others?container('v',[fileGrid,others],[proportions.fileHeight/100,proportions.terminalHeight/100]):fileGrid??others
-    const root=workspace&&aiGrid?container('h',[workspace,aiGrid],[proportions.workspaceWidth/100,proportions.aiWidth/100]):workspace??aiGrid
+    let root=workspace&&aiGrid?container('h',[workspace,aiGrid],[proportions.workspaceWidth/100,proportions.aiWidth/100]):workspace??aiGrid
+    if(root&&hidden.length)root=container('h',[root,...hidden],[1,...hidden.map(()=>0)])
     if(!root)return false
     const focused=split.getFocusedTab()
     split.maximize(null)
@@ -59,7 +63,9 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     if(focused&&(app.activeTab===split||app.activeTab===focused)){
         const replacement=isFilePane(focused)?files.find(tab=>!collapsedAiPanes.has(tab)):isAiPane(focused)?ai.find(tab=>!collapsedAiPanes.has(tab)):focused
         const stackedReplacement=isFilePane(focused)?selectedStackedPane(split,'file',files):isAiPane(focused)?selectedStackedPane(split,'ai',ai):focused
-        split.focus(stackedHiddenPanes.has(focused)?stackedReplacement??focused:collapsedAiPanes.has(focused)?replacement??focused:focused)
+        const fallback=tabs.find(tab=>!isAiPane(tab)&&!isFilePane(tab))??files[0]??ai[0]
+        if(workspaceHiddenPanes.has(focused)){if(fallback)split.focus(fallback)}
+        else split.focus(stackedHiddenPanes.has(focused)?stackedReplacement??focused:collapsedAiPanes.has(focused)?replacement??focused:focused)
     }
     app.emitTabsChanged()
     return true

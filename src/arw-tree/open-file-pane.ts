@@ -4,10 +4,9 @@ import { isFilePane } from '../shared/pane-kind'
 import type { AppService, BaseTabComponent, SplitTabComponent, TabsService } from 'tabby-core'
 import type { NewTabParameters } from 'tabby-core/typings/services/tabs.service'
 import { tileWorkspacePanes } from '../arw-ai-cli/tiling'
-import { openAdjacentTab } from '../shared/open-adjacent-tab'
 
 function topLevelFor (app:AppService,tab:BaseTabComponent|null|undefined):BaseTabComponent|undefined {
-    if(!tab)return
+    if(!tab||!app.tabs?.length)return
     const visited=new Set<BaseTabComponent>()
     while(!app.tabs.includes(tab)&&!visited.has(tab)){
         visited.add(tab)
@@ -20,7 +19,6 @@ function topLevelFor (app:AppService,tab:BaseTabComponent|null|undefined):BaseTa
 
 /** Open a file inside the current split instead of creating another top-level tab. */
 export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='tiled',tabs?:Pick<TabsService,'create'>):Promise<T> {
-    if(layout==='tabs'||!Array.isArray(app.tabs))return openAdjacentTab(app,params)
     const anchor=topLevelFor(app,source??app.activeTab)
     if(!anchor||app.tabs.length===0)return app.openNewTab(params)
     const split=('getAllTabs' in anchor?anchor:app.getParentTab(anchor)??app.wrapAndAddTab(anchor)) as SplitTabComponent

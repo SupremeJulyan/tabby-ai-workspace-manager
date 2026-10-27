@@ -4,7 +4,7 @@ export const englishMessages: Record<string,string> = {
     "AI 窗格宽度（%）": "AI pane width (%)",
     "文件区高度（%）": "File area height (%)",
     "主终端高度（%）": "Main terminal height (%)",
-    "左右宽度与上下高度分别合计 100%，修改一项会联动另一项；新开窗格或重新排列时生效，标签页布局不受影响。": "Each width/height pair totals 100%; changing one updates the other. Applies when opening or rearranging panes; tabbed layouts are unaffected.",
+    "左右宽度与上下高度分别合计 100%，修改一项会联动另一项；新开窗格或重新排列时生效。": "Each width/height pair totals 100%; changing one updates the other. Applies when opening or rearranging panes.",
     "配置工作区使用的本机 AI CLI、会话参数与代理。": "Configure the local AI CLI, session arguments, and proxy used by workspaces.",
     "提取上游状态，不修改工作区": "Fetch upstream state without modifying the working tree",
     "拉取上游更新，只允许快进合并": "Pull upstream updates using fast-forward merges only",
