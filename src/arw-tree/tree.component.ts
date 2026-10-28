@@ -3,6 +3,7 @@ import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-r
 import { logOperation } from '../services/operation-log'
 import { setTerminalCommandMode } from '../shared/terminal-command'
 import { openFilePane } from './open-file-pane'
+import { copyWorkspaceItem, copiedWorkspaceItem, pasteWorkspaceItem, canPasteWorkspaceItem } from './workspace-copy'
 import { t } from '../shared/i18n'
 import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy } from '@angular/core'
 import { AppService, ConfigService, NotificationsService, PlatformService, TabsService } from 'tabby-core'
@@ -322,6 +323,24 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     commitMessages = new Map<string,string>()
     private browserWorkspace?: Workspace
     private tabStates=new WeakMap<object,TabState>()
+    private workspaceTrees=new WeakMap<object,Map<string,{nodes:TreeNode[];relativePath:string}>>()
+    private workspaceFilters=new WeakMap<object,Map<string,string>>()
+    private rememberWorkspaceFilter():void {
+        if(!this.activeTab||!this.browserWorkspace)return
+        let filters=this.workspaceFilters.get(this.activeTab)
+        if(!filters){filters=new Map();this.workspaceFilters.set(this.activeTab,filters)}
+        filters.set(this.workspaceTreeKey(this.browserWorkspace),this.filterText)
+    }
+    private workspaceTreeKey(workspace:Workspace):string {
+        const context=this.projectContext(workspace)
+        return JSON.stringify([context.kind,context.host,context.root])
+    }
+    private rememberWorkspaceTree():void {
+        if(!this.activeTab||!this.browserWorkspace||this.loading||this.relativePath)return
+        let trees=this.workspaceTrees.get(this.activeTab)
+        if(!trees){trees=new Map();this.workspaceTrees.set(this.activeTab,trees)}
+        trees.set(this.workspaceTreeKey(this.browserWorkspace),{nodes:this.nodes.map(node=>({...node,loading:false})),relativePath:this.relativePath})
+    }
     private activeTab?:object
     private browsingKey(selection:WorkspaceSelection|null):object|undefined{
         let tab:object|undefined=selection?.terminal
@@ -487,7 +506,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     filterText = ''
     toggleProjects ():void {this.projectsExpanded=!this.projectsExpanded;this.rememberIfTabbed()}
-    updateFilter (value:string):void {this.filterText=value;this.rememberIfTabbed()}
+    updateFilter (value:string):void {this.filterText=value;this.rememberWorkspaceFilter();this.rememberIfTabbed()}
     setActivityCategory (value:string):void {this.activityCategory=value;this.rememberIfTabbed()}
     setActivityStatus (value:string):void {this.activityStatus=value;this.rememberIfTabbed()}
     private autoFetchRequest=0
@@ -562,7 +581,6 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 catch(error){logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})}
             }
             this.mode = 'files'
-            this.filterText = ''
             this.activeProject = project.id
             this.render()
             await this.showWorkspace(workspace)
@@ -893,16 +911,26 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }
     }
     private async showWorkspace (workspace?: Workspace,background=false): Promise<void> {
+        this.rememberWorkspaceFilter()
+        this.rememberWorkspaceTree()
+        const saved=workspace&&this.activeTab?this.workspaceTrees.get(this.activeTab)?.get(this.workspaceTreeKey(workspace)):undefined
         this.closeDirectoryCandidates()
         this.directoryListings.clear()
         this.directoryDraft=null
         this.browserWorkspace=workspace
+        this.filterText=workspace&&this.activeTab?this.workspaceFilters.get(this.activeTab)?.get(this.workspaceTreeKey(workspace))??'':''
         this.gitAbort?.abort();this.gitLoading=false;this.gitScope=undefined;this.gitScanCompleted=false;this.gitNotice='';this.gitSetupMode=null;this.gitSetupError=''
         const version = ++this.version
         this.error = ''; this.nodes = []; this.relativePath = ''; this.gitGroups=[];this.repositories=[];this.gitNotice='';this.gitWorkspace=undefined;this.loading = Boolean(workspace)
         this.render()
         if (!workspace) return
         this.ensureGitScan()
+        if(saved){
+            this.nodes=saved.nodes.map(node=>({...node,loading:false}));this.relativePath=saved.relativePath;this.loading=false
+            this.loadProjects(this.selection?.workspace);this.rememberBrowsing();this.render()
+            await this.refreshFiles({background:true})
+            return
+        }
         try {
             const files = await workspace.list('.')
             if (version !== this.version) return
@@ -913,6 +941,26 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         } catch (error) { logOperation('打开工作区目录',{root:workspace.root,background,error:String(error)});if (!background&&version===this.version) this.error = String(error) }
         finally { if (version===this.version) this.loading = false; this.render() }
     }
+    private copyHostKey(workspace:Workspace):string {
+        const remote=this.selection?.remote
+        return workspace.kind==='local'?'local':JSON.stringify([workspace.host,remote?.profile.options.port??22,remote?.authUsername??remote?.profile.options.user??''])
+    }
+    private async pasteIntoWorkspace(workspace:Workspace,directory:string):Promise<void> {
+        const source=copiedWorkspaceItem()
+        if(!source)return
+        try {
+            await pasteWorkspaceItem(source,workspace,directory,this.copyHostKey(workspace),this.selection?.remote)
+            if(this.browserWorkspace===workspace)await this.refreshFiles()
+            this.notifications.info(t('粘贴完成'))
+        }catch(error){this.error=t('粘贴失败：')+String(error);this.render()}
+    }
+    showBackgroundContextMenu(event:MouseEvent):void {
+        event.preventDefault();event.stopPropagation()
+        const workspace=this.browserWorkspace??this.selection?.workspace,source=copiedWorkspaceItem()
+        if(!workspace||!source||!canPasteWorkspaceItem(source,workspace,this.copyHostKey(workspace)))return
+        const directory=this.relativePath||'.'
+        this.platform.popupContextMenu([{label:t('粘贴'),click:()=>this.pasteIntoWorkspace(workspace,directory)}],event)
+    }
     private downloadingNodes=new WeakSet<TreeNode>()
     showNodeContextMenu (node:TreeNode, event:MouseEvent):void {
         event.preventDefault();event.stopPropagation()
@@ -921,6 +969,17 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             label:t('复制路径'),
             click:()=>{const path=workspace?workspacePath(workspace.kind).resolve(workspace.root,node.path):node.path;this.platform.setClipboard({text:path});this.notifications.info(t('路径已复制'))},
         }]
+        if(workspace){
+            items.unshift({label:t('复制'),enabled:!node.symlink&&!node.loading,click:()=>{
+                copyWorkspaceItem({workspace,path:workspacePath(workspace.kind).resolve(workspace.root,node.path),hostKey:this.copyHostKey(workspace),remote:this.selection?.remote??undefined})
+                this.notifications.info(t('已复制'))
+            }})
+            if(node.directory){
+                const source=copiedWorkspaceItem()
+                if(source&&!node.symlink&&!node.loading&&canPasteWorkspaceItem(source,workspace,this.copyHostKey(workspace)))
+                    items.unshift({label:t('粘贴'),click:()=>this.pasteIntoWorkspace(workspace,node.path)})
+            }
+        }
         if(workspace&&node.directory){
             const root=workspacePath(workspace.kind).resolve(workspace.root,node.path)
             items.unshift({

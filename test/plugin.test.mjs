@@ -587,7 +587,7 @@ test('saved remote workspaces are isolated by SSH identity and AI uses the saved
         await tree.selectProject(tree.projects[0])
         assert.equal(listedPath,'/home/alice')
         assert.equal(tree.mode,'files')
-        assert.equal(tree.filterText,'')
+        assert.equal(tree.filterText,'old-filter')
         assert.equal(tree.relativePath,'')
         assert.equal(tree.breadcrumb,'/home/alice')
         assert.equal(tree.nodes[0].name,'src')
@@ -1968,8 +1968,8 @@ test('remote sidebar right-click downloads files and folders through native Tabb
         const nodes=tree.nodes
         tree.showNodeContextMenu(tree.nodes.find(node=>node.name==='c.bin'),event)
         assert.equal(menu[0].enabled,true);assert.match(menu[0].label,/下载/)
-        assert.equal(menu[1].label,'复制路径')
-        menu[1].click();assert.equal(clipboard,join(directory,'c.bin'),'copy path resolves remote relative entries against their workspace root')
+        assert.ok(menu.find(item=>item.label==='复制路径'))
+        menu.find(item=>item.label==='复制路径').click();assert.equal(clipboard,join(directory,'c.bin'),'copy path resolves remote relative entries against their workspace root')
         await menu[0].click()
         assert.deepEqual(saved.get('c.bin'),binary);assert.equal(dialogs[0].name,'c.bin');assert.equal(dialogs[0].size,binary.length)
         chooseSave=false;await menu[0].click();assert.equal(downloads.length,1);chooseSave=true
@@ -1996,9 +1996,9 @@ test('remote sidebar right-click downloads files and folders through native Tabb
         await captured.click()
         assert.equal(downloads.at(-1),join(directory,'c.bin'));assert.equal(references,0)
         tree.showNodeContextMenu({name:'local',path:'local',directory:false},event)
-        assert.equal(menu.length,1,'local files expose copy path without remote SFTP actions')
-        assert.equal(menu[0].label,'复制路径')
-        menu[0].click();assert.equal(clipboard,join(root,'local'))
+        assert.ok(menu.find(item=>item.label==='复制'))
+        assert.ok(!menu.some(item=>/下载/.test(item.label)))
+        menu.find(item=>item.label==='复制路径').click();assert.equal(clipboard,join(root,'local'))
         for(let attempt=0;attempt<50&&tree.loading;attempt++)await new Promise(resolve=>setTimeout(resolve,5))
         assert.match(plugin.TreeComponent.component.template,/\(contextmenu\)="showNodeContextMenu\(node,\$event\)"/)
         assert.ok(nodes.some(node=>node.name==='c.bin'))
@@ -2987,4 +2987,33 @@ test('AI launch stops if workspace selection changes while forwarding starts',as
     tree.projectSelectionRequest++;tree.activeProject='two'
     finish();await pending
     assert.equal(launched,0)
+})
+
+test('switching workspaces restores expanded directory trees independently',async()=>{
+    const {BehaviorSubject}=await import('rxjs')
+    const plugin=load(),terminal={}
+    const workspace=root=>({id:root,kind:'local',host:'localhost',root,label:root,
+        async list(path){if(path==='.')return [{name:'src',path:'src',directory:true,symlink:false}];if(path==='src')return [{name:'nested',path:'src/nested',directory:true,symlink:false}];return [{name:'file',path:'src/nested/file',directory:false,symlink:false}]}})
+    const one=workspace('/one'),two=workspace('/two')
+    const current=new BehaviorSubject({terminal,workspace:one,hint:''})
+    const tree=new plugin.TreeComponent({current},{},{},{disable:async()=>{}},{},{},{})
+    try{
+        await tree.showWorkspace(one)
+        await tree.toggle(tree.nodes[0]);await tree.toggle(tree.nodes[1])
+        tree.updateFilter('nested')
+        await tree.showWorkspace(two)
+        assert.equal(tree.filterText,'')
+        tree.updateFilter('src')
+        assert.equal(tree.nodes[0].expanded,undefined)
+        await tree.toggle(tree.nodes[0])
+        await tree.showWorkspace(one)
+        assert.equal(tree.filterText,'nested')
+        assert.equal(tree.nodes[0].expanded,true)
+        assert.equal(tree.nodes[1].expanded,true)
+        assert.equal(tree.nodes[2].path,'src/nested/file')
+        await tree.showWorkspace(two)
+        assert.equal(tree.filterText,'src')
+        assert.equal(tree.nodes[0].expanded,true)
+        assert.ok(!tree.nodes[1].expanded)
+    }finally{tree.ngOnDestroy()}
 })

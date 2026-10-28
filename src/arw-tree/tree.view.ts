@@ -58,7 +58,7 @@ export const TREE_TEMPLATE = `
     <div *ngIf="watchUnavailable" class="watch-unavailable" role="status" [title]="watchUnavailable"><i class="fas fa-eye-slash"></i> {{ '本地文件监听不可用，请手动刷新' | arwTranslate }}</div>
     <div *ngIf="snapshotUnavailable" class="watch-unavailable" role="status" [title]="snapshotUnavailable"><i class="fas fa-eye-slash"></i> {{ '后台文件检测不可用，请手动刷新' | arwTranslate }}</div>
     <div class="directory-bar" *ngIf="relativePath"><button class="icon-button" (click)="up()" [disabled]="loading" [title]="'返回上一级' | arwTranslate" [attr.aria-label]="'返回上一级' | arwTranslate"><i class="fas fa-arrow-left"></i></button><span class="directory-path" [title]="breadcrumb">{{breadcrumb}}</span></div>
-    <div class="tree" role="tree" [attr.aria-label]="'文件目录树' | arwTranslate">
+    <div class="tree" role="tree" (contextmenu)="showBackgroundContextMenu($event)" [attr.aria-label]="'文件目录树' | arwTranslate">
       <div *ngIf="loading && manualRefreshing" class="empty-state compact"><i class="fas fa-circle-notch spinning"></i><span>{{ '正在读取目录…' | arwTranslate }}</span></div>
       <div *ngFor="let node of visibleNodes" role="treeitem" [attr.aria-expanded]="node.directory ? !!node.expanded : null">
         <button class="file-row" (dragover)="dragLocalFiles($event,node)" (drop)="dropLocalFiles($event,node)" [class.upload-drop]="dropTarget===node.path" [class.folder-row]="node.directory" [style.padding-left.px]="10+node.depth*16" [title]="node.symlink ? (('符号链接不支持在文件浏览器中打开：' | arwTranslate) + node.path) : (node.directory ? ('双击进入目录' | arwTranslate) : node.path)" (click)="clickNode(node,$event)" (dblclick)="node.directory && !node.symlink ? open(node) : null" (contextmenu)="showNodeContextMenu(node,$event)">
