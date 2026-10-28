@@ -2,6 +2,7 @@ import { OPEN_READ, OPEN_WRITE, OPEN_CREATE, OPEN_TRUNCATE } from 'russh'
 import type { SFTPSession, SFTPFile } from 'tabby-ssh/typings/session/sftp'
 import { textFileLimit, WorkspaceText } from '../arw-tree/workspace'
 import { t } from '../shared/i18n'
+import { decodeText } from '../shared/decode-text'
 import { FileConflictError } from '../shared/file-conflict'
 
 // SFTP v3 SSH_FXF_EXCL; russh exports the other OPEN flags only.
@@ -40,7 +41,7 @@ export async function readSftpText(sftp:SFTPSession,target:string,signal?:AbortS
         if(length!==info.size)throw new Error(t('远程文件在读取时发生变化，请重新打开'))
         const bytes=Buffer.concat(chunks)
         if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
-        const content=new TextDecoder('utf-8',{fatal:true}).decode(bytes)
+        const content=decodeText(bytes)
         return {content,hash:version}
     }finally{await file.close()}
 }
