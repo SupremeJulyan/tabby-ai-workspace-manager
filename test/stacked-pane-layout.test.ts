@@ -133,3 +133,27 @@ test('closing the selected stacked member falls forward, then backward at the en
     selectStackedPane(split,'file',files[0],files)
     assert.equal(selectedStackedPane(split,'file',[files[1],files[2]]),files[1])
 })
+
+test('reopening an existing file focuses and highlights it without creating another pane',async()=>{
+    const window=new Window(),terminal={},created:any[]=[]
+    class FilePane { arwFilePane=true; arwPaneLayout='stacked'; workspace:any; filePath=''; element:any; constructor(inputs:any){Object.assign(this,inputs);this.element={nativeElement:window.document.createElement('div')}} }
+    const workspace:any={kind:'local',root:'/project',host:'localhost'}
+    let focused:any=terminal
+    const split:any={root:new Container([terminal]),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>focused,focus(value:any){focused=value},maximize(){},layout(){},async add(pane:any){this.root.children.push(pane)}}
+    const app:any={tabs:[split],activeTab:split,getParentTab:()=>split,removeTab(){},selectTab(){},emitTabsChanged(){}}
+    const tabs={create(params:any){const file=new FilePane(params.inputs);created.push(file);return file}}
+    try{
+        const open=(path:string)=>openFilePane(app,{type:FilePane as any,inputs:{workspace,filePath:path}},terminal,'stacked',tabs)
+        const first:any=await open('one.txt')
+        await open('two.txt')
+        const result=await open('./one.txt')
+        assert.equal(result,first)
+        assert.equal(created.length,2)
+        assert.equal(focused,first)
+        assert.equal(stackedHiddenPanes.has(first),false)
+        assert.equal(stackedHiddenPanes.has(created[1]),true)
+        assert.match(first.element.nativeElement.style.outline,/rgb\(239, 68, 68\)|#ef4444/)
+        await new Promise(resolve=>setTimeout(resolve,1600))
+        assert.equal(first.element.nativeElement.style.outline,'')
+    }finally{await window.happyDOM.close()}
+})
