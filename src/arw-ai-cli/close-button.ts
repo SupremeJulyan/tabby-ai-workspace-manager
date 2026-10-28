@@ -204,5 +204,5 @@ function addPaneCloseButton (tab:BaseTabComponent,app:AppService,onError:(error:
     updateAll()
     header.append(toggle,title,restore,button)
     host.prepend(header,style)
-    return ()=>{disposed=true;controls.delete(entry);titleSubscription?.unsubscribe();subscription?.unsubscribe();collapsedAiPanes.delete(tab);stackedHiddenPanes.delete(tab);updateAll();restore.removeEventListener('mousedown',stop);restore.removeEventListener('click',expand);stopLocale();button.removeEventListener('mousedown',stop);button.removeEventListener('click',close);toggle.removeEventListener('mousedown',stop);toggle.removeEventListener('click',collapse);host.classList.remove('arw-workspace-hidden','arw-ai-collapsed','arw-stacked-hidden');header.remove();style.remove()}
+    return ()=>{disposed=true;controls.delete(entry);titleSubscription?.unsubscribe();subscription?.unsubscribe();collapsedAiPanes.delete(tab);stackedHiddenPanes.delete(tab);updateAll();restore.removeEventListener('mousedown',stop);restore.removeEventListener('click',expand);stopLocale();button.removeEventListener('mousedown',stop);button.removeEventListener('click',close);toggle.removeEventListener('mousedown',stop);toggle.removeEventListener('click',collapse);host.style.display='none';host.classList.remove('arw-workspace-hidden','arw-ai-collapsed','arw-stacked-hidden');header.remove();style.remove()}
 }

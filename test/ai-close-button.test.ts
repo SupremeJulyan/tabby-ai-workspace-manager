@@ -39,6 +39,7 @@ test('AI close button respects cancellation, closes only its split pane, and det
     allow=true;tab.effectivelyPinned=true;button.click();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(closed,0)
     tab.effectivelyPinned=false;button.click();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(closed,1);assert.equal(sourceClosed,0)
     cleanup();assert.equal(host.querySelector('button'),null)
+    assert.equal(host.style.display,'none','a destroyed pane stays hidden until its host is removed')
     assert.equal(addAiCloseButton({...tab,profile:{options:{env:{}}}},app,()=>{}),undefined)
     await window.happyDOM.close()
 })
