@@ -1,4 +1,5 @@
 import { changeTerminalDirectory } from '../shared/terminal-directory'
+import { limitConcurrency } from '../shared/concurrency'
 import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-recovery'
 import { logOperation } from '../services/operation-log'
 import { setTerminalCommandMode } from '../shared/terminal-command'
@@ -315,6 +316,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     gitGroups: Array<{title:string; staged:boolean; changes:GitChange[]}> = []
     private version = 0
+    private treeAbort?:AbortController
     private subscription: Subscription
     projects: ArwProject[] = []
     activeProject = ''
@@ -398,6 +400,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         })
     }
     private restoreTabState(key:object,selection:WorkspaceSelection):void{
+        this.treeAbort?.abort()
         const state=this.tabStates.get(key)
         if(!state){
             this.resetVisibleState()
@@ -413,6 +416,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.restoreLoadedState(state,selection)
     }
     private resetVisibleState():void{
+        this.treeAbort?.abort()
         this.manualRefreshRequest++;this.manualRefreshing=false
         this.version++;this.treeRequest++;this.gitVersion++
         this.gitAbort?.abort();this.gitAbort=undefined
@@ -574,11 +578,12 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const workspace = this.savedWorkspace(project)
         if (!workspace) return
         this.switchingWorkspace=true
+        let terminalChange:Promise<void>|undefined
         try {
             const terminal=this.selection?.sourceTerminal??this.selection?.terminal
             if(terminal?.session?.open&&!terminal.alternateScreenActive){
-                try{await changeTerminalDirectory(terminal,workspace.root)}
-                catch(error){logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})}
+                terminalChange=changeTerminalDirectory(terminal,workspace.root)
+                    .catch(error=>logOperation('切换终端工作目录',{root:workspace.root,error:String(error)}))
             }
             this.mode = 'files'
             this.activeProject = project.id
@@ -588,6 +593,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             const identity=fileWorkspaceToken(workspace)
             if(identity)activateWorkspacePanes(this.app,identity)
         } finally {
+            await terminalChange
             this.switchingWorkspace=false
             this.render()
         }
@@ -786,23 +792,27 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const workspace=this.browserWorkspace
         if(!workspace)return
         const version=this.version,request=++this.treeRequest,path=this.relativePath||'.'
-        const active=()=>version===this.version&&request===this.treeRequest&&this.browserWorkspace===workspace&&(this.relativePath||'.')===path
+        this.treeAbort?.abort()
+        const controller=new AbortController();this.treeAbort=controller
+        const active=()=>!controller.signal.aborted&&version===this.version&&request===this.treeRequest&&this.browserWorkspace===workspace&&(this.relativePath||'.')===path
         const previous=new Map(this.nodes.map(node=>[node.path,node]))
         const expansionState=this.nodes.map(node=>[node.path,!!node.expanded,!!node.loading])
         const requestError=this.error
+        const readDirectory=limitConcurrency(4)
         if(!options.background){this.loading=true;if(!options.preserveError)this.error='';this.directoryListings.clear();this.render()}
         const load=async(path:string,depth:number):Promise<TreeNode[]>=>{
-            const entries=await workspace.list(path)
+            const entries=await readDirectory(()=>active()?workspace.list(path,controller.signal):Promise.resolve([]))
             if(!active())return []
             if(entries.length>2000&&!options.background)this.error=t('此目录超过 2000 项，仅显示前 2000 项')
-            const nodes:TreeNode[]=entries.slice(0,0) as TreeNode[]
-            for(const entry of entries.slice(0,2000)){
+            const nodes:TreeNode[]=entries.slice(0,2000).map(entry=>{
                 const old=previous.get(entry.path),node:TreeNode={...entry,depth,expanded:entry.directory&&old?.expanded}
-                nodes.push(node)
-                if(node.expanded)nodes.push(...await load(node.path,depth+1))
-                if(!active())return []
-            }
-            return nodes
+                return node
+            })
+            const children=new Map<TreeNode,TreeNode[]>()
+            await Promise.all(nodes.filter(node=>node.expanded).map(async node=>{
+                children.set(node,await load(node.path,depth+1))
+            }))
+            return active()?nodes.flatMap(node=>[node,...(children.get(node)??[])]):[]
         }
         try{
             const nodes=await load(path,0)
@@ -814,9 +824,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 }
             }
         }
-        catch(error){logOperation('读取工作区目录',{root:workspace.root,background:!!options.background,error:String(error)});if(active()&&!options.background)this.error=String(error)}
+        catch(error){if(!controller.signal.aborted)logOperation('读取工作区目录',{root:workspace.root,background:!!options.background,error:String(error)});if(active()&&!options.background)this.error=String(error)}
         finally{
             if(active()&&!options.background){this.loading=false;if(options.preserveError&&!this.nodes.length&&requestError)this.error=requestError;this.ensureGitScan()}
+            controller.abort()
+            if(this.treeAbort===controller)this.treeAbort=undefined
             if(!options.background)this.render()
         }
     }
@@ -911,6 +923,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }
     }
     private async showWorkspace (workspace?: Workspace,background=false): Promise<void> {
+        this.treeAbort?.abort()
         this.rememberWorkspaceFilter()
         this.rememberWorkspaceTree()
         const saved=workspace&&this.activeTab?this.workspaceTrees.get(this.activeTab)?.get(this.workspaceTreeKey(workspace)):undefined
@@ -928,7 +941,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(saved){
             this.nodes=saved.nodes.map(node=>({...node,loading:false}));this.relativePath=saved.relativePath;this.loading=false
             this.loadProjects(this.selection?.workspace);this.rememberBrowsing();this.render()
-            await this.refreshFiles({background:true})
+            // Cached panes can be activated immediately; revalidate the tree in the background.
+            void this.refreshFiles({background:true})
             return
         }
         try {
@@ -1025,6 +1039,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         await this.enter(node)
     }
     private async enter (node: TreeNode): Promise<void> {
+        this.treeAbort?.abort()
         const workspace = this.browserWorkspace ?? this.selection?.workspace
         if (!workspace || !node.directory) return
         const version = ++this.version
@@ -1073,6 +1088,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     async up (): Promise<void> {
         const workspace = this.browserWorkspace ?? this.selection?.workspace
         if (!workspace || !this.relativePath) return
+        this.treeAbort?.abort()
         const version = ++this.version
         this.loading = true
         this.render()
@@ -1508,5 +1524,5 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     ngAfterViewInit():void{this.viewReady=true;this.watchWorkspace()}
     private disposeWorkspaceWatch():void{clearTimeout(this.workspaceChangeTimer);this.watchController?.abort();this.snapshotController?.abort();this.snapshotController=undefined;this.watchController=undefined;this.watchedWorkspace=undefined;this.snapshotInputs=[]}
-    ngOnDestroy():void{this.disposeWorkspaceWatch();this.cancelUpload();this.gitSetupController?.abort();this.viewReady=false;this.unsubscribeActivity();this.gitAbort?.abort();this.clearCwdSetup();this.subscription.unsubscribe();this.stopForwarding()}
+    ngOnDestroy():void{this.treeAbort?.abort();this.disposeWorkspaceWatch();this.cancelUpload();this.gitSetupController?.abort();this.viewReady=false;this.unsubscribeActivity();this.gitAbort?.abort();this.clearCwdSetup();this.subscription.unsubscribe();this.stopForwarding()}
 }

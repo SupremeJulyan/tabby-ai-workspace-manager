@@ -116,6 +116,8 @@ npm run dev -- /opt/Tabby/tabby
 
 开发模式使用独立的 userData 和插件目录。实现细节见 [架构说明](docs/architecture.md)。
 
+性能优化、基准对比及复现命令见 [性能审查与验证](docs/performance.md)。
+
 CI 矩阵覆盖 Linux、macOS、Windows 的 Node.js 22 / 24：Linux 执行全部测试，三平台均执行原生 Git、路径、CLI 生命周期、IPC、文件恢复、搜索替换和打包预览测试。Linux shell/GNU 工具的远端测试仍在 Linux 上运行，不通过 Git Bash 冒充 Windows 本地 Git。该矩阵针对本机 Tabby；SSH 远端仍需满足前述 POSIX/GNU 工具要求，不代表支持 Windows 远端。未运行的 CI 不作为实机验证结果。
 
 ## License

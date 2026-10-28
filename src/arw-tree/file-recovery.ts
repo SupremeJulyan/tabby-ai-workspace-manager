@@ -1,6 +1,5 @@
 import type { AppService } from 'tabby-core'
 import { posix, isAbsolute, resolve as resolvePath } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import { t } from '../shared/i18n'
 import { localWorkspace, type Workspace } from './workspace'
 import { isSshTab } from '../adapters/ssh-compat'
@@ -89,6 +88,7 @@ export function restoredFileWorkspace(token:FileWorkspaceToken,app:AppService,po
         let pending:Promise<void>|undefined
         let acquired:Awaited<ReturnType<FileSessionPool['get']>>
         let acquisitionError:unknown
+        let wake:(()=>void)|undefined
         let lastSnapshot='',lastLogged=0
         try{
         while(true){
@@ -105,10 +105,19 @@ export function restoredFileWorkspace(token:FileWorkspaceToken,app:AppService,po
             }
             if(acquisitionError)throw acquisitionError
             if(!pending){
-                pending=acquire(signal).then(session=>{acquired=session},error=>{acquisitionError=error})
+                pending=acquire(signal).then(session=>{acquired=session;if(session)wake?.()},error=>{acquisitionError=error;wake?.()})
                     .finally(()=>{pending=undefined})
             }
-            await delay(100,undefined,{signal})
+            // Wake as soon as authentication completes; polling is only for late terminal registration.
+            await new Promise<void>((resolve,reject)=>{
+                const cleanup=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);wake=undefined}
+                const done=()=>{cleanup();resolve()}
+                const abort=()=>{cleanup();reject(signal?.reason??new Error(t('操作已取消')))}
+                const timer=setTimeout(done,100)
+                wake=done
+                signal?.addEventListener('abort',abort,{once:true})
+                if(signal?.aborted)abort()
+            })
         }
         }catch(error){
             logFileRecovery(signal?.aborted?'resolve-cancelled':'resolve-error',{token,elapsedMs:Date.now()-started,error:String(error)})

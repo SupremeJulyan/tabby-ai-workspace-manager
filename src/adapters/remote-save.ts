@@ -50,8 +50,8 @@ fi
 printf '\\000${marker}:READY\\000'
 cat >&3 || exit 1
 exec 3>&-
-test "$(wc -c < ${quoted})" -eq ${bytes.length} || { printf '%s\\n' 'Remote file changed during save (远程文件在读取时发生变化)' >&2; exit 1; }
 _arw_version=$(stat -c '%s:%y' -- ${quoted}) || exit 1
+test "\${_arw_version%%:*}" -eq ${bytes.length} || { printf '%s\\n' 'Remote file changed during save (远程文件在读取时发生变化)' >&2; exit 1; }
 printf '\\000${marker}:VERSION:%s\\000' "$_arw_version"`,signal,{
         input:bytes,inputReadyMarker:ready,maxBytes:16384,
         onStdout:output=>{

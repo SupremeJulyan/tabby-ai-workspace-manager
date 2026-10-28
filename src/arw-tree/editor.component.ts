@@ -119,7 +119,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }
             else {
                 logFileRecovery('editor-read-start',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace)})
-                const file = await this.workspace.read(this.filePath); this.content = file.content; this.hash = file.hash
+                const file = await this.workspace.read(this.filePath,this.recoveryController.signal); this.content = file.content; this.hash = file.hash
                 logFileRecovery('editor-read-ready',{filePath:this.filePath})
             }
             this.original = this.content

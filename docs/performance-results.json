@@ -1,0 +1,66 @@
+{
+  "baseline": {
+    "revision": "5a9b06f",
+    "environment": {
+      "node": "v26.12.1",
+      "platform": "linux",
+      "rttMs": 50,
+      "samples": 5,
+      "transport": "Real local Git and shell commands with simulated SSH exec latency; no live SSH server",
+      "gc": true
+    },
+    "repositoryDiscovery": {
+      "medianMs": 162,
+      "execRequests": 3
+    },
+    "boundedDirectory": {
+      "medianMs": 107.8,
+      "execRequests": 2
+    },
+    "synchronizedGitInspector": {
+      "medianMs": 328.9,
+      "execRequests": 10
+    },
+    "sftpRead32MiB": {
+      "medianMs": 41,
+      "medianExtraExternalMiB": 32
+    },
+    "sftpSave32MiB": {
+      "medianMs": 16.7,
+      "writeRequests": 128,
+      "maxBackingBufferKiB": 32768
+    }
+  },
+  "optimized": {
+    "revision": "working-tree",
+    "environment": {
+      "node": "v26.12.1",
+      "platform": "linux",
+      "rttMs": 50,
+      "samples": 5,
+      "transport": "Real local Git and shell commands with simulated SSH exec latency; no live SSH server",
+      "gc": true
+    },
+    "repositoryDiscovery": {
+      "medianMs": 54.6,
+      "execRequests": 1
+    },
+    "boundedDirectory": {
+      "medianMs": 55.8,
+      "execRequests": 1
+    },
+    "synchronizedGitInspector": {
+      "medianMs": 164.6,
+      "execRequests": 5
+    },
+    "sftpRead32MiB": {
+      "medianMs": 21.4,
+      "medianExtraExternalMiB": 32
+    },
+    "sftpSave32MiB": {
+      "medianMs": 2.9,
+      "writeRequests": 128,
+      "maxBackingBufferKiB": 256
+    }
+  }
+}

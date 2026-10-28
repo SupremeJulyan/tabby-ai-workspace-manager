@@ -4,6 +4,7 @@ import { textFileLimit, WorkspaceText } from '../arw-tree/workspace'
 import { t } from '../shared/i18n'
 import { decodeText } from '../shared/decode-text'
 import { FileConflictError } from '../shared/file-conflict'
+import { readSftpBytes } from './sftp-read'
 
 // SFTP v3 SSH_FXF_EXCL; russh exports the other OPEN flags only.
 const OPEN_EXCLUSIVE=32
@@ -28,18 +29,7 @@ export async function readSftpText(sftp:SFTPSession,target:string,signal?:AbortS
     signal?.throwIfAborted()
     const file=await sftp.open(target,OPEN_READ)
     try {
-        const chunks:Buffer[]=[];let length=0
-        while(true){
-            signal?.throwIfAborted()
-            const bytes=await file.read()
-            signal?.throwIfAborted()
-            if(!bytes.length)break
-            length+=bytes.length
-            if(length>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
-            chunks.push(Buffer.from(bytes))
-        }
-        if(length!==info.size)throw new Error(t('远程文件在读取时发生变化，请重新打开'))
-        const bytes=Buffer.concat(chunks)
+        const bytes=await readSftpBytes(file,info.size,signal)
         if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
         const content=decodeText(bytes)
         return {content,hash:version}
@@ -64,6 +54,9 @@ export async function saveSftpText(
     }
     const mode=before?sftpPermissions(before):'600'
     if(mode!==undefined)recordPermissions(mode)
+    // Keep encoding memory bounded even for a 500 MiB editor buffer.
+    const bytes=Buffer.allocUnsafe(Math.min(256*1024,content.length*3)),encoder=new TextEncoder()
+    let writtenBytes=0
     signal.throwIfAborted()
     // OPEN can truncate before a lost response reaches us; mark the attempt first.
     started()
@@ -72,17 +65,20 @@ export async function saveSftpText(
         signal.throwIfAborted()
         // Set new-file permissions before writing any data. Never chmod ordinary existing files.
         if(!before)await sftp.chmod(target,0o600)
-        const bytes=Buffer.from(content)
-        for(let offset=0;offset<bytes.length;offset+=256*1024){
+        for(let offset=0;offset<content.length;){
             signal.throwIfAborted()
-            await file.write(bytes.subarray(offset,offset+256*1024))
+            // One extra UTF-16 code unit prevents the source slice from cutting a surrogate pair
+            // that could fit in this chunk. encodeInto never splits a UTF-8 sequence.
+            const {read,written}=encoder.encodeInto(content.slice(offset,offset+bytes.length+1),bytes)
+            await file.write(bytes.subarray(0,written))
+            offset+=read;writtenBytes+=written
         }
         signal.throwIfAborted()
     }finally{await file.close()}
     signal.throwIfAborted()
     const after=await sftp.stat(target)
     signal.throwIfAborted()
-    if(after.size!==Buffer.byteLength(content))throw new Error(t('远程文件在保存时发生变化'))
+    if(after.size!==writtenBytes)throw new Error(t('远程文件在保存时发生变化'))
     if(mode!==undefined&&sftpPermissions(after)!==mode)throw new Error(t('远端文件权限在保存时发生了变化'))
     return sftpTextVersion(after)
 }

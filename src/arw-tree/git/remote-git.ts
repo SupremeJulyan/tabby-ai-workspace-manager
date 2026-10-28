@@ -173,17 +173,27 @@ export class RemoteGit {
   async history(limit = 50, signal?: AbortSignal): Promise<GitCommit[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid Git history limit');
     signal?.throwIfAborted();
-    if (await this.probe(['rev-parse', '--verify', '--quiet', 'HEAD']) === undefined) return [];
-    const result = await this.run(['log', '--no-color', `--max-count=${limit}`, '--format=%x1e%H%x1f%an%x1f%aI%x1f%P%x1f%s%x1d', 'HEAD', '--']);
+    const result = await this.execute(['log', '--no-color', `--max-count=${limit}`, '--format=%x1e%H%x1f%an%x1f%aI%x1f%P%x1f%s%x1d', 'HEAD', '--']);
     signal?.throwIfAborted();
-    return parseGitHistory(result, limit);
+    if(result.truncated)throw new Error('Git output exceeded the capture limit; result was not used.');
+    if(result.exitCode!==0){
+      // Only unborn repositories need a second command; the normal path reads once.
+      if(await this.probe(['rev-parse','--verify','--quiet','HEAD'])===undefined)return [];
+      throw new Error(result.stderr.trim()||result.stdout.trim()||`Git failed (${result.exitCode})`);
+    }
+    return parseGitHistory(result.stdout, limit);
   }
   async branches(signal?: AbortSignal): Promise<GitBranch[]> {
     signal?.throwIfAborted();
-    const current = ((await this.probe(['symbolic-ref', '-q', '--short', 'HEAD'])) ?? '').trim();
+    const [head,refs]=await this.batch([
+      ['symbolic-ref','-q','--short','HEAD'],
+      ['for-each-ref','--format=%(refname:short)','refs/heads'],
+    ]);
     signal?.throwIfAborted();
-    const output = await this.run(['for-each-ref', '--format=%(refname:short)', 'refs/heads'])
-    const branches = parseGitBranches(output, current);
+    if(head.exitCode!==0&&head.exitCode!==1)throw new Error(head.stderr.trim()||'Cannot read current Git branch');
+    if(refs.exitCode!==0)throw new Error(refs.stderr.trim()||'Cannot read Git branches');
+    const current=head.exitCode===0?head.stdout.trim():'';
+    const branches = parseGitBranches(refs.stdout, current);
     if (current && !branches.some(branch => branch.name === current)) branches.unshift({name:current, current:true});
     return branches;
   }

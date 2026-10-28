@@ -15,12 +15,25 @@ export class RemotePathError extends Error {}
 export class RemotePathGuard {
     constructor (private root: string, private run: Run) {}
 
+    private readTarget(input:string):string {
+        if(!posix.isAbsolute(this.root)||/[\x00-\x1f\x7f]/.test(this.root+input))throw new RemotePathError('Invalid remote path')
+        return posix.resolve(this.root,input)
+    }
+
+    /** Resolve and validate a read path inside the same exec as a bounded read operation. */
+    resolveReadScript(input:string):string {
+        const target=this.readTarget(input)
+        // A sentinel preserves trailing newlines so a symlink to a control-character path is rejected too.
+        return `_arw_read_path=$(realpath -e -- ${shellQuote(target)} && printf '.') || exit $?
+_arw_read_path=\${_arw_read_path%.}
+_arw_read_path=\${_arw_read_path%?}
+(LC_ALL=C; export LC_ALL; case "$_arw_read_path" in *[[:cntrl:]]*) exit 1 ;; /*) ;; *) exit 1 ;; esac) || exit 1`
+    }
 
     /** Read paths use the SSH account's permissions, without a workspace boundary. */
     async resolveRead(input:string,signal?:AbortSignal,allowMissing=false):Promise<string> {
         signal?.throwIfAborted()
-        if(!posix.isAbsolute(this.root)||/[\x00-\x1f\x7f]/.test(this.root+input))throw new RemotePathError('Invalid remote path')
-        const target=posix.resolve(this.root,input)
+        const target=this.readTarget(input)
         const result=await this.run(`realpath -${allowMissing?'m':'e'} -- ${shellQuote(target)}`,signal)
         signal?.throwIfAborted()
         const resolved=result.stdout.replace(/\n$/,'')

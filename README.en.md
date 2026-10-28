@@ -115,6 +115,8 @@ npm run dev -- /opt/Tabby/tabby
 
 Development mode uses separate userData and plugin directories. See the [architecture documentation (Chinese)](docs/architecture.md) for implementation details.
 
+See the [performance review (Chinese)](docs/performance.md) for the optimizations, benchmark results, and reproduction commands.
+
 CI covers Linux, macOS, and Windows with Node.js 22 and 24. Linux runs the full suite; all three hosts run native Git, path, CLI lifecycle, IPC, file recovery, search/replace, packaging, and preview tests. GNU/Linux remote-shell fixtures run on Linux only; local Windows Git is not tested through Git Bash. This matrix targets the local Tabby host, not Windows SSH servers. A configured workflow is not evidence of a successful native run until CI executes.
 
 ## License
