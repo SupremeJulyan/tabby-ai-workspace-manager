@@ -441,7 +441,7 @@ test('SSH text fallback preserves the 500 MiB limit and rejects binary, invalid 
     await writeFile(join(root,'binary'),Buffer.from([65,0,66]))
     await assert.rejects(workspace.read('binary'),/二进制/)
     await writeFile(join(root,'invalid'),Buffer.from([255]))
-    await assert.rejects(workspace.read('invalid'),/encoded data|encoding|编码/)
+    assert.equal((await workspace.read('invalid')).content,'�')
     await assert.rejects(workspace.read('.'),/普通文本文件/)
     fixture.session.open=false
     await assert.rejects(workspace.list('.'),/SSH 已断开/)

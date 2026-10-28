@@ -8,6 +8,7 @@ import type { GitResult } from './git/remote-git';
 import { watchLocalDirectory } from '../shared/watch-directory';
 import { inheritedWorkspaceName, leafName } from '../shared/workspace-name';
 import { t } from '../shared/i18n';
+import { decodeText } from '../shared/decode-text';
 import { FileConflictError } from '../shared/file-conflict';
 
 export interface WorkspaceFile { name: string; path: string; directory: boolean; symlink: boolean }
@@ -74,7 +75,7 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     if(info.size > textFileLimit) throw new Error('Text files are limited to 500 MiB');
     const bytes = await readFile(target);
     if (bytes.length > textFileLimit || bytes.includes(0)) throw new Error('File is too large or binary');
-    const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    const content = decodeText(bytes);
     return { content, hash: textHash(content) };
   };
   const snapshot = async (target:string) => {
