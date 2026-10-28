@@ -8,7 +8,7 @@ Before working, discover and read applicable remote project instructions, includ
 
 Run arw --help for the command index and arw COMMAND --help for syntax, path rules, limits and examples. Inspect incomplete results before drawing conclusions. Use arw output to continue stored command output instead of rerunning the command.
 
-Keep mutations inside workspaceRoot. Report failures without automatically retrying mutations. Do not bypass POLICY_DENIED or expose connection URLs, tokens or credentials.
+Keep mutations inside workspaceRoot. Do not bypass POLICY_DENIED or expose connection URLs, tokens or credentials.
 `;
 
 export const terminalCliGuidance = `# ARW terminal mode
@@ -21,5 +21,5 @@ Use arw exec for all project operations in the existing terminal, and arw output
 
 Before working, discover and read applicable remote project instructions, including AGENTS.md at the project root and along the directories containing files you will change. They are not automatically loaded here.
 
-Run arw --help for the command index and arw COMMAND --help for syntax, terminal behavior, limits and examples. Inspect incomplete results and continue stored output instead of rerunning commands. Report failures without automatically retrying mutations. Do not bypass POLICY_DENIED or expose connection URLs, tokens or credentials.
+Run arw --help for the command index and arw COMMAND --help for syntax, terminal behavior, limits and examples. Inspect incomplete results and continue stored output instead of rerunning commands. Do not bypass POLICY_DENIED or expose connection URLs, tokens or credentials.
 `;
