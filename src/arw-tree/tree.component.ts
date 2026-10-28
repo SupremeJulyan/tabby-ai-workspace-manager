@@ -1,3 +1,4 @@
+import { changeTerminalDirectory } from '../shared/terminal-directory'
 import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-recovery'
 import { logOperation } from '../services/operation-log'
 import { setTerminalCommandMode } from '../shared/terminal-command'
@@ -531,11 +532,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         // Remote forwarding is acquired by AI terminals, not by browsing a workspace.
     }
     get currentFolder (): string { return this.breadcrumb }
-    async addProject (): Promise<void> {
+    async addProject (root = this.currentFolder): Promise<void> {
         const workspace = this.selection?.workspace
         if (!workspace || !this.projectStore || this.terminalMode) return
         const tab=this.activeTab
-        const project = await this.projectStore.add(this.projectContext(workspace), this.currentFolder)
+        const project = await this.projectStore.add(this.projectContext(workspace), root)
         if(tab!==this.activeTab)return
         this.loadProjects(workspace)
         if (!project) { this.notifications.info(t('此目录已在工作区列表中')); return }
@@ -557,7 +558,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         try {
             const terminal=this.selection?.sourceTerminal??this.selection?.terminal
             if(terminal?.session?.open&&!terminal.alternateScreenActive){
-                try{terminal.sendInput(` cd -- ${shellQuote(workspace.root)}\r`)}
+                try{await changeTerminalDirectory(terminal,workspace.root)}
                 catch(error){logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})}
             }
             this.mode = 'files'
@@ -920,6 +921,17 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             label:t('复制路径'),
             click:()=>{const path=workspace?workspacePath(workspace.kind).resolve(workspace.root,node.path):node.path;this.platform.setClipboard({text:path});this.notifications.info(t('路径已复制'))},
         }]
+        if(workspace&&node.directory){
+            const root=workspacePath(workspace.kind).resolve(workspace.root,node.path)
+            items.unshift({
+                label:t('添加到工作区'),
+                enabled:!!this.projectStore&&!!this.selection?.workspace&&!this.terminalMode&&!node.symlink&&!node.loading,
+                click:async()=>{
+                    try{await this.addProject(root)}
+                    catch(error){this.error=String(error);this.render()}
+                },
+            })
+        }
         if(workspace?.kind==='remote'&&remote)items.unshift({
             label:node.directory?t('下载目录到本地…'):t('下载到本地…'),
             enabled:remote.open&&!node.symlink&&!node.loading&&!this.downloadingNodes.has(node),

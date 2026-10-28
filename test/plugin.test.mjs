@@ -442,11 +442,24 @@ test('workspace tree saves the browsed root and opens files and AI against the s
     const provider=plugin.default.ngModule.providers.find(entry=>entry.useFactory)
     const store=provider.useFactory(config)
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
-    const terminal={session:{open:true},sendInput(value){this.lastInput=value}}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
-    const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(){}},{},{},{launchConfigured:async value=>launched.push(value)},{},store)
+    const {Subject}=await import('rxjs')
+    let echoFilter
+    const terminal={session:{open:true,closed$:new Subject(),middleware:{push(filter){echoFilter=filter},remove(){echoFilter=undefined}}},sessionChanged$:new Subject(),sendInput(value){
+        this.lastInput=value
+        const nonce=/ARW_CD_([a-f0-9]+)/.exec(value)?.[1]
+        if(nonce)echoFilter.feedFromSession(Buffer.from(`\x1eARW_CD_${nonce}\x1f`))
+    }}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
+    let contextMenu
+    const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(){}},{},{},{launchConfigured:async value=>launched.push(value)},{popupContextMenu(items){contextMenu=items}},store)
     try {
         await mkdir(join(root,'src'));await writeFile(join(root,'src/main.ts'),'main')
-        await tree.refresh();await tree.open(tree.nodes[0]);await tree.addProject()
+        await tree.refresh()
+        const directory=tree.nodes[0],before=tree.breadcrumb
+        tree.showNodeContextMenu(directory,{preventDefault(){},stopPropagation(){}})
+        const addDirectory=contextMenu.find(item=>item.label==='添加到工作区')
+        assert.equal(addDirectory.enabled,true);await addDirectory.click()
+        assert.equal(tree.breadcrumb,before,'adding a directory does not navigate the explorer')
+        await tree.open(directory);await tree.addProject()
         assert.equal(tree.projects.length,1)
         const project=tree.projects[0]
         assert.equal(store.connection(project.id),undefined)
@@ -454,7 +467,7 @@ test('workspace tree saves the browsed root and opens files and AI against the s
         await tree.addProject();assert.equal(tree.projects.length,1)
         await tree.selectProject(project)
         assert.equal(tree.breadcrumb,join(root,'src'))
-        assert.equal(terminal.lastInput,` cd -- '${project.root}'\r`,'selecting a saved workspace also changes the source terminal directory')
+        assert.ok(terminal.lastInput.endsWith(`; cd -- '${project.root}'\r`),'selecting a saved workspace also changes the source terminal directory')
         assert.equal(tree.nodes[0].path,'main.ts')
         await tree.open(tree.nodes[0]);assert.equal(opened[0].inputs.workspace.root,project.root)
         await tree.launchProject(project)
@@ -1963,7 +1976,8 @@ test('remote sidebar right-click downloads files and folders through native Tabb
         await tree.up()
         const before=tree.nodes,breadcrumb=tree.breadcrumb
         tree.showNodeContextMenu(tree.nodes.find(node=>node.name==='B'),event)
-        assert.equal(menu[1].label,'复制路径');menu[1].click();assert.equal(clipboard,join(root,'A/B'))
+        assert.equal(menu.find(item=>item.label==='添加到工作区').enabled,false)
+        menu.find(item=>item.label==='复制路径').click();assert.equal(clipboard,join(root,'A/B'))
         await menu[0].click()
         assert.deepEqual(saved.get('B/c.bin'),binary);assert.equal(saved.get('B/nested'),'directory');assert.equal(saved.get('B/nested/child.txt').toString(),'child')
         assert.equal(folderTransfer.completed,true);assert.equal(tree.nodes,before);assert.equal(tree.breadcrumb,breadcrumb)
