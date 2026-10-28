@@ -4,7 +4,7 @@
 
 Manage local and remote workspaces in Tabby's sidebar: browse and edit files, transfer folders, preview content, use Git, and launch local AI CLIs such as Codex or Claude to work through an existing SSH connection.
 
-Package: `tabby-ai-workspace-manager` · CLI: `arw` · Version: `0.1.0`
+Package: `tabby-ai-workspace-manager` · CLI: `arw` · Version: `0.1.1`
 
 [Interface preview](docs/images/demo.png)
 
@@ -12,11 +12,11 @@ Package: `tabby-ai-workspace-manager` · CLI: `arw` · Version: `0.1.0`
 
 Verified with Tabby 1.0.238, Node.js 22+, npm, and Git. Install and sign in to your AI CLI separately.
 
-1. Download `tabby-ai-workspace-manager-0.1.0.tgz` from [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.0).
+1. Download `tabby-ai-workspace-manager-0.1.1.tgz` from [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.1).
 2. Open **Settings → Plugins → Open Plugins Directory** in Tabby, then run in that directory:
 
    ```sh
-   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.0.tgz
+   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.1.tgz
    ```
 
 3. Fully quit and restart Tabby.
@@ -109,7 +109,7 @@ File recovery diagnostics are stored at `<Tabby config directory>/omw/file-recov
 npm ci
 npm run check          # Build and run all tests
 npm run test:portable  # Run portable host tests after building
-npm run pack:plugin    # Generate artifacts/tabby-ai-workspace-manager-0.1.0.tgz
+npm run pack:plugin    # Generate artifacts/tabby-ai-workspace-manager-0.1.1.tgz
 npm run dev -- /opt/Tabby/tabby
 ```
 
