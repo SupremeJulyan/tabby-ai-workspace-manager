@@ -70,11 +70,11 @@ test('interactive SFTP follows selected links while CLI paths remain scoped', {s
 test('SFTP saves support private new files, BOM text and metadata versions and bounded large writes without SSH', {skip:process.platform==='win32'},async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-sftp-write-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
-    const fixture=sessionFixture(root),sftp=sftpFixture(),sizes:number[]=[]
+    const fixture=sessionFixture(root),sftp=sftpFixture(),sizes:number[]=[],backingSizes:number[]=[]
     const open=sftp.open.bind(sftp)
     sftp.open=async(path,mode)=>{
         const file=await open(path,mode),write=file.write.bind(file)
-        file.write=async bytes=>{sizes.push(bytes.length);await write(bytes)}
+        file.write=async bytes=>{sizes.push(bytes.length);backingSizes.push(bytes.buffer.byteLength);await write(bytes)}
         return file
     }
     fixture.session.openSFTP=async()=>sftp
@@ -87,10 +87,22 @@ test('SFTP saves support private new files, BOM text and metadata versions and b
     await workspace.write('large',content)
     assert.equal((await workspace.read('large')).content,content)
     assert.ok(sizes.length>1&&sizes.every(size=>size<=256*1024))
+    assert.ok(backingSizes.every(size=>size<=256*1024),'small chunks must not retain an entire encoded file buffer')
     assert.equal((await stat(join(root,'large'))).mode&0o777,0o600)
     await assert.rejects(workspace.write('missing','unsafe','sftp:3:0'),/远端文件已变化/)
     await assert.rejects(stat(join(root,'missing')),/ENOENT/)
     assert.equal(fixture.commands.length,0)
+})
+
+test('streamed SFTP encoding preserves Unicode at chunk boundaries and replaces unpaired surrogates like Buffer.from', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-sftp-utf8-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const fixture=sessionFixture(root);fixture.session.openSFTP=async()=>sftpFixture()
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    const content='x'.repeat(256*1024-1)+'😀'+'中文'.repeat(100000)+'\ud800'+'end\udc00'
+    await workspace.write('unicode',content)
+    assert.deepEqual(await readFile(join(root,'unicode')),Buffer.from(content))
+    assert.equal((await workspace.read('unicode')).content,Buffer.from(content).toString('utf8'))
 })
 
 test('failed SFTP writes retain partial contents and require reload before retry', {skip:process.platform==='win32'},async context=>{
@@ -704,6 +716,25 @@ test('remote Git discovery streams a bounded directory prefix including unusual 
     assert.equal(result.entries.length,2)
     assert.equal(result.truncated,true)
     assert.ok(fixture.commands.some(command=>command.includes('head -z -n 6')))
+    assert.equal(fixture.commands.length,1,'path resolution and enumeration share one SSH exec')
+})
+
+test('batched Git directory reads preserve read scope and validate canonical symlink targets', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-git-read-path-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const project=join(root,'project'),outside=join(root,"共享 ' directory"),invalid=join(root,'control\x01directory'),newline=outside+'\n'
+    await mkdir(project);await mkdir(outside);await mkdir(invalid);await mkdir(newline)
+    await writeFile(join(outside,'file'),'')
+    await symlink(outside,join(project,'linked'));await symlink(invalid,join(project,'invalid'));await symlink(newline,join(project,'newline'))
+    const fixture=sessionFixture(project),workspace=remoteWorkspace(fixture.session as any,project)
+    for(const input of ['linked',outside])assert.equal((await workspace.listForGit!(input,2)).entries[0].name,'file')
+    await assert.rejects(workspace.listForGit!('invalid',2))
+    await assert.rejects(workspace.listForGit!('newline',2))
+    await assert.rejects(workspace.listForGit!('missing',2))
+    const before=fixture.commands.length
+    await assert.rejects(workspace.listForGit!('control\x01path',2),/Invalid remote path/)
+    await assert.rejects(workspace.listForGit!('.',NaN),/Invalid Git directory limit/)
+    assert.equal(fixture.commands.length,before)
 })
 
 test('a failed destination open never requests file contents but retains an unconfirmed save', {skip:process.platform==='win32'},async context=>{

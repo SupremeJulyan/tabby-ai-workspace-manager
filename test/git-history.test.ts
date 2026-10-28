@@ -7,6 +7,7 @@ import { RemoteGit } from '../src/arw-tree/git/remote-git'
 import { parseGitBranches, parseGitHistory, parseSwitchError } from '../src/arw-tree/git/git-history'
 import { localWorkspace } from '../src/arw-tree/workspace'
 import { parseDiff } from '../src/arw-tree/git/diff-model'
+import { readGitSyncState, readCommitSyncHistory } from '../src/arw-tree/git/git-sync-state'
 
 test('Git history parser keeps exact formatted commits and rejects malformed records', () => {
     const one = 'a'.repeat(40), two = 'b'.repeat(40)
@@ -81,4 +82,26 @@ test('Git history retains the full 50 entry bound and treats subjects as text',(
     const commits=parseGitHistory(records)
     assert.equal(commits.length,50)
     assert.equal(commits[49].subject,'<img src=x>49')
+})
+
+test('remote Git inspection reduces exec requests and avoids history walks when upstream equals HEAD',async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-git-inspection-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const workspace=localWorkspace(root)
+    let requests=0
+    const git=new RemoteGit(command=>{requests++;return workspace.run(command)})
+    for(const args of [['init','-b','main'],['config','user.name','Test'],['config','user.email','test@example.com'],
+        ['commit','--allow-empty','-m','initial'],['config','branch.main.remote','.'],['config','branch.main.merge','refs/heads/main']])await git.run(args)
+    requests=0
+    const commits=await git.history()
+    assert.equal(commits.length,1);assert.equal(requests,1)
+    requests=0
+    assert.deepEqual(await git.branches(),[{name:'main',current:true}]);assert.equal(requests,1)
+    requests=0
+    const state=await readGitSyncState(git)
+    assert.equal(state.kind,'tracked');assert.equal(state.ahead,0);assert.equal(state.behind,0)
+    assert.equal(requests,3)
+    requests=0
+    const synced=await readCommitSyncHistory(git,commits,state)
+    assert.equal(synced[0].syncStatus,'synced');assert.equal(requests,0)
 })

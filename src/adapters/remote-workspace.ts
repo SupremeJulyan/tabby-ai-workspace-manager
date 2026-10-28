@@ -18,6 +18,7 @@ import { SaveConfirmation, SaveConfirmationState } from './save-confirmation'
 import { leafName } from '../shared/workspace-name'
 import { saveRemoteText } from './remote-save'
 import { readSftpText, saveSftpText, sftpPermissions } from './sftp-text'
+import { readSftpBytes } from './sftp-read'
 
 class BackgroundDirectoryLimit extends Error {}
 
@@ -140,9 +141,11 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
         },
         async listForGit(input,limit,signal) {
             signal?.throwIfAborted()
-            const target=await guard.resolveRead(input,signal??AbortSignal.timeout(3000))
+            if(!Number.isSafeInteger(limit)||limit<1||limit>2000)throw new Error('Invalid Git directory limit')
             // Stream only a bounded prefix; SFTP readdir materializes the entire directory.
-            const result=await transport.run(`cd -- ${shellQuote(target)} || exit $?
+            // Resolve the read path in the same channel to avoid an extra SSH round trip per directory.
+            const result=await transport.run(`${guard.resolveReadScript(input)}
+cd -- "$_arw_read_path" || exit $?
 printf 'ARW_DIRECTORY_V1\\000'
 find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y\\000%f\\000' | head -z -n ${2*(limit+1)}`,signal??AbortSignal.timeout(3000),{maxBytes:512*1024})
             signal?.throwIfAborted()
@@ -202,15 +205,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             if(!Number.isSafeInteger(info.size)||info.size<0||info.size>maxBytes)throw new Error(t`预览上限为 ${Math.floor(maxBytes/1024/1024)} MiB`)
             const file=await sftp.open(target,OPEN_READ)
             try{
-                const chunks:Buffer[]=[];let length=0
-                while(true){
-                    signal?.throwIfAborted();const bytes=await file.read();signal?.throwIfAborted()
-                    if(!bytes.length)break
-                    length+=bytes.length;if(length>maxBytes)throw new Error(t('文件超过预览大小限制'))
-                    chunks.push(Buffer.from(bytes))
-                }
-                if(length!==info.size)throw new Error(t('远程文件在读取时发生变化，请重新打开'))
-                return Buffer.concat(chunks)
+                return await readSftpBytes(file,info.size,signal)
             }finally{await file.close()}
         },
         write,

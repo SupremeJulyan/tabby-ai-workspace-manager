@@ -54,6 +54,10 @@ export async function discoverGitRepositories(workspace: Workspace,
       throw new Error(result.stderr.trim() || result.stdout.trim() || `Git failed (${result.exitCode})`);
     };
     const initialRoot=await probe('.');
+    // Git has already confirmed that the browsing path itself is the repository.
+    // Symlink aliases still need the .git marker check below to establish scope.
+    if(options.scanNestedRepositories===false&&initialRoot===absolute('.'))
+      return {roots:[...roots].sort(),truncated,skipped};
     const queue = [{ path: '.', depth: 0 }];
     const concurrency=Math.max(1,Math.min(8,options.concurrency??6));
     while (queue.length) {

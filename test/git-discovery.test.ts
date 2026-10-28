@@ -138,3 +138,13 @@ test('native Git discovery enumeration stops before materializing an entire dire
   assert.equal(result.entries.length,3)
   assert.equal(result.truncated,true)
 })
+
+test('discovery at a confirmed repository root needs no directory enumeration when nested scanning is disabled',async context=>{
+  const root=await mkdtemp(join(tmpdir(),'arw-git-direct-'));context.after(()=>rm(root,{recursive:true,force:true}));
+  await execute('git',['init',root]);
+  const base=localWorkspace(root);let probes=0;
+  const workspace={...base,runGit:async(...args:Parameters<NonNullable<typeof base.runGit>>)=>{probes++;return base.runGit!(...args)},
+    listForGit:async()=>{throw new Error('Repository discovery must not enumerate source files')}};
+  const result=await discoverGitRepositories(workspace,{scanNestedRepositories:false});
+  assert.equal(result.roots.length,1);assert.equal(result.truncated,false);assert.equal(probes,1);
+})

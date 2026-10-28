@@ -4,8 +4,15 @@ import { GitCommit, parseGitHistory } from './git-history';
 
 export async function readCommitSyncHistory(git:RemoteGit,commits:GitCommit[],state:GitSyncState|undefined,pushed=new Set<string>(),pulled=new Set<string>()):Promise<GitCommit[]> {
   if(state?.kind!=='tracked'||!state.head||!state.upstreamOid)return commits.map(commit=>({...commit,syncStatus:'unknown'}));
-  const outgoing=new Set((await git.run(['rev-list',state.head,'--not',state.upstreamOid,'--'])).trim().split('\n').filter(Boolean));
-  const incoming=parseGitHistory(await git.run(['log','--no-color','--max-count=50','--format=%x1e%H%x1f%an%x1f%aI%x1f%P%x1f%s%x1d',state.upstreamOid,'--not',state.head,'--']));
+  const commands:string[][]=[];
+  const hasOutgoing=state.head!==state.upstreamOid&&state.ahead!==0;
+  const hasIncoming=state.head!==state.upstreamOid&&state.behind!==0;
+  if(hasOutgoing)commands.push(['rev-list',state.head,'--not',state.upstreamOid,'--']);
+  if(hasIncoming)commands.push(['log','--no-color','--max-count=50','--format=%x1e%H%x1f%an%x1f%aI%x1f%P%x1f%s%x1d',state.upstreamOid,'--not',state.head,'--']);
+  const results=await git.batch(commands);
+  for(const result of results)if(result.exitCode!==0)throw new Error(result.stderr.trim()||'Cannot read Git sync history');
+  const outgoing=new Set(hasOutgoing?results.shift()!.stdout.trim().split('\n').filter(Boolean):[]);
+  const incoming=hasIncoming?parseGitHistory(results.shift()!.stdout):[];
   return [...incoming.map(commit=>({...commit,syncStatus:'incoming' as const})),...commits.map(commit=>({...commit,
     syncStatus:outgoing.has(commit.hash)?'unpushed' as const:pushed.has(commit.hash)?'pushed' as const:pulled.has(commit.hash)?'pulled' as const:'synced' as const}))];
 }
@@ -61,6 +68,7 @@ export async function readGitSyncState(git: RemoteGit): Promise<GitSyncState> {
   if (!upstream) return { branch, head, kind: 'no-upstream' };
   const upstreamOid = (await git.probe(['rev-parse', '--verify', '--quiet', `${upstream}^{commit}`]))?.trim();
   if (!upstreamOid) return { branch, head, upstream, kind: 'missing-upstream' };
+  if(head===upstreamOid)return {branch,head,upstream,upstreamOid,ahead:0,behind:0,kind:'tracked'};
   // Compare immutable object IDs so an external fetch cannot mix two snapshots.
   const counts = (await git.run(['rev-list', '--left-right', '--count', `${head}...${upstreamOid}`])).trim().split(/\s+/);
   if (counts.length !== 2 || counts.some(count => !/^\d+$/.test(count))) throw new Error('Invalid Git ahead/behind counts');

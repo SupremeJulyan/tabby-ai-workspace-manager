@@ -271,6 +271,23 @@ test('an available terminal unblocks recovery while an earlier file handshake is
     }finally{clearTimeout(deadline);editor.ngOnDestroy();provider.ngOnDestroy();await loading}
 })
 
+test('pooled file recovery wakes on authentication completion without waiting for its polling timer',async()=>{
+    const plugin=load(undefined,{setTimeout:(callback,ms,...args)=>setTimeout(callback,ms===100?10000:ms,...args)})
+    const terminal=new SSHTabComponent(),profile={id:'profile',options:{host:'example.test',port:22,user:'alice'}}
+    terminal.profile=profile;terminal.frontendIsReady=false
+    terminal.setupOneSession=async()=>({open:true,profile,authUsername:'alice',ref(){},unref(){}})
+    const provider=new plugin.FileRecoveryProvider({get:()=>({tabs:[terminal]})})
+    const params=await provider.recover({type:'arw-editor',workspace:{kind:'remote',root:'/project',host:'example.test',port:22,user:'alice',profileId:'profile'},
+        filePath:'file.txt',state:{initialContent:'ready'}})
+    const editor=new params.type({get:()=>({})});editor.setTitle=()=>{};Object.assign(editor,params.inputs)
+    const pending=editor.ngOnInit()
+    try{
+        await new Promise(resolve=>setImmediate(resolve))
+        assert.equal(editor.loading,false)
+        assert.equal(editor.content,'ready');assert.equal(editor.error,'')
+    }finally{editor.ngOnDestroy();provider.ngOnDestroy();await pending}
+})
+
 test('closing a recovered file cancels its wait without cancelling shared authentication',async()=>{
     const plugin=load(),terminal=new SSHTabComponent(),profile={id:'profile',options:{host:'example.test',port:22,user:'alice'}}
     const app={tabs:[terminal]},provider=new plugin.FileRecoveryProvider({get:()=>app})
@@ -2037,8 +2054,11 @@ test('Git scans start in the background without opening Git and cancellation kee
     const {localWorkspace}=require('../.build/arw-tree/workspace.js'),root=await fs.mkdtemp(join(tmpdir(),'arw-background-git-'))
     const base=localWorkspace(root),plugin=load(),terminal={}
     let commands=0,block=false,release,scanSignal
-    const workspace={...base,listForGit:undefined,async runGit(...args){commands++;return base.runGit(...args)},async list(path,signal){
-        if(block){scanSignal=signal;return new Promise(resolve=>{release=resolve})}
+    const workspace={...base,listForGit:undefined,async runGit(...args){
+        commands++
+        if(block){scanSignal=args[1];return new Promise(resolve=>{release=()=>resolve({exitCode:0,stdout:root+'\n',stderr:''})})}
+        return base.runGit(...args)
+    },async list(path,signal){
         return base.list(path,signal)
     }}
     assert.equal((await base.run('git init -b main')).exitCode,0)
@@ -2069,8 +2089,8 @@ test('Git scans start in the background without opening Git and cancellation kee
         assert.equal(tree.repositories[0],repository);assert.equal(repository.loading,false)
         assert.equal(tree.nodes,nodes);assert.equal(tree.breadcrumb,breadcrumb)
         assert.match(tree.gitNotice,/已取消/);assert.equal(tree.error,'')
-        await pending // The native list promise has deliberately not completed yet.
-        block=false;release(await base.list('.'));await new Promise(resolve=>setImmediate(resolve))
+        await pending // The native Git probe has deliberately not completed yet.
+        block=false;release();await new Promise(resolve=>setImmediate(resolve))
         assert.equal(tree.repositories[0],repository);assert.equal(tree.error,'');assert.match(tree.gitNotice,/已取消/)
         await tree.refreshCurrentView()
         assert.equal(tree.repositories[0],repository);assert.equal(tree.gitLoading,false)
@@ -3016,4 +3036,54 @@ test('switching workspaces restores expanded directory trees independently',asyn
         assert.equal(tree.nodes[0].expanded,true)
         assert.ok(!tree.nodes[1].expanded)
     }finally{tree.ngOnDestroy()}
+})
+
+test('cached workspace restoration completes before a slow directory revalidation',async()=>{
+    const {BehaviorSubject}=await import('rxjs'),plugin=load()
+    const one={kind:'local',host:'localhost',root:'/one',list:async()=>[{name:'file',path:'file',directory:false,symlink:false}]}
+    const two={...one,root:'/two'}
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{},{})
+    tree.activeTab={};tree.selection={terminal:{},workspace:one};tree.ensureGitScan=()=>{}
+    let release,restored=false
+    try{
+        await tree.showWorkspace(one);await tree.showWorkspace(two)
+        one.list=()=>new Promise(resolve=>{release=resolve})
+        const pending=tree.showWorkspace(one).then(()=>{restored=true})
+        await new Promise(resolve=>setImmediate(resolve))
+        assert.equal(restored,true,'restoring live panes must not depend on the network read')
+        assert.equal(tree.nodes[0].path,'file');assert.equal(tree.loading,false)
+        assert.ok(release,'background revalidation still runs')
+        release([]);await pending
+    }finally{release?.([]);tree.ngOnDestroy()}
+})
+
+test('expanded directory refresh is bounded, preserves display order and stops queued reads on cancellation',async()=>{
+    const plugin=load(),directories=Array.from({length:8},(_,index)=>({name:`dir${index}`,path:`dir${index}`,directory:true,symlink:false}))
+    const waiting=[]
+    let running=0,peak=0,reads=0
+    const workspace={root:'/project',async list(path){
+        if(path==='.')return directories
+        reads++;running++;peak=Math.max(peak,running)
+        try{return await new Promise(resolve=>waiting.push(()=>resolve([{name:'file',path:`${path}/file`,directory:false,symlink:false}])))}
+        finally{running--}
+    }}
+    const tree=Object.assign(Object.create(plugin.TreeComponent.prototype),{browserWorkspace:workspace,nodes:directories.map(node=>({...node,depth:0,expanded:true})),
+        version:0,treeRequest:0,relativePath:'',error:'',directoryListings:new Map(),render(){},rememberBrowsing(){},ensureGitScan(){}})
+    const tick=()=>new Promise(resolve=>setImmediate(resolve))
+    const pending=tree.refreshFiles({background:true})
+    await tick()
+    assert.equal(waiting.length,4)
+    while(waiting.length){waiting.splice(0).reverse().forEach(finish=>finish());await tick()}
+    await pending
+    assert.equal(peak,4);assert.equal(reads,8)
+    assert.deepEqual(tree.nodes.map(node=>node.path),directories.flatMap(node=>[node.path,`${node.path}/file`]))
+    const original=tree.nodes
+    reads=0
+    const cancelled=tree.refreshFiles({background:true})
+    await tick();assert.equal(waiting.length,4)
+    tree.treeAbort.abort()
+    waiting.splice(0).forEach(finish=>finish());await cancelled
+    assert.equal(reads,4,'queued requests must not start after switching away')
+    assert.equal(tree.nodes,original,'late responses cannot replace the visible tree')
+    assert.equal(tree.error,'')
 })
