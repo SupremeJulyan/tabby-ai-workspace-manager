@@ -1,6 +1,5 @@
 import { t } from '../shared/i18n'
-import { chmodSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { currentCliPath } from './cli-path'
 import { cliGuidance, terminalCliGuidance } from '../arw-cli/instructions'
@@ -32,11 +31,9 @@ export function resumeArguments(command:string,args:string[]):string[] {
     return [...args]
 }
 
-function managedFile(path:string,content:string,mode=0o600):void {
-    try {if(readFileSync(path,'utf8')===content)return} catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
-    const temporary=`${path}.${randomUUID()}.tmp`
-    try {writeFileSync(temporary,content,{mode,flag:'wx'});renameSync(temporary,path)}
-    finally {rmSync(temporary,{force:true})}
+function createMissingFile(path:string,content:string,mode=0o600):void {
+    try {writeFileSync(path,content,{mode,flag:'wx'})}
+    catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error}
 }
 
 /** Windows shells cannot execute the Unix manager shim; use the stable launcher beside it. */
@@ -60,7 +57,7 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
         if(!path||isAbsolute(path)||path==='..'||path.startsWith(`..${sep}`))throw new Error(t('AI 占位目录不属于当前 Tabby 配置'))
         const metadata=JSON.parse(readFileSync(join(cwd,'.awm','workspace.json'),'utf8'))
         if(metadata.version!==1||metadata.kind!=='remote'||metadata.remoteRoot!==env.ARW_WORKSPACE_ROOT)throw new Error(t('AI 工作区元数据不匹配'))
-        managedFile(join(cwd,'AGENTS.md'),metadata.terminalOnly?terminalCliGuidance:cliGuidance)
+        createMissingFile(join(cwd,'AGENTS.md'),metadata.terminalOnly?terminalCliGuidance:cliGuidance)
     }
     const savedPath=Object.entries(env).find(([name])=>name.toLowerCase()==='path')?.[1]
     const executableCli=process.platform==='win32'?persistentCliSource(cliSource):cliSource
