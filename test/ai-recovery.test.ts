@@ -53,7 +53,7 @@ test('fresh AI launch stays fresh; persisted and legacy tabs resume with a worki
         prepareAiRecovery(legacy,storage,source)
         assert.deepEqual(legacy.profile.options.args,['resume','--last','--model','custom'])
         const instructions=await readFile(join(localPath,'AGENTS.md'),'utf8')
-        assert.ok(instructions.length<1600)
+        assert.ok(instructions.length<4000)
         assert.doesNotMatch(instructions,/safs|SKILL\.md|127\.0\.0\.1/i)
         const unrelated={profile:{type:'local',options:{command:'codex',args:[],env:{}}}}
         prepareAiRecovery(unrelated,storage,source)

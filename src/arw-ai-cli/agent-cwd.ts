@@ -46,6 +46,7 @@ export async function ensureAgentCwdPlaceholder (
     await mkdir(metadata, { recursive: true, mode: 0o700 })
     await writeFile(join(metadata, 'workspace.json'), JSON.stringify({ version: 1, kind: 'remote',
         ...identity, port: identity.port ?? 22, remoteRoot: root, ...(terminalOnly?{terminalOnly:true,workspaceId}:{}) }, null, 2) + '\n', { mode: 0o600 })
-    await writeFile(join(localPath, 'AGENTS.md'), terminalOnly?terminalCliGuidance:cliGuidance, { mode: 0o600 })
+    await writeFile(join(localPath, 'AGENTS.md'), terminalOnly?terminalCliGuidance:cliGuidance, { mode: 0o600, flag: 'wx' })
+        .catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
     return { localPath, created }
 }

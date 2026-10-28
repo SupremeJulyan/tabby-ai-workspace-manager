@@ -5,7 +5,7 @@ import { readWorkspaceCatalog } from './workspace-catalog';
 import { describeNetworkError } from './network-error';
 import { ipcFetch, parseIpcConnection } from './ipc-client';
 import { transfer } from './transfers';
-import { commands, help } from './commands';
+import { commands, help, helpForCommand } from './commands';
 
 declare const ARW_CLI_VERSION: string;
 
@@ -18,7 +18,9 @@ async function main(): Promise<void> {
   } });
   const values: Record<string, string | boolean | undefined> = parsedValues;
   if (values.version) { console.log(`arw ${ARW_CLI_VERSION}`); return; }
-  if (values.help || !positionals.length) { console.log(help); return; }
+  if (values.help || !positionals.length) {
+    console.log(positionals.length ? helpForCommand(positionals[0]) : help); return;
+  }
   const [verb, ...positional] = positionals;
   const spec = Object.hasOwn(commands, verb) ? commands[verb] : undefined;
   if (!spec) throw new Error('Unsupported command; use --help');
