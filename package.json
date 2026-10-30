@@ -1,6 +1,6 @@
 {
   "name": "tabby-ai-workspace-manager",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Seamless AI local and remote workspace management for Tabby, with the arw CLI, file management, previews, and Git tools.",
   "keywords": [
     "tabby-plugin",
