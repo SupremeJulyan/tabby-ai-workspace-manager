@@ -5,12 +5,40 @@ import { openFilePane } from '../src/arw-tree/open-file-pane'
 import { tileWorkspacePanes } from '../src/arw-ai-cli/tiling'
 import { addAiCloseButton } from '../src/arw-ai-cli/close-button'
 import { selectedStackedPane, selectStackedPane, stackedHiddenPanes } from '../src/shared/pane-layout'
+import { workspaceHiddenPanes } from '../src/shared/workspace-pane-visibility'
 
 class Container {
     orientation='h';children:any[]=[];ratios:number[]=[]
     constructor(children:any[]=[],ratios?:number[]){this.children=children;this.ratios=ratios??children.map(()=>1/children.length)}
     getAllTabs():any[]{return this.children.flatMap(child=>child instanceof Container?child.getAllTabs():[child])}
 }
+
+test('workspace switches retain independent stacked file and AI selections',()=>{
+    const split={}
+    for(const kind of ['file','ai'] as const){
+        const first=[{},{},{}],second=[{},{}]
+        selectStackedPane(split,kind,first[1],first)
+        selectStackedPane(split,kind,second[0],second)
+        assert.equal(selectedStackedPane(split,kind,first),first[1])
+        assert.equal(selectedStackedPane(split,kind,second),second[0])
+    }
+})
+
+test('opening a pane does not overwrite the inactive workspace selection',()=>{
+    for(const kind of ['file','ai'] as const){
+        const split={},a={},b={},other={}
+        selectStackedPane(split,kind,b,[a,b])
+        workspaceHiddenPanes.add(a);workspaceHiddenPanes.add(b)
+        selectStackedPane(split,kind,other,[a,b,other])
+        workspaceHiddenPanes.delete(a);workspaceHiddenPanes.delete(b)
+        assert.equal(selectedStackedPane(split,kind,[a,b]),b)
+        selectStackedPane(split,kind,a,[a,b])
+        workspaceHiddenPanes.add(a);workspaceHiddenPanes.add(b)
+        selectStackedPane(split,kind,other,[other])
+        workspaceHiddenPanes.delete(a);workspaceHiddenPanes.delete(b)
+        assert.equal(selectedStackedPane(split,kind,[a,b]),a)
+    }
+})
 
 function area(node:any,pane:any,weight=1):number {
     return node instanceof Container?node.children.reduce((sum,child,index)=>sum+area(child,pane,weight*node.ratios[index]),0):node===pane?weight:0

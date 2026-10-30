@@ -89,10 +89,10 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         try{this.workspace=await resolveFileWorkspace(this.workspace,this.controller.signal)}
         catch(error){if(!this.closed){this.error=String(error);this.loading=false;this.render()}return}
         const remote=remoteWorkspaceSession(this.workspace)
-        if(remote?.open){remote.ref();const closed=remote.willDestroy$.subscribe(()=>this.controller.abort());this.releaseRemote=()=>{closed.unsubscribe();remote.unref()}}
+        if(remote?.open){remote.ref();this.releaseRemote=()=>{remote.unref()}}
         if(!this.imagePaths.includes(this.filePath))this.imagePaths=[this.filePath]
         await this.load()
-        if(this.isText&&!this.closed)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:async()=>{if(!this.loading&&!this.closed)await this.load()}})
+        if(!this.closed)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:async()=>{if(!this.loading&&!this.closed)await this.load()}})
     }
     ngAfterViewInit():void{this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error)));this.viewReady=true;if(this.pdfDocument)void this.renderPdf()}
     async getRecoveryToken():Promise<RecoveryToken|null>{

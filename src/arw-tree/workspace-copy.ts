@@ -7,7 +7,7 @@ import { transfer } from '../arw-cli/transfers'
 import { sftpCopy } from '../adapters/sftp-copy'
 import { RemotePathGuard } from '../security/remote-path'
 
-export interface CopySource {workspace:Workspace; path:string; hostKey:string; remote?:SSHSession}
+export interface CopySource {workspace:Workspace; path:string; hostKey:string; remote?:SSHSession; paths?:string[]}
 let clipboard:CopySource|undefined
 export function copyWorkspaceItem(source:CopySource):void {clipboard=source}
 export function copiedWorkspaceItem():CopySource|undefined {return clipboard}

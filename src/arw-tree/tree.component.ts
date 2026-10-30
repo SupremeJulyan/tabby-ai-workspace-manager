@@ -4,6 +4,8 @@ import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-r
 import { logOperation } from '../services/operation-log'
 import { setTerminalCommandMode } from '../shared/terminal-command'
 import { openFilePane } from './open-file-pane'
+import { FileSelection } from './file-selection'
+import { topLevelItems, moveWorkspaceItem, deleteWorkspaceItem, renamedPath } from './workspace-file-actions'
 import { copyWorkspaceItem, copiedWorkspaceItem, pasteWorkspaceItem, canPasteWorkspaceItem } from './workspace-copy'
 import { t } from '../shared/i18n'
 import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy } from '@angular/core'
@@ -94,6 +96,108 @@ interface TreeNode extends WorkspaceFile { depth: number; expanded?: boolean; lo
     styles: [TREE_STYLES],
 })
 export class ArwTreeComponent implements AfterViewInit, OnDestroy {
+    readonly fileSelection=new FileSelection()
+    fileActionBusy=false
+    renamingPath:string|null=null
+    renameValue=''
+    private draggedItems?:{workspace:Workspace;paths:string[]}
+    private fileScrollPositions=new WeakMap<object,Map<string,number>>()
+    private fileScrollRestoring=false
+    private fileScrollKey():string|undefined {
+        const workspace=this.browserWorkspace??this.selection?.workspace
+        return workspace?JSON.stringify([this.workspaceTreeKey(workspace),this.relativePath||'.']):undefined
+    }
+    rememberFileScroll(event:Event):void {
+        if(this.fileScrollRestoring||this.loading)return
+        const key=this.fileScrollKey()
+        if(!this.activeTab||!key)return
+        let positions=this.fileScrollPositions.get(this.activeTab)
+        if(!positions){positions=new Map();this.fileScrollPositions.set(this.activeTab,positions)}
+        positions.set(key,(event.target as HTMLElement).scrollTop)
+    }
+    private restoreFileScroll():void {
+        if(!this.viewReady||typeof document==='undefined')return
+        const key=this.fileScrollKey(),tab=this.activeTab,version=this.version
+        const top=tab&&key?this.fileScrollPositions.get(tab)?.get(key)??0:0
+        setTimeout(()=>{
+            if(tab!==this.activeTab||version!==this.version||key!==this.fileScrollKey()||this.mode!=='files')return
+            const tree=document.querySelector<HTMLElement>('.arw-tree-host .file-tree')
+            if(tree)tree.scrollTop=top
+            this.fileScrollRestoring=false
+        },0)
+    }
+    private selectedItems(node?:TreeNode):TreeNode[] {
+        if(node&&!this.fileSelection.paths.has(node.path))this.fileSelection.select(node.path,this.visibleNodes.map(item=>item.path))
+        return this.visibleNodes.filter(item=>this.fileSelection.paths.has(item.path))
+    }
+    private copySelected(node?:TreeNode):void {
+        const workspace=this.browserWorkspace??this.selection?.workspace,items=this.selectedItems(node)
+        if(!workspace||!items.length||this.fileActionBusy)return
+        const paths=topLevelItems(workspace,items.map(item=>item.path))
+        copyWorkspaceItem({workspace,path:paths[0],paths,hostKey:this.copyHostKey(workspace),remote:this.selection?.remote??undefined})
+        this.notifications.info(t`已复制 ${paths.length} 项，请在目标目录粘贴`)
+        this.render()
+    }
+    async deleteSelected(node?:TreeNode):Promise<void> {
+        const workspace=this.browserWorkspace??this.selection?.workspace,items=this.selectedItems(node)
+        if(!workspace||!items.length||this.fileActionBusy)return
+        const paths=topLevelItems(workspace,items.map(item=>item.path)),version=this.version
+        await this.runFileAction(workspace,'delete',paths,undefined,path=>deleteWorkspaceItem(workspace,path),version)
+    }
+    beginRename(node:TreeNode):void {
+        if(this.fileActionBusy)return
+        this.fileSelection.select(node.path,this.visibleNodes.map(item=>item.path))
+        this.renamingPath=node.path;this.renameValue=node.name;this.render()
+        setTimeout(()=>{const input=document.querySelector<HTMLInputElement>('.arw-tree-host .file-rename-input');input?.focus();input?.select()},0)
+    }
+    cancelRename():void {this.renamingPath=null;this.render()}
+    async finishRename(node:TreeNode):Promise<void> {
+        const workspace=this.browserWorkspace??this.selection?.workspace
+        if(!workspace||this.fileActionBusy||this.renamingPath!==node.path)return
+        if(this.renameValue===node.name){this.cancelRename();return}
+        try{
+            const target=renamedPath(workspace,node.path,this.renameValue)
+            await this.runFileAction(workspace,'rename',[node.path],target,()=>moveWorkspaceItem(workspace,node.path,target))
+            this.cancelRename()
+        }catch(error){this.error=String(error);this.render()}
+    }
+    private async runFileAction(workspace:Workspace,action:'copy'|'move'|'delete'|'rename',inputs:string[],destination:string|undefined,operation:(path:string)=>Promise<void>,version=this.version):Promise<void> {
+        if(this.fileActionBusy)return
+        const paths=[...inputs],label=action==='copy'?t('复制'):action==='move'?t('移动'):action==='rename'?t('重命名'):t('删除')
+        this.fileActionBusy=true;this.render()
+        let completed=0,started=false
+        try{
+            const confirmation=await this.platform.showMessageBox({type:'warning',message:t`${label} ${paths.length} 项？`,
+                detail:paths.join('\n')+(destination?`\n${t('目标：')}${workspacePath(workspace.kind).resolve(workspace.root,destination)}`:'')+(action==='delete'?`\n${t('永久删除，不会移入回收站。')}`:''),buttons:[t('取消'),label],defaultId:0,cancelId:0})
+            if(confirmation.response!==1||version!==this.version||this.browserWorkspace!==workspace&&this.selection?.workspace!==workspace)return
+            started=true;this.error=''
+            for(const path of paths){await operation(path);completed++}
+            this.notifications.info(t`${label}完成：${completed} 项`)
+        }catch(error){this.notifications.error(t`${label}失败`,t`已完成 ${completed}/${paths.length} 项：${String(error)}`)}
+        finally{
+            this.fileActionBusy=false
+            if(started&&version===this.version){this.fileSelection.clear();await this.refreshFiles({preserveError:true})}
+            this.render()
+        }
+    }
+    startFileDrag(node:TreeNode,event:DragEvent):void {
+        const workspace=this.browserWorkspace??this.selection?.workspace
+        if(!workspace||!event.dataTransfer||this.fileActionBusy||this.renamingPath){event.preventDefault();return}
+        const items=this.selectedItems(node)
+        this.draggedItems={workspace,paths:topLevelItems(workspace,items.map(item=>item.path))}
+        event.dataTransfer.setData('application/x-arw-tree-items','move')
+        event.dataTransfer.effectAllowed='move';this.render()
+    }
+    endFileDrag():void {this.draggedItems=undefined;this.dropTarget=null;this.render()}
+    async fileTreeKey(event:KeyboardEvent):Promise<void> {
+        if((event.target as HTMLElement)?.tagName==='INPUT'||this.fileActionBusy)return
+        const modifier=event.ctrlKey||event.metaKey
+        if(modifier&&event.key.toLowerCase()==='c'){event.preventDefault();this.copySelected()}
+        else if(modifier&&event.key.toLowerCase()==='v'){event.preventDefault();const workspace=this.browserWorkspace??this.selection?.workspace;if(workspace)await this.pasteIntoWorkspace(workspace,this.relativePath||'.')}
+        else if(event.key==='Delete'){event.preventDefault();await this.deleteSelected()}
+        else if(event.key==='F2'){event.preventDefault();const items=this.selectedItems();if(items.length===1)this.beginRename(items[0])}
+        else if(event.key==='Escape'){this.fileSelection.clear();this.cancelRename()}
+    }
     uploadBusy = false
     uploadPath = ''
     dropTarget: string|null = null
@@ -103,6 +207,13 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             && (this.browserWorkspace ?? this.selection?.workspace)?.kind === 'remote'
     }
     dragLocalFiles (event: DragEvent, node?: TreeNode): void {
+        if(event.dataTransfer?.types.includes('application/x-arw-tree-items')){
+            event.preventDefault();event.stopPropagation()
+            const allowed=!!this.draggedItems&&!this.fileActionBusy&&(!node||node.directory&&!node.symlink)
+            event.dataTransfer.dropEffect=allowed?'move':'none'
+            this.dropTarget=allowed?(node?.path??'.'):null
+            return
+        }
         if (!event.dataTransfer?.types.includes('Files')) return
         event.preventDefault(); event.stopPropagation()
         event.dataTransfer.dropEffect = this.canUpload ? 'copy' : 'none'
@@ -115,6 +226,14 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     cancelUpload (): void { this.uploadController?.abort() }
     async dropLocalFiles (event: DragEvent, node?: TreeNode): Promise<void> {
         event.preventDefault(); event.stopPropagation(); this.dropTarget = null
+        if(event.dataTransfer?.types.includes('application/x-arw-tree-items')){
+            const drag=this.draggedItems,workspace=this.browserWorkspace??this.selection?.workspace
+            this.draggedItems=undefined
+            if(!drag||drag.workspace!==workspace||!workspace||node&&(!node.directory||node.symlink))return
+            const paths=workspacePath(workspace.kind),directory=node?.path??(this.relativePath||'.')
+            await this.runFileAction(workspace,'move',drag.paths,directory,path=>moveWorkspaceItem(workspace,path,paths.resolve(workspace.root,directory,paths.basename(path))))
+            return
+        }
         if (!this.canUpload || !event.dataTransfer) return
         const workspace = this.browserWorkspace ?? this.selection?.workspace, remote = this.selection?.remote
         if (!workspace || !remote) return
@@ -397,9 +516,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(tab!==this.activeTab||version!==this.version)return
             const set=(selector:string,value:number)=>{const element=document.querySelector<HTMLElement>(`.arw-tree-host ${selector}`);if(element)element.scrollTop=value}
             set('.saved-workspaces',scroll.savedWorkspaces);set('.browser-area',scroll.browser);set('.workspace-footer',scroll.footer)
+            this.restoreFileScroll()
         })
     }
     private restoreTabState(key:object,selection:WorkspaceSelection):void{
+        this.fileSelection.clear();this.renamingPath=null;this.draggedItems=undefined
         this.treeAbort?.abort()
         const state=this.tabStates.get(key)
         if(!state){
@@ -523,6 +644,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(this.selection?.workspace)this.rememberBrowsing()
         if(enteringGit)this.autoFetch=this.fetchOnGitEntry(this.autoFetchRequest)
         this.render()
+        if(mode==='files')this.restoreFileScroll()
     }
     private async fetchOnGitEntry(request:number):Promise<void>{
         const tab=this.activeTab,workspace=this.selection?.workspace
@@ -923,6 +1045,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }
     }
     private async showWorkspace (workspace?: Workspace,background=false): Promise<void> {
+        this.fileScrollRestoring=true
+        this.fileSelection.clear();this.renamingPath=null;this.draggedItems=undefined
         this.treeAbort?.abort()
         this.rememberWorkspaceFilter()
         this.rememberWorkspaceTree()
@@ -940,7 +1064,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.ensureGitScan()
         if(saved){
             this.nodes=saved.nodes.map(node=>({...node,loading:false}));this.relativePath=saved.relativePath;this.loading=false
-            this.loadProjects(this.selection?.workspace);this.rememberBrowsing();this.render()
+            this.loadProjects(this.selection?.workspace);this.rememberBrowsing();this.render();this.restoreFileScroll()
             // Cached panes can be activated immediately; revalidate the tree in the background.
             void this.refreshFiles({background:true})
             return
@@ -953,7 +1077,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.loadProjects(this.selection?.workspace);this.rememberBrowsing()
             if (files.length>2000) this.error = t('此目录超过 2000 项，仅显示前 2000 项')
         } catch (error) { logOperation('打开工作区目录',{root:workspace.root,background,error:String(error)});if (!background&&version===this.version) this.error = String(error) }
-        finally { if (version===this.version) this.loading = false; this.render() }
+        finally { if (version===this.version) this.loading = false; this.render();this.restoreFileScroll() }
     }
     private copyHostKey(workspace:Workspace):string {
         const remote=this.selection?.remote
@@ -962,11 +1086,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private async pasteIntoWorkspace(workspace:Workspace,directory:string):Promise<void> {
         const source=copiedWorkspaceItem()
         if(!source)return
-        try {
-            await pasteWorkspaceItem(source,workspace,directory,this.copyHostKey(workspace),this.selection?.remote)
-            if(this.browserWorkspace===workspace)await this.refreshFiles()
-            this.notifications.info(t('粘贴完成'))
-        }catch(error){this.error=t('粘贴失败：')+String(error);this.render()}
+        const hostKey=this.copyHostKey(workspace),remote=this.selection?.remote
+        await this.runFileAction(workspace,'copy',source.paths??[source.path],directory,path=>pasteWorkspaceItem({...source,path},workspace,directory,hostKey,remote))
     }
     showBackgroundContextMenu(event:MouseEvent):void {
         event.preventDefault();event.stopPropagation()
@@ -978,6 +1099,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private downloadingNodes=new WeakSet<TreeNode>()
     showNodeContextMenu (node:TreeNode, event:MouseEvent):void {
         event.preventDefault();event.stopPropagation()
+        const selected=this.selectedItems(node)
+        this.render()
         const workspace=this.browserWorkspace??this.selection?.workspace,remote=this.selection?.remote
         const items:Array<{label:string;enabled?:boolean;click:()=>void|Promise<void>}>=[{
             label:t('复制路径'),
@@ -985,9 +1108,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }]
         if(workspace){
             items.unshift({label:t('复制'),enabled:!node.symlink&&!node.loading,click:()=>{
-                copyWorkspaceItem({workspace,path:workspacePath(workspace.kind).resolve(workspace.root,node.path),hostKey:this.copyHostKey(workspace),remote:this.selection?.remote??undefined})
-                this.notifications.info(t('已复制'))
+                this.copySelected(node)
             }})
+            items.push({label:t('删除'),enabled:!this.fileActionBusy,click:()=>this.deleteSelected(node)})
+            items.push({label:t('重命名'),enabled:selected.length===1&&!this.fileActionBusy,click:()=>this.beginRename(node)})
             if(node.directory){
                 const source=copiedWorkspaceItem()
                 if(source&&!node.symlink&&!node.loading&&canPasteWorkspaceItem(source,workspace,this.copyHostKey(workspace)))
@@ -1018,6 +1142,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.platform.popupContextMenu(items,event)
     }
     async clickNode (node:TreeNode,event:MouseEvent):Promise<void> {
+        if(this.renamingPath===node.path)return
+        this.fileSelection.select(node.path,this.visibleNodes.map(item=>item.path),event.ctrlKey||event.metaKey,event.shiftKey)
+        this.render()
+        if(event.ctrlKey||event.metaKey||event.shiftKey)return
         if(node.symlink){this.error=t('符号链接不支持在文件浏览器中打开：')+node.path;this.render();return}
         if(node.directory){if(event.detail<2)await this.toggle(node)}
         else await this.open(node)
@@ -1039,6 +1167,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         await this.enter(node)
     }
     private async enter (node: TreeNode): Promise<void> {
+        this.fileScrollRestoring=true
+        this.fileSelection.clear();this.renamingPath=null
         this.treeAbort?.abort()
         const workspace = this.browserWorkspace ?? this.selection?.workspace
         if (!workspace || !node.directory) return
@@ -1056,7 +1186,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.error = ''
             if(children.length>2000)this.error=t('此目录超过 2000 项，仅显示前 2000 项')
         } catch(error){ if(version===this.version)this.error=String(error) }
-        finally{node.loading=false;if(version===this.version)this.loading=false;this.render()}
+        finally{node.loading=false;if(version===this.version)this.loading=false;this.render();this.restoreFileScroll()}
     }
     async toggle (node: TreeNode): Promise<void> {
         const workspace = this.browserWorkspace ?? this.selection?.workspace
@@ -1086,6 +1216,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         return this.relativePath?workspacePath(workspace?.kind??'local').join(root,this.relativePath):root
     }
     async up (): Promise<void> {
+        this.fileScrollRestoring=true
+        this.fileSelection.clear();this.renamingPath=null
         const workspace = this.browserWorkspace ?? this.selection?.workspace
         if (!workspace || !this.relativePath) return
         this.treeAbort?.abort()
@@ -1104,7 +1236,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.ensureGitScan()
             if (files.length > 2000) this.error = t('此目录超过 2000 项，仅显示前 2000 项')
         } catch (error) { if (version === this.version) this.error = String(error) }
-        finally { if (version === this.version) this.loading = false; this.render() }
+        finally { if (version === this.version) this.loading = false; this.render();this.restoreFileScroll() }
     }
     private repositoryKey(root:string):string{return `${this.selection?.workspace?.kind}:${this.selection?.workspace?.host}:${root}`}
     private resetGitBrowser():void{
@@ -1522,7 +1654,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }
         if(active())this.render()
     }
-    ngAfterViewInit():void{this.viewReady=true;this.watchWorkspace()}
+    ngAfterViewInit():void{this.viewReady=true;this.restoreFileScroll();this.watchWorkspace()}
     private disposeWorkspaceWatch():void{clearTimeout(this.workspaceChangeTimer);this.watchController?.abort();this.snapshotController?.abort();this.snapshotController=undefined;this.watchController=undefined;this.watchedWorkspace=undefined;this.snapshotInputs=[]}
     ngOnDestroy():void{this.treeAbort?.abort();this.disposeWorkspaceWatch();this.cancelUpload();this.gitSetupController?.abort();this.viewReady=false;this.unsubscribeActivity();this.gitAbort?.abort();this.clearCwdSetup();this.subscription.unsubscribe();this.stopForwarding()}
 }
