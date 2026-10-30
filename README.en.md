@@ -6,7 +6,7 @@ Manage local and remote workspaces in Tabby's sidebar: browse and edit files, tr
 
 Package: `tabby-ai-workspace-manager` · CLI: `arw` · Version: `0.1.1`
 
-[Interface preview](docs/images/demo.png)
+![Interface preview](docs/images/demo.jpg)
 
 ## Installation
 

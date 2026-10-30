@@ -6,7 +6,7 @@
 
 插件：`tabby-ai-workspace-manager` · CLI：`arw` · 版本：`0.1.1`
 
-[界面预览](docs/images/demo.png)
+![界面预览](docs/images/demo.jpg)
 
 ## 安装
 
