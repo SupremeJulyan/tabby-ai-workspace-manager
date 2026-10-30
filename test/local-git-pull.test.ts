@@ -15,7 +15,7 @@ import { execGitFixture as exec } from './git-fixture-exec';
 
 async function fixture(t: any) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'arw-pull-test-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const upstream = path.join(root, 'upstream.git');
   const seed = path.join(root, 'seed');
   const source = path.join(root, 'remote');
@@ -278,7 +278,7 @@ test('relay fetch tolerates a rewritten upstream', async t => {
 
 test('relay pulls into a shallow remote by declaring the same boundary locally', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'arw-shallow-pull-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const upstream = path.join(root, 'upstream.git');
   const seed = path.join(root, 'seed');
   const source = path.join(root, 'remote');
