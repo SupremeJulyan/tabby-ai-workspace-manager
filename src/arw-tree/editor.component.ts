@@ -134,12 +134,13 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         }
     }
     async reloadOpenFile (): Promise<void> {
-        if(this.loading||this.saving||this.readonly||this.dirty||this.saveIssue)return
+        if(this.loading||this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue)return
         const original=this.original
         try {
             const file=await this.workspace.read(this.filePath)
-            if(this.saving||this.readonly||this.dirty||this.saveIssue||this.original!==original)return
+            if(this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue||this.original!==original)return
             this.content=file.content;this.original=file.content;this.hash=file.hash
+            this.error='';this.readonly=false
             if(this.markdownPreview){this.markdownPreview=false;await this.toggleMarkdown()}
         } catch(error) {this.error=String(error)}
     }

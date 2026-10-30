@@ -1,5 +1,18 @@
 /** English translations keyed by the original Chinese UI text. */
 export const englishMessages: Record<string,string> = {
+    "刷新文件列表和已打开的文件": "Refresh the file list and open files",
+    "重命名": "Rename",
+    "删除": "Delete",
+    "移动": "Move",
+    "确定": "OK",
+    "目标：": "Destination: ",
+    "永久删除，不会移入回收站。": "Permanently delete; items will not go to the trash.",
+    " 项，请在目标目录粘贴": " items; paste in the destination directory",
+    " 项？": " items?",
+    "完成：": " completed: ",
+    " 项": " items",
+    "已完成 ": "Completed ",
+    " 项：": " items: ",
     "工作区宽度（%）": "Workspace width (%)",
     "AI 窗格宽度（%）": "AI pane width (%)",
     "文件区高度（%）": "File area height (%)",

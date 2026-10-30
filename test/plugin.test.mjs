@@ -2022,6 +2022,88 @@ test('remote sidebar right-click downloads files and folders through native Tabb
     }finally{tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
 })
 
+test('explorer multiselect confirms batch copy, move, rename and permanent delete',async()=>{
+    const plugin=load(),fs=await import('node:fs/promises'),{join}=await import('node:path'),{tmpdir}=await import('node:os'),{BehaviorSubject}=await import('rxjs')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const root=await fs.mkdtemp(join(tmpdir(),'arw-explorer-actions-'))
+    let menu,response=0
+    const dialogs=[],notices=[],workspace=localWorkspace(root),terminal={}
+    const current=new BehaviorSubject({terminal,workspace,hint:''})
+    const platform={popupContextMenu(items){menu=items},async showMessageBox(options){dialogs.push(options);return {response}}}
+    const tree=new plugin.TreeComponent({current},{},{info(...args){notices.push(args)},error(...args){notices.push(args)}},{},{},{},platform)
+    const event={preventDefault(){},stopPropagation(){}}
+    try{
+        await fs.mkdir(join(root,'target'));await fs.mkdir(join(root,'move-target'))
+        await fs.writeFile(join(root,'a.txt'),'a');await fs.writeFile(join(root,'b.txt'),'b')
+        await tree.refresh()
+        const node=name=>tree.nodes.find(item=>item.name===name)
+        await tree.clickNode(node('a.txt'),{ctrlKey:true})
+        await tree.clickNode(node('b.txt'),{ctrlKey:true})
+        assert.deepEqual([...tree.fileSelection.paths],['a.txt','b.txt'])
+        tree.showNodeContextMenu(node('a.txt'),event)
+        menu.find(item=>item.label==='复制').click()
+        tree.showNodeContextMenu(node('target'),event)
+        await menu.find(item=>item.label==='粘贴').click()
+        await assert.rejects(fs.readFile(join(root,'target/a.txt')),/ENOENT/)
+        assert.match(dialogs.at(-1).detail,/a.txt[\s\S]*b.txt[\s\S]*target/)
+        response=1;await menu.find(item=>item.label==='粘贴').click()
+        assert.equal(await fs.readFile(join(root,'target/b.txt'),'utf8'),'b')
+        await tree.clickNode(node('a.txt'),{ctrlKey:true});await tree.clickNode(node('b.txt'),{ctrlKey:true})
+        const transfer={types:['application/x-arw-tree-items'],setData(){}}
+        tree.startFileDrag(node('a.txt'),{dataTransfer:transfer,preventDefault(){}})
+        await tree.dropLocalFiles({...event,dataTransfer:transfer},node('move-target'))
+        assert.equal(await fs.readFile(join(root,'move-target/a.txt'),'utf8'),'a')
+        await assert.rejects(fs.readFile(join(root,'a.txt')),/ENOENT/)
+        tree.renamingPath='move-target';tree.renameValue='renamed'
+        await tree.finishRename(node('move-target'))
+        assert.equal(await fs.readFile(join(root,'renamed/b.txt'),'utf8'),'b')
+        tree.fileSelection.clear();await tree.clickNode(node('renamed'),{ctrlKey:true})
+        response=0;await tree.deleteSelected()
+        assert.equal(await fs.readFile(join(root,'renamed/a.txt'),'utf8'),'a')
+        assert.match(dialogs.at(-1).detail,/永久删除/)
+        response=1;await tree.deleteSelected()
+        await assert.rejects(fs.stat(join(root,'renamed')),/ENOENT/)
+        assert.equal(await fs.readFile(join(root,'target/a.txt'),'utf8'),'a')
+        assert.ok(notices.some(args=>args.join(' ').includes('2 项')))
+        await fs.writeFile(join(root,'b.txt'),'do not overwrite')
+        // Use the bundled clipboard through the menu, then copy both children to the root.
+        await tree.open(node('target'))
+        await tree.clickNode(node('a.txt'),{ctrlKey:true});await tree.clickNode(node('b.txt'),{ctrlKey:true})
+        tree.showNodeContextMenu(node('a.txt'),event);menu.find(item=>item.label==='复制').click()
+        await tree.up()
+        await tree.fileTreeKey({key:'v',ctrlKey:true,...event})
+        assert.equal(await fs.readFile(join(root,'a.txt'),'utf8'),'a')
+        assert.equal(await fs.readFile(join(root,'b.txt'),'utf8'),'do not overwrite')
+        assert.ok(notices.some(args=>args.join(' ').includes('1/2')),'partial failures report the completed item count')
+    }finally{tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true,maxRetries:5})}
+})
+
+test('explorer scroll is restored independently for each workspace and directory',async()=>{
+    const elements={tree:{scrollTop:0}},document={querySelector(selector){return selector.endsWith('.file-tree')?elements.tree:null}}
+    const plugin=load(undefined,{document}),Tree=plugin.TreeComponent
+    const {BehaviorSubject}=await import('rxjs')
+    const first={id:'one',kind:'local',host:'localhost',root:'/one',async list(){return []}},second={...first,id:'two',root:'/two'}
+    const current=new BehaviorSubject({terminal:{},workspace:first,hint:''})
+    const tree=new Tree({current},{},{info(){},error(){}},{},{},{},{})
+    try{
+        await tree.refresh();tree.activeTab={};tree.viewReady=true
+        tree.fileScrollRestoring=false;tree.rememberFileScroll({target:{scrollTop:320}})
+        await tree.showWorkspace(second)
+        await new Promise(resolve=>setTimeout(resolve,10))
+        assert.equal(elements.tree.scrollTop,0)
+        tree.rememberFileScroll({target:{scrollTop:680}})
+        await tree.showWorkspace(first)
+        await new Promise(resolve=>setTimeout(resolve,10))
+        assert.equal(elements.tree.scrollTop,320)
+        await tree.showWorkspace(second)
+        await new Promise(resolve=>setTimeout(resolve,10))
+        assert.equal(elements.tree.scrollTop,680)
+        tree.relativePath='nested';tree.restoreFileScroll()
+        await new Promise(resolve=>setTimeout(resolve,10))
+        assert.equal(elements.tree.scrollTop,0)
+    }finally{tree.ngOnDestroy()}
+})
+
 test('late pwd responses and cwd detection cannot overwrite an explicitly browsed directory',async()=>{
     const {BehaviorSubject}=await import('rxjs'),plugin=load()
     let resolvePwd
@@ -2542,7 +2624,8 @@ test('directory row and chevron toggle nested children, render collapse, and ign
     const folder={name:'src',path:'/project/src',directory:true,depth:0},sibling={name:'docs',path:'/project/docs',directory:true,depth:0}
     let renders=0,saved=0,reads=0,opened=0
     const workspace={async list(path){reads++;return path.endsWith('/nested')?[{name:'file.ts',path:path+'/file.ts',directory:false}]:[{name:'nested',path:path+'/nested',directory:true}]}}
-    const tree=Object.assign(Object.create(Tree.prototype),{browserWorkspace:workspace,nodes:[folder,sibling],version:0,selection:null,
+    const {FileSelection}=require('../.build/arw-tree/file-selection.js')
+    const tree=Object.assign(Object.create(Tree.prototype),{filterText:'',fileSelection:new FileSelection(),browserWorkspace:workspace,nodes:[folder,sibling],version:0,selection:null,
         render(){renders++},rememberBrowsing(){saved++},error:''})
     await tree.clickNode(folder,{detail:1})
     assert.equal(folder.expanded,true);assert.equal(tree.nodes.length,3)
@@ -2557,7 +2640,7 @@ test('directory row and chevron toggle nested children, render collapse, and ign
     await tree.clickNode(folder,{detail:2});assert.equal(folder.expanded,true);assert.equal(reads,beforeReads)
     await tree.clickNode(folder,{detail:1});assert.equal(folder.expanded,false)
     tree.open=async()=>{opened++}
-    await tree.clickNode({name:'a.ts',directory:false},{detail:1});assert.equal(opened,1)
+    await tree.clickNode({name:'a.ts',path:'/project/a.ts',directory:false},{detail:1});assert.equal(opened,1)
     await tree.toggle({...folder});assert.equal(tree.nodes.length,2,'stale nodes are ignored')
     assert.ok(saved>=4)
     const template=Tree.component.template

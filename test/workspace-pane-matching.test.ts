@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { paneMatchesWorkspace } from '../src/shared/pane-kind'
 import { activateWorkspacePanes } from '../src/shared/activate-workspace-panes'
+import { selectStackedPane, selectedStackedPane, stackedHiddenPanes } from '../src/shared/pane-layout'
 
 test('nested saved workspaces and sibling paths stay distinct',()=>{
     const workspace={kind:'local' as const,root:'/projects/app'}
@@ -59,4 +60,35 @@ test('switching to an empty workspace hides old panes and switching back keeps t
     assert.ok(area(split.root,ai)>0)
     assert.equal(workspaceHiddenPanes.has(file),false)
     assert.deepEqual(new Set(split.getAllTabs()),new Set([terminal,file,ai]))
+})
+
+test('workspace activation restores the displayed file and AI rather than the first opened pane',()=>{
+    class Container {
+        orientation='h';children:any[]=[];ratios:number[]=[]
+        getAllTabs():any[]{return this.children.flatMap(child=>child instanceof Container?child.getAllTabs():[child])}
+    }
+    const workspace={kind:'local' as const,root:'/one'}
+    const files=Array.from({length:3},()=>({arwFilePane:true,workspace,arwPaneLayout:'stacked'}))
+    const ai=Array.from({length:3},()=>({profile:{options:{env:{ARW_WORKSPACE_ROOT:'/one',ARW_WORKSPACE_KIND:'local',ARW_PANE_LAYOUT:'stacked'}}}}))
+    const terminal={}
+    let focused:any=terminal
+    const split:any={root:new Container(),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>focused,focus(tab:any){focused=tab},maximize(){},layout(){}}
+    split.root.children=[terminal,...files,...ai];split.root.ratios=split.root.children.map(()=>1/7)
+    const app:any={tabs:[split],activeTab:split,selectTab(){},emitTabsChanged(){}}
+    const area=(node:any,target:any,weight=1):number=>node instanceof Container?node.children.reduce((sum,child,i)=>sum+area(child,target,weight*node.ratios[i]),0):node===target?weight:0
+    for(const index of [1,0,2]){
+        activateWorkspacePanes(app,workspace)
+        selectStackedPane(split,'file',files[index],files)
+        selectStackedPane(split,'ai',ai[index],ai)
+        activateWorkspacePanes(app,{...workspace,root:'/empty'})
+        activateWorkspacePanes(app,workspace)
+        assert.equal(selectedStackedPane(split,'file',files),files[index])
+        assert.equal(selectedStackedPane(split,'ai',ai),ai[index])
+        assert.equal(focused,files[index])
+        for(let i=0;i<3;i++){
+            assert.equal(area(split.root,files[i])>0,i===index)
+            assert.equal(area(split.root,ai[i])>0,i===index)
+            assert.equal(stackedHiddenPanes.has(files[i]),i!==index)
+        }
+    }
 })

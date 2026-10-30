@@ -1,7 +1,7 @@
 import { selectPaneWorkspace, updateWorkspaceVisibility, workspaceHiddenPanes } from './workspace-pane-visibility'
 import type { AppService, BaseTabComponent, SplitTabComponent } from 'tabby-core'
 import { isAiPane, isFilePane, paneMatchesWorkspace, type WorkspacePaneIdentity } from './pane-kind'
-import { selectStackedPane } from './pane-layout'
+import { selectedStackedPane, selectStackedPane, stackedHiddenPanes } from './pane-layout'
 import { collapsedAiPanes, orderedAiPanes, orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
 import { tileWorkspacePanes } from '../arw-ai-cli/tiling'
 
@@ -20,13 +20,13 @@ export function activateWorkspacePanes(app:AppService,workspace:WorkspacePaneIde
             for(const kind of ['file','ai'] as const){
                 const predicate=kind==='file'?isFilePane:isAiPane
                 const group=kind==='file'?orderedFilePanes(split,panes.filter(pane=>predicate(pane)&&!workspaceHiddenPanes.has(pane))):orderedAiPanes(split,panes.filter(pane=>predicate(pane)&&!workspaceHiddenPanes.has(pane)))
-                const selected=matching.find(predicate)
+                const selected=selectedStackedPane(split,kind,group)
                 if(selected)selectStackedPane(split,kind,selected,group)
             }
             tileWorkspacePanes(app,split,true)
         }
     }
-    const selected=matches.find(entry=>entry.top===app.activeTab)??matches[0]
+    const selected=matches.find(entry=>entry.top===app.activeTab&&!stackedHiddenPanes.has(entry.pane))??matches.find(entry=>!stackedHiddenPanes.has(entry.pane))
     if(!selected)return false
     app.selectTab(selected.top)
     const split=selected.top as SplitTabComponent

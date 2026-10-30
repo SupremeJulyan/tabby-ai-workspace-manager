@@ -7,10 +7,10 @@ const orders = new WeakMap<object, Partial<Record<PaneOrderGroup, object[]>>>()
 /** Keep each group's adjacency stable when hidden panes move to zero-sized layout slots. */
 export function orderedPanes<T extends object> (split: object, group: PaneOrderGroup, panes: T[]): T[] {
     const groups=orders.get(split)??{},previous=groups[group]??[]
-    const order=[...previous.filter(pane=>panes.includes(pane as T)),...panes.filter(pane=>!previous.includes(pane))]
+    const order=[...previous,...panes.filter(pane=>!previous.includes(pane))]
     groups[group]=order
     orders.set(split,groups)
-    return order as T[]
+    return order.filter(pane=>panes.includes(pane as T)) as T[]
 }
 
 export function orderedAiPanes<T extends object> (split: object, panes: T[]): T[] {
