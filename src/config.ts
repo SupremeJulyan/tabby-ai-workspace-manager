@@ -7,7 +7,7 @@ import { CODEX_FULL_ACCESS_ARGUMENTS } from './arw-ai-cli/defaults'
 export class ArwConfigProvider extends ConfigProvider {
     defaults = {
         omw: {
-            fileLayout: 'tiled',
+            fileLayout: 'stacked',
             aiLayout: 'tiled',
             paneProportions: {...DEFAULT_PANE_PROPORTIONS},
             agent: { command: 'codex', args: [...CODEX_FULL_ACCESS_ARGUMENTS] as string[], resumeArgs: null as string[]|null, proxyUrl: '', shell: null },

@@ -21,7 +21,7 @@ import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imag
 export class ArwEditorComponent extends BaseTabComponent implements AfterViewInit {
     readonly arwFilePane=true
     get arwWorkspaceIdentity(){return this.workspace&&fileWorkspaceToken(this.workspace)}
-    arwPaneLayout:PaneLayout='tiled'
+    arwPaneLayout:PaneLayout='stacked'
     workspace!: Workspace
     filePath = ''
     content = ''

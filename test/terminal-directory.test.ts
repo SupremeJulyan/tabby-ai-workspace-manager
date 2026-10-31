@@ -64,3 +64,19 @@ test('directory switch distinguishes disconnected sessions from full-screen appl
     await assert.rejects(changeTerminalDirectory(tab,'/project'),/full-screen|全屏程序/)
     assert.deepEqual(sent,[])
 })
+
+test('Windows workspace paths are converted back inside Git Bash, MSYS2 and WSL',async()=>{
+    for(const [command,converter] of [['C:\\Program Files\\Git\\bin\\bash.exe','cygpath'],['D:\\msys64\\usr\\bin\\bash.exe','cygpath'],['wsl.exe','wslpath']]){
+        let filter:DirectoryEchoFilter|undefined,sent=''
+        const tab:any={profile:{type:'local',options:{command}},alternateScreenActive:false,sessionChanged$:new Subject(),
+            session:{open:true,closed$:new Subject(),middleware:{push:(value:DirectoryEchoFilter)=>{filter=value},remove:()=>{filter=undefined}}},
+            sendInput:(text:string)=>{
+                sent=text
+                const nonce=/ARW_CD_([a-f0-9]+)/.exec(text)![1]
+                filter!.feedFromSession(Buffer.from(`\x1eARW_CD_${nonce}\x1f`))
+            },
+        }
+        await changeTerminalDirectory(tab,'D:\\projects\\my project')
+        assert.ok(sent.includes(`cd -- "$(${converter} -u 'D:\\projects\\my project')"`),sent)
+    }
+})

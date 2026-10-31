@@ -1,3 +1,5 @@
+import { isMsysTerminal } from '../shared/msys-directory'
+import { isWslTerminal, terminalWorkspaceDirectory } from '../shared/wsl-directory'
 import { changeTerminalDirectory } from '../shared/terminal-directory'
 import { limitConcurrency } from '../shared/concurrency'
 import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-recovery'
@@ -787,7 +789,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const terminal=this.source,version=this.version,key=this.browsingKey(this.selection)
         if(!terminal)return
         try{
-            const root=await terminal.session?.getWorkingDirectory()
+            const root=await terminalWorkspaceDirectory(terminal)
             if(this.source!==terminal||version!==this.version||this.browsingKey(this.selection)!==key)return
             if(!root){
                 if(this.canEnableCwd)await this.enableCwd()
@@ -1530,7 +1532,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(this.selection?.workspace)return this.isRemote?t('SSH 远程工作区'):t('本地工作区')
         return this.selection?.remote?.open?t('SSH 已连接 · 等待路径'):this.selection?t('正在检测目录'):t('等待终端')
     }
-    get canEnableCwd():boolean{return Boolean(!this.selection?.sourceTerminal&&this.source&&isSshTab(this.source)&&this.source.sshSession?.open&&this.source.session?.open)}
+    get canEnableCwd():boolean{return Boolean(!this.selection?.sourceTerminal&&this.source&&((isSshTab(this.source)&&this.source.sshSession?.open)||isWslTerminal(this.source)||isMsysTerminal(this.source))&&this.source.session?.open)}
     async enableCwd():Promise<void>{
         if(!this.canEnableCwd||this.cwdSetupPending)return
         const terminal=this.source!

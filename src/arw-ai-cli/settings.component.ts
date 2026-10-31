@@ -88,7 +88,7 @@ export class ArwSettingsComponent {
         this.proportions=paneProportions(config.store.omw?.paneProportions)
         const agent = config.store.omw?.agent
         this.shellId=typeof agent?.shell?.id==='string'?agent.shell.id:''
-        this.fileLayout=paneLayout(config.store.omw?.fileLayout)
+        this.fileLayout=paneLayout(config.store.omw?.fileLayout??'stacked')
         this.aiLayout=paneLayout(config.store.omw?.aiLayout)
         this.command = agent?.command ?? 'codex'
         this.argumentsText = (agent?.args ?? defaultAgentArguments(this.command)).join('\n')
