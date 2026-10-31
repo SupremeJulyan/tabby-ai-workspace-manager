@@ -1,6 +1,6 @@
 {
   "name": "tabby-ai-workspace-manager",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local and remote workspace management for Tabby with AI terminals, file editing and transfers, rich previews, and Git integration.",
   "keywords": [
     "tabby-plugin",
