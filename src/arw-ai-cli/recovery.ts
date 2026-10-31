@@ -1,3 +1,4 @@
+import { wslBridgeEnvironment } from './wsl-bridge'
 import { t } from '../shared/i18n'
 import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
@@ -109,13 +110,15 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
                     shellArguments=parsedShellArgs
                 } catch {throw new Error(t('恢复 Shell 参数无效'))}
             }
-            const envForShell=shellEnvironment({command:shellCommandValue,args:shellArguments,env:recoveredEnv,shellType:configuredShellType},recoveredEnv)
+            const envForShell=wslBridgeEnvironment(shellCommandValue,shellEnvironment({command:shellCommandValue,args:shellArguments,env:recoveredEnv,shellType:configuredShellType},recoveredEnv),cliSource,cwd)
+            Object.assign(recoveredEnv,envForShell)
             const launch=shellCommand({command:shellCommandValue,args:shellArguments,env:envForShell,shellType:configuredShellType},[agentCommand].concat(args))
             launchOptions={command:launch.command,args:launch.args,shellType:launch.shellType}
         } else {
             const shell=agentShellFromOptions(options)
             if(!shell)throw new Error(t('未找到原 AI 终端使用的 Shell'))
-            const envForShell=shellEnvironment(shell,recoveredEnv)
+            const envForShell=wslBridgeEnvironment(shell.command,shellEnvironment(shell,recoveredEnv),cliSource,cwd)
+            Object.assign(recoveredEnv,envForShell)
             const launch=replaceShellArguments({...shell,args:shell.args??[],env:envForShell,shellType:shell.shellType??null},[agentCommand].concat(args))
             launchOptions={command:launch.command,args:launch.args,shellType:launch.shellType}
         }

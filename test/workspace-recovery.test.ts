@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { prepareWorkspaceRecovery, rememberWorkspace, workspaceRecoveryState } from '../src/shared/workspace-recovery'
+import { prepareWorkspaceRecovery, rememberWorkspace, workspaceRecoveryState, restoredWorkspaceProfile } from '../src/shared/workspace-recovery'
 
 test('SSH recovery preserves each tab workspace and cwd without changing the saved profile',async()=>{
     const profile={type:'ssh',options:{host:'server',scripts:[{expect:'',send:'export TEST=1'}]}}
@@ -59,4 +59,30 @@ test('legacy host ConfigProxy does not hide saved workspace metadata on restore'
     assert.equal(workspaceRecoveryState(tab)?.root,saved.root)
     assert.equal((tab.profile.options as any).arwWorkspace.root,saved.root)
     assert.equal((tab.profile.options as any).scripts[0].send," cd -- '/home/user/project'")
+})
+
+test('local WSL UNC workspace paths survive recovery without becoming Windows drive paths',async()=>{
+    const root='\\\\wsl.localhost\\Ubuntu-24.04\\home\\julyan'
+    const profile={type:'local',options:{command:'wsl.exe',arwWorkspace:{root,mode:'files',cwd:root}}}
+    const tab={profile,session:{getWorkingDirectory:async()=>root},getRecoveryToken:async()=>({profile:tab.profile})}
+    prepareWorkspaceRecovery(tab)
+    assert.equal((tab.profile.options as any).cwd,root)
+    rememberWorkspace(tab,root+'\\project','files')
+    const token=await tab.getRecoveryToken()
+    assert.equal((token.profile.options as any).arwWorkspace.root,root+'\\project')
+    assert.equal((token.profile.options as any).cwd,root)
+})
+
+test('WSL recovery explicitly restores the last shell cwd without changing the browsed root or selecting a distro',()=>{
+    const root='\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\project'
+    const cwd='\\\\wsl.localhost\\Ubuntu-24.04\\root'
+    const profile={type:'local',options:{command:'wsl.exe',args:[],homeDirArgs:['--cd','~'],arwWorkspace:{root,cwd,mode:'files'}}}
+    const restored=restoredWorkspaceProfile(profile)
+    assert.equal(restored.options.cwd,cwd)
+    assert.deepEqual(restored.options.args,['--cd','/root'])
+    assert.equal(restored.options.arwWorkspace.root,root)
+    assert.deepEqual(restored.options.homeDirArgs,[])
+    assert.deepEqual(profile.options.homeDirArgs,['--cd','~'])
+    assert.deepEqual(restoredWorkspaceProfile(restored).options.args,['--cd','/root'])
+    assert.deepEqual(profile.options.args,[])
 })

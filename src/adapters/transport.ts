@@ -1,3 +1,4 @@
+import { retainExecEventBuffers } from './exec-event-buffers'
 import { logOperation } from '../services/operation-log'
 import { redactSensitiveText } from '../shared/redact'
 import { t } from '../shared/i18n'
@@ -19,7 +20,9 @@ export class TabbyRelayTransport implements RelayTransport {
         if (!('openSessionChannel' in client)) { throw new Error(t('SSH 尚未认证')) }
         try {
             const channel = await client.activateChannel(await client.openSessionChannel())
-            return await executeChannel(channel, command, this.root, { ...options, signal })
+            const release=retainExecEventBuffers(client,channel)
+            try {return await executeChannel(channel, command, this.root, { ...options, signal })}
+            finally {release()}
         } catch(error){
             const operation=options.operation??'执行 SSH 命令'
             const context={host:this.session.profile.options.host,root:this.root,command:command.slice(0,2000),error:String(error)}

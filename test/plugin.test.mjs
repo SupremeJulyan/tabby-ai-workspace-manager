@@ -222,7 +222,7 @@ test('file recovery acquires one pooled session before terminal activation and r
             const data$=new Subject(),extendedData$=new Subject(),closed$=new Subject()
             return {data$,extendedData$,closed$,async requestExec(command){
                 const marker=command.match(/ARW_EXIT_[a-f0-9]+/)[0]
-                data$.next(Buffer.from(`/project\n/project/notes.py\n\0${marker}:0\0`));closed$.next()
+                data$.next(Buffer.from(`/project\n/project/notes.py\n\0${marker}:0\0`));extendedData$.next([1,Buffer.from(`\0${marker}:stderr\0`)]);closed$.next()
             },async eof(){},async close(){}}
         }},async openSFTP(){return {async stat(){return {size:Buffer.byteLength(content),modified:new Date(1700000000000)}},async open(){
             let sent=false
@@ -597,7 +597,7 @@ test('saved remote workspaces are isolated by SSH identity and AI uses the saved
             const data$=new Subject(),extendedData$=new Subject(),closed$=new Subject()
             return {data$,extendedData$,closed$,async requestExec(command){
                 const marker=/ARW_EXIT_[a-f0-9]+/.exec(command)[0]
-                data$.next(Buffer.from(`/home/alice\n/home/alice\n\0${marker}:0\0`));closed$.next()
+                data$.next(Buffer.from(`/home/alice\n/home/alice\n\0${marker}:0\0`));extendedData$.next([1,Buffer.from(`\0${marker}:stderr\0`)]);closed$.next()
             },async eof(){},async close(){}}
         },async activateChannel(channel){return channel}}
         tree.mode='git';tree.filterText='old-filter';tree.relativePath='old/nested'
@@ -1345,10 +1345,10 @@ test('default SSH browser starts at the resolved login directory instead of file
     terminal.session={getWorkingDirectory:async()=>reported,oscProcessor:{cwdReported$:cwd},destroyed$:new Subject()}
     terminal.sshSession={open:true,profile:{options:{host:'host'}},authUsername:'user',
         ssh:{async openSessionChannel(){return 1},async activateChannel(){
-            const data$=new Subject(),closed$=new Subject()
-            return {data$,closed$,extendedData$:new Subject(),async close(){},async eof(){},async requestExec(script){
+            const data$=new Subject(),closed$=new Subject(),extendedData$=new Subject()
+            return {data$,closed$,extendedData$,async close(){},async eof(){},async requestExec(script){
                 commands++;assert.match(script,/pwd -P/)
-                data$.next(Buffer.from('/home/user\n\0'+script.match(/ARW_EXIT_[a-f0-9]+/)[0]+':0\0'));closed$.next()
+                data$.next(Buffer.from('/home/user\n\0'+script.match(/ARW_EXIT_[a-f0-9]+/)[0]+':0\0'));extendedData$.next([1,Buffer.from('\0'+script.match(/ARW_EXIT_[a-f0-9]+/)[0]+':stderr\0')]);closed$.next()
             }}
         }},async openSFTP(){return {async stat(path){assert.equal(path,'/home/user');return {isDirectory:true}}}}}
     const registry=new plugin.WorkspaceRegistry({activeTabChange$:new Subject()},{run:fn=>fn()})
@@ -3221,4 +3221,152 @@ test('restored workspace bindings preserve remote identity in editor and preview
         assert.ok(token,'file panes opened from the restored binding must be recoverable')
         assert.deepEqual(JSON.parse(JSON.stringify(token.workspace)),{kind:'remote',root:'/project',host:'example',port:2222,user:'dev',profileId:'ssh-test'})
     }
+})
+
+test('following a WSL terminal requests a real shell report instead of using the Windows PTY guess',async()=>{
+    const {BehaviorSubject}=await import('rxjs')
+    const windowsProcess=Object.create(process)
+    Object.defineProperty(windowsProcess,'platform',{value:'win32'})
+    const plugin=load(undefined,{process:windowsProcess})
+    const terminal={profile:{type:'local',options:{command:'C:\\Windows\\System32\\wsl.exe'}},
+        session:{open:true,getWorkingDirectory:async()=> 'C:\\Users\\user\\Pictures'},alternateScreenActive:false}
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{},{})
+    let enabled=0,shown=0
+    tree.selection={terminal,hint:'',workspace:{kind:'local',root:'C:\\Users\\user\\Pictures'}}
+    tree.enableCwd=async()=>{enabled++}
+    tree.showWorkspace=async()=>{shown++}
+    try{
+        assert.equal(tree.canEnableCwd,true)
+        await tree.followTerminal()
+        assert.equal(enabled,1)
+        assert.equal(shown,0)
+    }finally{tree.ngOnDestroy()}
+})
+
+test('WSL directory input and copy use native paths while the workspace keeps its UNC root',async()=>{
+    const {BehaviorSubject}=await import('rxjs')
+    const windowsProcess=Object.create(process)
+    Object.defineProperty(windowsProcess,'platform',{value:'win32'})
+    const plugin=load(undefined,{process:windowsProcess})
+    const terminal={profile:{type:'local',options:{command:'wsl.exe'}}}
+    let copied=''
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{},{setClipboard({text}){copied=text}})
+    const root='\\\\wsl.localhost\\Ubuntu-24.04\\root',workspace={kind:'local',root}
+    tree.selection={terminal,workspace,hint:''};tree.browserWorkspace=workspace
+    try{
+        await tree.updateDirectoryDisplay(workspace)
+        assert.equal(tree.directoryInput,'/root')
+        assert.equal(workspace.root,root)
+        tree.relativePath='project\\src'
+        assert.equal(tree.directoryInput,'/root/project/src')
+        tree.copyDirectory()
+        assert.equal(copied,'/root/project/src')
+    }finally{tree.ngOnDestroy()}
+})
+
+test('native WSL directory paths complete and enter through the Windows filesystem',{skip:process.platform!=='win32'||process.env.ARW_TEST_WSL!=='1'},async()=>{
+    const {BehaviorSubject}=await import('rxjs')
+    const {mkdtemp,mkdir,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const root=await mkdtemp(join(tmpdir(),'arw WSL directory '))
+    await mkdir(join(root,'project'))
+    const plugin=load(),workspace=localWorkspace(root)
+    const terminal={profile:{type:'local',options:{command:'wsl.exe',args:[]}},session:{open:true}}
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{},{})
+    tree.selection={terminal,workspace,hint:''};tree.browserWorkspace=workspace
+    tree.ensureGitScan=()=>{}
+    try{
+        await tree.updateDirectoryDisplay(workspace)
+        const native=tree.directoryInput
+        assert.ok(native.startsWith('/'),native)
+        await tree.updateDirectoryCandidates(native+'/pro')
+        assert.equal(tree.directoryCandidates[0],native+'/project/')
+        await tree.completeDirectory()
+        await tree.navigateDirectory()
+        assert.equal(tree.breadcrumb,join(root,'project'))
+        assert.equal(tree.directoryInput,native+'/project')
+    }finally{tree.ngOnDestroy();await rm(root,{recursive:true,force:true})}
+})
+
+test('restored WSL file trees load before cwd reporting and explicit follow switches to the first real report',async()=>{
+    const {Subject}=require('rxjs'),plugin=load()
+    const {mkdtemp,mkdir,writeFile,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const root=await mkdtemp(join(tmpdir(),'arw wsl restore ')),actual=join(root,'actual')
+    await mkdir(actual);await writeFile(join(root,'remembered.txt'),'saved');await writeFile(join(actual,'actual.txt'),'actual')
+    let reported=null
+    const cwd=new Subject(),terminal={profile:{type:'local',options:{command:'wsl.exe',args:[],arwWorkspace:{root,cwd:actual,mode:'files'}}},
+        focused$:new Subject(),sessionChanged$:new Subject(),destroyed$:new Subject(),hasFocus:true,alternateScreenActive:false,
+        session:{open:true,getWorkingDirectory:async()=>reported,oscProcessor:{cwdReported$:cwd},destroyed$:new Subject()},sendInput(){},
+        async getRecoveryToken(){return {type:'app:local-tab',profile:this.profile}}}
+    const app={tabs:[terminal],activeTab:terminal,activeTabChange$:new Subject()}
+    const registry=new plugin.WorkspaceRegistry(app,{run:fn=>fn()})
+    const tree=new plugin.TreeComponent(registry,app,{},{},{},{},{})
+    tree.ensureGitScan=()=>{}
+    const decorator=new plugin.WorkspaceTerminalDecorator(registry)
+    const wait=async predicate=>{for(let i=0;i<500&&!predicate();i++)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate())}
+    try{
+        decorator.attach(terminal)
+        await wait(()=>!tree.loading&&tree.nodes.some(node=>node.name==='remembered.txt'))
+        assert.equal(tree.breadcrumb,root)
+        assert.equal(registry.current.value.pathSource,'restored')
+        assert.match(registry.current.value.hint,/恢复|restor/i)
+        await tree.followTerminal()
+        assert.equal(tree.cwdSetupPending,true)
+        registry.current.next({...registry.current.value})
+        assert.equal(tree.cwdSetupPending,true,'saved-directory refresh must not acknowledge a pending shell report')
+        reported=process.platform==='win32'
+            ?(await (await import('node:util')).promisify((await import('node:child_process')).execFile)('wsl.exe',['--exec','wslpath','-u',actual])).stdout.trim():actual
+        cwd.next(reported)
+        await wait(()=>!tree.loading&&tree.breadcrumb===actual&&tree.nodes.some(node=>node.name==='actual.txt'))
+        assert.equal(tree.cwdSetupPending,false)
+        assert.equal(registry.current.value.pathSource,'terminal')
+    }finally{tree.ngOnDestroy();decorator.detach(terminal);decorator.ngOnDestroy();await rm(root,{recursive:true,force:true})}
+})
+
+test('forward startup retries are bounded and retain the same SSH session and workspace',async()=>{
+    const {Subject}=await import('rxjs'),fs=await import('node:fs/promises'),{join}=await import('node:path'),{tmpdir}=await import('node:os')
+    const directory=await fs.mkdtemp(join(tmpdir(),'arw-retry-start-')),plugin=load()
+    const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory({store:{omw:{projects:{}}},async save(){}},{getConfigPath:()=>join(directory,'config.yaml')})
+    const context={kind:'remote',host:JSON.stringify(['fixture',22,'user'])},project=await store.add(context,'/project')
+    let attempts=0,retained=0,commands=0
+    const remote={open:true,ssh:{},willDestroy$:new Subject(),ref(){attempts++;if(attempts<3)throw Error('temporary start failure');retained++},unref(){retained--}}
+    const backend={kind:'remote',host:'fixture',root:'/project',list:async()=>[],read:async()=>({content:''}),write:async()=>({}),run:async()=>{commands++;throw Error('unexpected command')}}
+    try{
+        await store.open(project,backend,remote)
+        assert.equal(attempts,3);assert.equal(retained,1);assert.equal(commands,0)
+        assert.equal(store.state(project.id).phase,'forwarding');assert.ok(store.connection(project.id))
+    }finally{await store.ngOnDestroy();assert.equal(retained,0);await fs.rm(directory,{recursive:true,force:true})}
+})
+
+test('manual forwarding retry replaces the endpoint without replaying unknown commands or interrupting active requests',async()=>{
+    const {Subject}=await import('rxjs'),fs=await import('node:fs/promises'),{join}=await import('node:path'),{tmpdir}=await import('node:os')
+    const directory=await fs.mkdtemp(join(tmpdir(),'arw-retry-request-')),plugin=load()
+    const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory({store:{omw:{projects:{}}},async save(){}},{getConfigPath:()=>join(directory,'config.yaml')})
+    const context={kind:'remote',host:JSON.stringify(['fixture',22,'user'])},project=await store.add(context,'/project')
+    let commands=0,retained=0,release,entered
+    const remote={open:true,ssh:{},willDestroy$:new Subject(),ref(){retained++},unref(){retained--}}
+    const backend={kind:'remote',host:'fixture',root:'/project',list:async()=>[],run:async command=>{if(command.includes('realpath'))return {stdout:'/project\n/project/file\n',stderr:'',exitCode:0};commands++;throw Error('execution state unknown')},read:async()=>{entered();await new Promise(resolve=>{release=resolve});return {content:'done'}}}
+    let releaseAi
+    try{
+        await store.open(project,backend,remote)
+        releaseAi=store.retainForAi(project.id)
+        const original=store.connection(project.id),connection=JSON.parse(await fs.readFile(original,'utf8'))
+        const request=async(name,args={})=>(await(await ipcFetch(connection,{body:JSON.stringify({name,arguments:{workspaceId:project.id,...args}})})).json()).result
+        await request('run_remote_command',{command:'ls'})
+        assert.equal(commands,1);assert.equal(store.state(project.id).phase,'error')
+        const first=store.retry(project,backend,remote),second=store.retry(project,backend,remote)
+        assert.equal(first,second);await first
+        assert.notEqual(store.connection(project.id),original);assert.equal(commands,1);assert.equal(retained,1)
+        assert.equal(store.state(project.id).phase,'forwarding')
+        const current=store.connection(project.id),nextConnection=JSON.parse(await fs.readFile(current,'utf8'))
+        const started=new Promise(resolve=>{entered=resolve})
+        const pending=ipcFetch(nextConnection,{body:JSON.stringify({name:'remote_read',arguments:{workspaceId:project.id,path:'file'}})}).then(response=>response.json())
+        await started
+        await assert.rejects(store.retry(project,backend,remote),/仍有请求/)
+        assert.equal(store.connection(project.id),current)
+        release();await pending
+        await store.retry(project,backend,remote)
+        assert.notEqual(store.connection(project.id),current);assert.equal(commands,1)
+        assert.match(plugin.TreeComponent.component.template,/retryProjectForwarding\(project,\$event\)/)
+    }finally{release?.();await store.ngOnDestroy();releaseAi?.();assert.equal(retained,0);await fs.rm(directory,{recursive:true,force:true})}
 })

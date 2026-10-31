@@ -55,6 +55,12 @@ await build({
     platform: 'node', format: 'cjs', target: 'node18', bundle: true,
 })
 
+const {WSL_ARW_BRIDGE,WSL_ARW_LOADER}=await import('./.build/arw-ai-cli/wsl-bridge.js')
+await mkdir(new URL('dist/wsl-bin/',import.meta.url),{recursive:true})
+await writeFile(new URL('dist/wsl-bin/arw',import.meta.url),WSL_ARW_BRIDGE)
+await chmod(new URL('dist/wsl-bin/arw',import.meta.url),0o755)
+await writeFile(new URL('dist/wsl-bridge.cjs',import.meta.url),WSL_ARW_LOADER)
+
 // Stable command shims point at the one installed CLI implementation.
 await mkdir(new URL('dist/bin/',import.meta.url),{recursive:true})
 await writeFile(new URL('dist/bin/arw',import.meta.url),'#!/usr/bin/env node\nrequire("../arw.cjs");\n')

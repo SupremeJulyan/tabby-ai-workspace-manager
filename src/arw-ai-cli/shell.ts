@@ -1,3 +1,5 @@
+import { wslDirectoryArguments } from '../shared/wsl-launch-directory'
+import { wslBridgeSetup } from './wsl-bridge'
 import { shellQuote } from '../shared/shell-quote'
 
 export type ShellType = 'unix' | 'powershell' | 'cmd'
@@ -148,11 +150,12 @@ function cmdArguments (args:string[],tokens:string[]):string[] {
     return prefix
 }
 
-function wslArguments (args:string[],tokens:string[]):string[] {
-    const prefix=args.slice()
-    const hasExec=prefix.some(argument=>argument==='--'||argument==='-e'||argument==='--exec')
-    if (!hasExec) prefix.push('--')
-    prefix.push('bash','-l','-i','-c',`exec ${posixLine(tokens)}`)
+function wslArguments (args:string[],tokens:string[],env:Record<string,string>={}):string[] {
+    const prefix=wslDirectoryArguments(args,env.ARW_WSL_CWD)
+    const exec=prefix.findIndex(argument=>argument==='--'||argument==='-e'||argument==='--exec')
+    if(exec<0)prefix.push('--exec')
+    else prefix[exec]='--exec'
+    prefix.push('bash','-l','-i','-c',`${wslBridgeSetup(env)}exec ${posixLine(tokens)}`)
     return prefix
 }
 
@@ -165,7 +168,7 @@ export function shellCommand (shell:ShellCommand,agentArgs:string[]):ShellComman
     switch (family) {
         case 'powershell': invocation=powershellArguments(args,tokens); break
         case 'cmd': invocation=cmdArguments(args,tokens); break
-        case 'wsl': invocation=wslArguments(args,tokens); break
+        case 'wsl': invocation=wslArguments(args,tokens,shell.env); break
         case 'msys2': invocation=withoutCommandArgument(args).concat(['-c',`exec ${posixLine(tokens)}`]); break
         default: invocation=posixArguments(args,tokens)
     }
@@ -185,7 +188,13 @@ export function replaceShellArguments (shell:ShellCommand,agentArgs:string[]):Sh
     }
     if (index<0) return shellCommand(shell,agentArgs)
     const replacement=family==='powershell'?powershellLine(agentArgs):family==='cmd'?cmdLine(agentArgs):`exec ${posixLine(agentArgs)}`
-    return {command:shell.command,args:shell.args.slice(0,index+1).concat([replacement]),env:shell.env,shellType:shell.shellType}
+    const command=family==='wsl'?wslBridgeSetup(shell.env)+replacement:replacement
+    const prefix=family==='wsl'?wslDirectoryArguments(shell.args.slice(0,index+1),shell.env?.ARW_WSL_CWD):shell.args.slice(0,index+1)
+    if(family==='wsl'){
+        const marker=prefix.indexOf('--')
+        if(marker>=0)prefix[marker]='--exec'
+    }
+    return {command:shell.command,args:prefix.concat([command]),env:shell.env,shellType:shell.shellType}
 }
 
 function quoteLine (values:string[]):string {return values.map(shellQuote).join(' ')}
