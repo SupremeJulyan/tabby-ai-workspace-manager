@@ -41,7 +41,7 @@ function sameFile(pane:any,inputs:any,type:any):boolean {
 }
 
 /** Open a file inside the current split instead of creating another top-level tab. */
-export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='tiled',tabs?:Pick<TabsService,'create'>):Promise<T> {
+export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='stacked',tabs?:Pick<TabsService,'create'>):Promise<T> {
     const anchor=topLevelFor(app,source??app.activeTab)
     if(!anchor||app.tabs.length===0)return app.openNewTab(params)
     const split=('getAllTabs' in anchor?anchor:app.getParentTab(anchor)??app.wrapAndAddTab(anchor)) as SplitTabComponent

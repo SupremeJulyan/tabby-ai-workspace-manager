@@ -520,7 +520,7 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     assert.equal(defaultSettings.argumentsText,'--sandbox\ndanger-full-access\n--ask-for-approval\non-request')
     assert.equal(defaultSettings.proxyUrl,'')
     assert.equal(defaultSettings.resumeArgumentsText,'resume\n--last')
-    assert.equal(defaultSettings.fileLayout,'tiled')
+    assert.equal(defaultSettings.fileLayout,'stacked')
     assert.equal(defaultSettings.aiLayout,'tiled')
     assert.equal(defaultSettings.workspaceWidth,50);assert.equal(defaultSettings.aiWidth,50)
     assert.equal(defaultSettings.fileHeight,60);assert.equal(defaultSettings.terminalHeight,40)

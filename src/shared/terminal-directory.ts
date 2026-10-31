@@ -1,3 +1,5 @@
+import { isMsysTerminal } from './msys-directory'
+import { isWslTerminal } from './wsl-directory'
 import { randomBytes } from 'node:crypto'
 import { Subject } from 'rxjs'
 import type { BaseTerminalTabComponent, SessionMiddleware } from 'tabby-terminal'
@@ -52,7 +54,9 @@ export async function changeTerminalDirectory(tab:BaseTerminalTabComponent<any>,
             timer=setTimeout(()=>reject(new Error('The shell did not acknowledge the directory switch')),3000)
             // Escapes keep the marker out of the echoed command itself. cd runs in
             // the interactive shell, so its cwd and environment remain in effect.
-            tab.sendInput(` printf '\\036ARW_CD_${nonce}\\037'; cd -- ${shellQuote(root)}\r`)
+            const converter=isWslTerminal(tab)?'wslpath':isMsysTerminal(tab)?'cygpath':undefined
+            const directory=converter&&/^(?:[a-z]:[\\/]|\\\\)/i.test(root)?`"$(${converter} -u ${shellQuote(root)})"`:shellQuote(root)
+            tab.sendInput(` printf '\\036ARW_CD_${nonce}\\037'; cd -- ${directory}\r`)
         })
     } finally {
         if(timer)clearTimeout(timer)

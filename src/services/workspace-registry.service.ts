@@ -1,3 +1,5 @@
+import { isMsysTerminal } from '../shared/msys-directory'
+import { isWslTerminal, terminalWorkspaceDirectory } from '../shared/wsl-directory'
 import { workspaceRecoveryState } from '../shared/workspace-recovery'
 import { readWorkspaceBinding } from '../arw-cli/workspace-binding'
 import { logOperation } from './operation-log'
@@ -9,7 +11,7 @@ import { BehaviorSubject, Subject, Subscription, auditTime } from 'rxjs'
 import { isAbsolute } from 'path'
 import { Workspace, localWorkspace } from '../arw-tree/workspace'
 import { prepareCwdIntegration } from '../adapters/shell-integration'
-import { RemoteShell } from '../shared/shell-integration'
+import { cwdIntegrationCommand, RemoteShell } from '../shared/shell-integration'
 import { TabbyRelayTransport } from '../adapters/transport'
 import { remoteWorkspace } from '../adapters/remote-workspace'
 import { isSshTab, SSHSession } from '../adapters/ssh-compat'
@@ -153,6 +155,7 @@ export class WorkspaceRegistry {
         this.emit(entry.selection)
     }
     prepareCwdIntegration (terminal:BaseTerminalTabComponent<any>, shell:RemoteShell) {
+        if((isWslTerminal(terminal)||isMsysTerminal(terminal))&&terminal.session?.open)return Promise.resolve({command:cwdIntegrationCommand(shell),cleanup:async()=>{}})
         if(!isSshTab(terminal)||!terminal.sshSession?.open)throw new Error(t('SSH 会话尚未就绪'))
         return prepareCwdIntegration(terminal.sshSession,shell)
     }
@@ -186,7 +189,7 @@ export class WorkspaceRegistry {
             const version = ++entry.version
             const session = terminal.session
             try {
-                const reported = await session?.getWorkingDirectory()
+                const reported = await terminalWorkspaceDirectory(terminal)
                 if (version !== entry.version || this.entries.get(terminal) !== entry || entry.pinned) return
                 const remote = isSshTab(terminal) ? terminal.sshSession ?? undefined : undefined
                 if (isSshTab(terminal) && !remote?.open) {
