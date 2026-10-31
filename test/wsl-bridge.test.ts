@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm, symlink, readFile, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { WSL_ARW_BRIDGE, WSL_ARW_LOADER, wslBridgeEnvironment, wslUserBridgeSetup, WSL_USER_BRIDGE_MARKER } from '../src/arw-ai-cli/wsl-bridge'
 import { replaceShellArguments, shellCommand } from '../src/arw-ai-cli/shell'
@@ -47,7 +47,7 @@ test('bridge preserves cwd, stdin, literal arguments, context and exit status',{
         let output='';child.stdout!.on('data',chunk=>output+=chunk);child.on('error',reject);child.on('close',code=>resolve({code,output}))
     })
     assert.equal(result.code,17)
-    assert.deepEqual(JSON.parse(result.output),{cwd:root,args,config:'C:\\Tabby config',stdin:'stdin payload'})
+    assert.deepEqual(JSON.parse(result.output),{cwd:resolve(root),args,config:'C:\\Tabby config',stdin:'stdin payload'})
 })
 
 test('WSL starts Bash directly so bridge variables are not expanded by an outer shell',()=>{
