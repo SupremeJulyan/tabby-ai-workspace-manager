@@ -1,5 +1,8 @@
 /** English translations keyed by the original Chinese UI text. */
 export const englishMessages: Record<string,string> = {
+    "转发正在重建，请稍后重试": "Forwarding is restarting. Please retry shortly.",
+    "重试转发": "Retry forwarding",
+    "仍有请求正在执行，请稍后重试": "A request is still running. Retry after it finishes.",
     "刷新文件列表和已打开的文件": "Refresh the file list and open files",
     "重命名": "Rename",
     "删除": "Delete",

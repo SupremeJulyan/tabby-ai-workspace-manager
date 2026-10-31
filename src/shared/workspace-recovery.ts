@@ -1,3 +1,5 @@
+import { wslDirectoryArguments } from './wsl-launch-directory'
+import { isWslTerminal, terminalWorkspaceDirectory } from './wsl-directory'
 import { shellQuote } from './shell-quote'
 import { logOperation } from '../services/operation-log'
 
@@ -10,7 +12,7 @@ interface Terminal {
 const states=new WeakMap<object,WorkspaceRecoveryState>()
 const attached=new WeakSet<object>()
 const persist=new WeakMap<object,()=>void>()
-const validPath=(value:unknown):value is string=>typeof value==='string'&&/^(?:\/|[a-z]:[\\/])/i.test(value)&&!/[\x00-\x1f\x7f]/.test(value)
+const validPath=(value:unknown):value is string=>typeof value==='string'&&/^(?:\/|[a-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/i.test(value)&&!/[\x00-\x1f\x7f]/.test(value)
 export function workspaceRecoveryState(terminal:object):WorkspaceRecoveryState|undefined{return states.get(terminal)}
 export function rememberWorkspace(terminal:object,root:string,mode:WorkspaceRecoveryState['mode']):void {
     if(!validPath(root))return
@@ -28,7 +30,13 @@ export function restoredWorkspaceProfile(profile:any):any {
     const state=profileState(profile)
     if(!state||!validPath(state.root))return profile
     const options={...profile.options,arwWorkspace:state}
-    if(profile.type==='local'&&validPath(state.cwd))options.cwd=state.cwd
+    if(profile.type==='local'&&validPath(state.cwd)){
+        options.cwd=state.cwd
+        if(isWslTerminal({profile})){
+            options.args=wslDirectoryArguments(options.args??[],state.cwd)
+            options.homeDirArgs=[]
+        }
+    }
     if(profile.type==='ssh'){
         const cwd=validPath(state.cwd)?state.cwd:state.root
         // Tabby's login script processor unescapes backslashes before sending.
@@ -60,7 +68,7 @@ export function prepareWorkspaceRecovery(terminal:Terminal,save?:()=>void):void 
         const state=states.get(terminal)
         if(!state)return token
         let cwd=state.cwd
-        try{const reported=await terminal.session?.getWorkingDirectory();if(validPath(reported))cwd=reported}catch{}
+        try{const reported=await terminalWorkspaceDirectory(terminal);if(validPath(reported))cwd=reported}catch{}
         const options={...token.profile.options,arwWorkspace:{...state,cwd}}
         if(terminal.profile.type==='local'&&cwd)options.cwd=cwd
         if(Array.isArray(options.scripts))options.scripts=options.scripts.filter((script:any)=>!script.arwRestoreDirectory)

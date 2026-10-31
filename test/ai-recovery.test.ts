@@ -106,3 +106,26 @@ test('restored AI tabs resume their CLI inside the original shell when shell-pro
         assert.equal(token.profile.options.env.ARW_AGENT_ARGS,JSON.stringify(['resume','--last','--model','custom']))
     }finally{await rm(storage,{recursive:true,force:true})}
 })
+
+test('WSL AI recovery keeps arw on PATH for restored and legacy shell profiles',async()=>{
+    const storage=await mkdtemp(join(tmpdir(),'arw-wsl-recovery-'))
+    try{
+        const source=join(process.cwd(),'dist/arw.cjs')
+        const env={ARW_WORKSPACE_ROOT:storage,ARW_AGENT_COMMAND:'codex',ARW_AGENT_ARGS:'[]',
+            ARW_AGENT_SHELL_COMMAND:'wsl.exe',ARW_AGENT_SHELL_ARGS:JSON.stringify(['-d','Ubuntu']),
+            PATH:join(process.execPath,'..'),ARW_WSL_NODE:'C:\\nodejs\\node.exe',ARW_WSL_LOADER:'C:\\plugin\\dist\\wsl-bridge.cjs',
+            ARW_WSL_CLI:'C:\\plugin\\dist\\arw.cjs',ARW_WSL_BIN:'C:\\plugin\\dist\\wsl-bin',ARW_WSL_CONTEXT:'{}'}
+        const options={command:'wsl.exe',args:['-d','Ubuntu','--','bash','-i','-c',"exec 'codex'"],cwd:storage,env}
+        const tab={profile:{type:'local',options}}
+        prepareAiRecovery(tab,storage,source)
+        const script=tab.profile.options.args.at(-1)!
+        assert.match(script,/export PATH="\$__arw_bin:\$PATH"/)
+        assert.ok(script.endsWith("exec 'codex' 'resume' '--last'"))
+        assert.ok(tab.profile.options.env.ARW_WSL_LOADER)
+        const legacyEnv={...env} as Record<string,string>
+        delete legacyEnv.ARW_AGENT_SHELL_COMMAND;delete legacyEnv.ARW_AGENT_SHELL_ARGS
+        const legacy={profile:{type:'local',options:{...options,env:legacyEnv}}}
+        prepareAiRecovery(legacy,storage,source)
+        assert.match(legacy.profile.options.args.at(-1)!,/export PATH="\$__arw_bin:\$PATH"/)
+    }finally{await rm(storage,{recursive:true,force:true})}
+})

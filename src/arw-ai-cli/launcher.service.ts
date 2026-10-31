@@ -1,3 +1,4 @@
+import { wslBridgeEnvironment } from './wsl-bridge'
 import { paneLayout, selectStackedPane } from '../shared/pane-layout'
 import { orderedAiPanes } from './collapsed-panes'
 import { isAiPane } from '../shared/pane-kind'
@@ -27,7 +28,7 @@ import { ProjectStore } from '../arw-tree/project.store'
 import { aiProxyEnvironment } from './proxy'
 import { titleAiTabs, workspaceNames } from '../shared/workspace-name'
 import { agentShellFromOptions } from './agent-profile'
-import { shellCommandLine, shellCommand, shellEnvironment, shellPathEnvironment, type AgentShell } from './shell'
+import { shellCommandLine, shellCommand, shellFamily, shellEnvironment, shellPathEnvironment, type AgentShell } from './shell'
 import { sameShell, selectableShells } from './shell-selection'
 import { defaultShell } from './default-shell'
 
@@ -122,6 +123,10 @@ export class AiLauncherService {
                 ARW_AGENT_COMMAND: command.trim(), ARW_AGENT_ARGS: JSON.stringify(args),
                 ARW_AGENT_SHELL_COMMAND: shell.command, ARW_AGENT_SHELL_ARGS: JSON.stringify(shell.args??[]),
             }
+            if(shellFamily(shell)==='wsl'){
+                const configPath=this.platform?.getConfigPath?.()
+                if(configPath)env.TABBY_CONFIG_DIRECTORY=dirname(configPath)
+            }
             if(workspace.kind==='remote'){
                 env.ARW_WORKSPACE_HOST=remote?.profile.options.host??workspace.host
                 env.ARW_WORKSPACE_PORT=String(remote?.profile.options.port??22)
@@ -174,7 +179,7 @@ export class AiLauncherService {
                 agentCwd = placeholder.localPath
                 env.ARW_LOCAL_WORKSPACE_ROOT = agentCwd
             }
-            const shellOptions=shellEnvironment(shell,env)
+            const shellOptions=wslBridgeEnvironment(shell.command,shellEnvironment(shell,env),join(__dirname,'arw.cjs'),agentCwd)
             for(const key of Object.keys(shellOptions))if(['arw_workspace_id','arw_terminal_mode'].includes(key.toLowerCase()))delete shellOptions[key]
             const launch=shellCommand({command:shell.command,args:shell.args??[],env:shellOptions,shellType:shell.shellType??null},[command.trim()].concat(args))
             const opened = await this.profiles.openNewTabForProfile({ type: 'local', name: shellCommandLine(launch),

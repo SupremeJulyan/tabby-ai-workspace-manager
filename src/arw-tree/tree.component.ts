@@ -1,5 +1,5 @@
 import { isMsysTerminal } from '../shared/msys-directory'
-import { isWslTerminal, terminalWorkspaceDirectory } from '../shared/wsl-directory'
+import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath, terminalWorkspaceDisplayPath } from '../shared/wsl-directory'
 import { changeTerminalDirectory } from '../shared/terminal-directory'
 import { limitConcurrency } from '../shared/concurrency'
 import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-recovery'
@@ -259,7 +259,23 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     selection: WorkspaceSelection|null = null
     directoryDraft: string|null = null
-    get directoryInput (): string { return this.directoryDraft ?? this.breadcrumb }
+    get directoryInput (): string { return this.directoryDraft ?? this.displayDirectory }
+    private directoryDisplayRoots=new WeakMap<Workspace,{terminal:object;root:string}>()
+    get displayDirectory():string{
+        const workspace=this.browserWorkspace??this.selection?.workspace
+        const display=workspace&&this.directoryDisplayRoots.get(workspace)
+        return display&&display.terminal===this.source
+            ?posix.resolve(display.root,this.relativePath.replace(/\\/g,'/')||'.'):this.breadcrumb
+    }
+    private async updateDirectoryDisplay(workspace:Workspace):Promise<void>{
+        const terminal=this.source
+        if(!terminal||workspace.kind!=='local'||!isWslTerminal(terminal))return
+        try{
+            const root=await terminalWorkspaceDisplayPath(terminal,workspace.root)
+            this.directoryDisplayRoots.set(workspace,{terminal,root})
+            if(terminal===this.source&&workspace===(this.browserWorkspace??this.selection?.workspace))this.render()
+        }catch(error){logOperation('转换 WSL 目录显示',{root:workspace.root,error:String(error)})}
+    }
     copyDirectory (): void {
         this.platform.setClipboard({text:this.directoryInput})
     }
@@ -284,6 +300,16 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.directoryCandidates=[]
         this.render()
     }
+    private async directoryTargetPath(input:string,workspace:Workspace):Promise<string>{
+        if(workspace.kind==='remote')return posix.resolve(this.breadcrumb,input)
+        const terminal=this.source
+        if(terminal&&isWslTerminal(terminal)&&!/^(?:[a-z]:[\\/]|\\\\)/i.test(input)){
+            const native=input.startsWith('/')?input:posix.resolve(await terminalWorkspaceDisplayPath(terminal,this.breadcrumb),input)
+            return resolveTerminalWorkspacePath(terminal,native)
+        }
+        if(terminal&&input.startsWith('/')&&isMsysTerminal(terminal))return resolveTerminalWorkspacePath(terminal,input)
+        return resolve(this.breadcrumb,input)
+    }
     async updateDirectoryCandidates (value: string): Promise<void> {
         this.directoryDraft=value
         this.rememberBrowsing()
@@ -297,7 +323,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const prefix=value.slice(slash+1)
         if(prefix==='.'||prefix==='..')return
         const base=slash>=0?value.slice(0,slash+1):''
-        const parent=workspace.kind==='remote'?posix.resolve(this.breadcrumb,base||'.'):resolve(this.breadcrumb,base||'.')
+        const parent=await this.directoryTargetPath(base||'.',workspace).catch(()=>undefined)
+        if(!parent)return
         const target=workspace.kind==='local'?localWorkspace(parent)
             :this.selection?.remote?remoteWorkspace(this.selection.remote,parent):undefined
         if(!target)return
@@ -355,7 +382,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const terminal=this.selection?.terminal
         const version=this.version
         try {
-            const root=workspace.kind==='remote'?posix.resolve(this.breadcrumb,input):resolve(this.breadcrumb,input)
+            const root=await this.directoryTargetPath(input,workspace)
             const target=workspace.kind==='remote' && this.selection?.remote?remoteWorkspace(this.selection.remote,root):workspace.kind==='local'?localWorkspace(root):undefined
             if(!target)return
             await target.list('.')
@@ -370,8 +397,9 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     cwdSetupError=''
     private cwdSetupCleanup?:()=>Promise<void>
     private cwdSetupVersion=0
+    private cwdFollowVersion?:number
     private clearCwdSetup():void{
-        this.cwdSetupVersion++;clearTimeout(this.cwdSetupTimer)
+        this.cwdSetupVersion++;this.cwdFollowVersion=undefined;clearTimeout(this.cwdSetupTimer)
         const cleanup=this.cwdSetupCleanup;this.cwdSetupCleanup=undefined;void cleanup?.()
     }
     private cwdSetupTimer?:ReturnType<typeof setTimeout>
@@ -561,6 +589,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.gitScanCache=new Map(state.gitScanCache);this.gitNeedsScan=false
         this.browserWorkspace=state.browserWorkspace?.kind==='remote'&&selection.remote
             ? remoteWorkspace(selection.remote,state.browserWorkspace.root) : state.browserWorkspace
+        if(this.browserWorkspace)void this.updateDirectoryDisplay(this.browserWorkspace)
         this.nodes=state.nodes;this.relativePath=state.relativePath;this.filterText=state.filterText
         this.directoryDraft=state.directoryDraft;this.directoryCandidates=state.directoryCandidates
         this.directoryCandidateIndex=state.directoryCandidateIndex;this.directoryInputScroll=state.directoryInputScroll;this.directoryCaretAtEnd=state.directoryCaretAtEnd
@@ -597,7 +626,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         private tasks: GitTasksService, private ai: AiLauncherService, private platform: PlatformService,
         private projectStore?: ProjectStore, private changeDetector?: ChangeDetectorRef, private config?:ConfigService, private tabs?:TabsService) {
         this.subscription = registry.current.subscribe(next => {
-            if(next?.terminal!==this.selection?.terminal||(next?.workspace&&next.pathSource!=='sftp')){
+            const followReport=this.cwdSetupPending&&this.cwdFollowVersion===this.version&&next?.workspace&&next.pathSource==='terminal'&&next.terminal===this.selection?.terminal
+            if(next?.terminal!==this.selection?.terminal||(next?.workspace&&next.pathSource!=='sftp'&&next.pathSource!=='restored')){
                 this.cwdSetupPending=false;this.cwdSetupError='';this.clearCwdSetup()
             }
             const nextTab=this.browsingKey(next),tabChanged=nextTab!==this.activeTab
@@ -608,9 +638,14 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 this.hint=next?.hint ?? t('选择一个本地或 SSH 终端');this.render()
                 return
             }
+            if(followReport&&!tabChanged&&this.browserWorkspace){
+                this.selection=next
+                void this.showWorkspace(next.workspace)
+                return
+            }
             const sameRemote=this.selection?.remote===next.remote
             if(!tabChanged&&this.browserWorkspace&&this.selection?.workspace&&sameRemote){
-                if(this.selection.terminal!==next.terminal)this.selection=next
+                if(this.selection.terminal!==next.terminal||this.selection.pathSource==='restored')this.selection=next
                 this.restoreProjectForwarding();this.rememberBrowsing();return
             }
             if(!tabChanged&&this.browserWorkspace)this.saveActiveState()
@@ -620,6 +655,19 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         })
         this.subscription.add(this.projectStore?.changed?.subscribe(()=>this.render()))
         this.subscription.add(new Subscription(() => this.disposeWorkspaceWatch()))
+    }
+    readonly retryingProjects=new Set<string>()
+    async retryProjectForwarding(project:ArwProject,event:Event):Promise<void> {
+        event.stopPropagation()
+        if(this.switchingWorkspace||this.retryingProjects.has(project.id)||!this.projectStore)return
+        const workspace=this.savedWorkspace(project),selection=this.selection,tab=this.activeTab
+        if(workspace?.kind!=='remote'||!selection?.remote)return
+        this.retryingProjects.add(project.id);this.render()
+        try {
+            await this.projectStore.retry(project,workspace,selection.remote,selection.sourceTerminal??selection.terminal)
+        } catch(error) {
+            if(tab===this.activeTab)this.error=String(error)
+        } finally {this.retryingProjects.delete(project.id);this.render()}
     }
     projectForwarding(project:ArwProject):string {return this.projectStore?.state?.(project.id).phase??'saved'}
     projectForwardingTitle(project:ArwProject):string {
@@ -1059,6 +1107,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.directoryListings.clear()
         this.directoryDraft=null
         this.browserWorkspace=workspace
+        const display=workspace?this.updateDirectoryDisplay(workspace):Promise.resolve()
         this.filterText=workspace&&this.activeTab?this.workspaceFilters.get(this.activeTab)?.get(this.workspaceTreeKey(workspace))??'':''
         this.gitAbort?.abort();this.gitLoading=false;this.gitScope=undefined;this.gitScanCompleted=false;this.gitNotice='';this.gitSetupMode=null;this.gitSetupError=''
         const version = ++this.version
@@ -1068,13 +1117,15 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.ensureGitScan()
         if(saved){
             this.nodes=saved.nodes.map(node=>({...node,loading:false}));this.relativePath=saved.relativePath;this.loading=false
+            await display
+            if(version!==this.version)return
             this.loadProjects(this.selection?.workspace);this.rememberBrowsing();this.render();this.restoreFileScroll()
             // Cached panes can be activated immediately; revalidate the tree in the background.
             void this.refreshFiles({background:true})
             return
         }
         try {
-            const files = await workspace.list('.')
+            const [files] = await Promise.all([workspace.list('.'),display])
             if (version !== this.version) return
             this.directoryListings.set(workspace.root,{expires:Date.now()+5000,files:Promise.resolve(files)})
             this.nodes = files.slice(0,2000).map(file => ({ ...file, depth:0 }))
@@ -1538,6 +1589,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const terminal=this.source!
         if(terminal.alternateScreenActive){this.cwdSetupError=t('请先退出全屏程序，回到 shell 命令提示符。');return}
         this.clearCwdSetup();const version=this.cwdSetupVersion
+        this.cwdFollowVersion=this.version
         this.cwdSetupError='';this.cwdSetupPending=true;this.render()
         try{
             const prepared=await this.registry.prepareCwdIntegration(terminal,this.cwdShell)
@@ -1546,7 +1598,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(terminal.alternateScreenActive)throw new Error(t('请回到 shell 命令提示符后重试。'))
             this.cwdSetupTimer=setTimeout(()=>{
                 this.cwdSetupPending=false;this.clearCwdSetup()
-                if(!this.selection?.workspace||this.selection.pathSource==='sftp')this.cwdSetupError=t('未收到目录，请确认所选 shell 正确，并在命令提示符下重试。也可以复制命令手动执行。');this.render()
+                if(!this.selection?.workspace||this.selection.pathSource==='sftp'||this.selection.pathSource==='restored')this.cwdSetupError=t('未收到目录，请确认所选 shell 正确，并在命令提示符下重试。也可以复制命令手动执行。');this.render()
             },8000)
             terminal.sendInput(` ${prepared.command}\r`)
         }catch(error){

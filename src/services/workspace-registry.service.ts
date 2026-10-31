@@ -1,5 +1,5 @@
 import { isMsysTerminal } from '../shared/msys-directory'
-import { isWslTerminal, terminalWorkspaceDirectory } from '../shared/wsl-directory'
+import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath } from '../shared/wsl-directory'
 import { workspaceRecoveryState } from '../shared/workspace-recovery'
 import { readWorkspaceBinding } from '../arw-cli/workspace-binding'
 import { logOperation } from './operation-log'
@@ -24,7 +24,7 @@ export interface WorkspaceSelection {
     workspace?: Workspace
     remote?: SSHSession
     sourceTerminal?: BaseTerminalTabComponent<any>
-    pathSource?: 'terminal'|'sftp'
+    pathSource?: 'terminal'|'sftp'|'restored'
     hint: string
 }
 interface RestoredWorkspace { host: string; port: number; user?: string; remoteRoot: string;workspaceId?:string;terminalOnly?:boolean }
@@ -199,6 +199,15 @@ export class WorkspaceRegistry {
                 }
                 let root=reported && isAbsolute(reported)?reported:undefined
                 const env=terminal.profile?.options?.env
+                let pathSource:'terminal'|'sftp'|'restored'='terminal'
+                if(!root&&isWslTerminal(terminal)&&!env?.ARW_WORKSPACE_ROOT){
+                    const saved=workspaceRecoveryState(terminal)
+                    if(saved?.root&&isAbsolute(saved.root)){
+                        root=await resolveTerminalWorkspacePath(terminal,saved.root)
+                        if(version!==entry.version||this.entries.get(terminal)!==entry||entry.pinned)return
+                        pathSource='restored'
+                    }
+                }
                 const binding=!remote&&(env?.ARW_LOCAL_WORKSPACE_ROOT||root)?readWorkspaceBinding(env?.ARW_LOCAL_WORKSPACE_ROOT??root!,true):undefined
                 if(binding){
                     if(env?.ARW_WORKSPACE_ID&&env.ARW_WORKSPACE_ID!==binding.workspaceId)throw new Error(t('远程工作区占位符元数据无效'))
@@ -214,7 +223,6 @@ export class WorkspaceRegistry {
                 }
                 if(!remote&&root&&/[\\/]agent-cwd[\\/]/.test(root))throw new Error(t('远程工作区占位符元数据无效'))
                 entry.restored = undefined
-                let pathSource:'terminal'|'sftp'='terminal'
                 if(!root && remote && isSshTab(terminal)){
                     // Use the same authenticated session and browser path as Tabby's native SFTP panel.
                     const saved=workspaceRecoveryState(terminal)
@@ -229,7 +237,8 @@ export class WorkspaceRegistry {
                     if(this.current.value?.terminal===terminal)this.emit(entry.selection)
                     return
                 }
-                const hint=pathSource==='sftp'?t('当前显示远程浏览目录；终端尚未上报实际路径。'):''
+                const hint=pathSource==='sftp'?t('当前显示远程浏览目录；终端尚未上报实际路径。')
+                    :pathSource==='restored'?t('已恢复上次浏览目录；终端尚未上报实际路径。'):''
                 if(entry.root===root&&entry.session===session&&entry.selection.remote===remote&&entry.selection.workspace){
                     if(entry.selection.pathSource!==pathSource){
                         entry.selection={...entry.selection,pathSource,hint}

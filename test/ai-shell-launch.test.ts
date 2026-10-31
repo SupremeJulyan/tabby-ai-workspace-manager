@@ -52,7 +52,7 @@ test('Windows Git Bash, MSYS2 and WSL profiles are routed to their real shell',(
     const msys2=shellCommand({command:'C:\\msys64\\msys2_shell.cmd',args:['-no-start','-mingw64'],shellType:'unix'},['codex'])
     assert.deepEqual(msys2.args,['-no-start','-mingw64','-c',`exec 'codex'`])
     const wsl=shellCommand({command:'C:\\Windows\\System32\\wsl.exe',args:['-d','Ubuntu'],shellType:'unix'},['codex','--flag'])
-    assert.deepEqual(wsl.args,['-d','Ubuntu','--','bash','-l','-i','-c',`exec 'codex' '--flag'`])
+    assert.deepEqual(wsl.args,['-d','Ubuntu','--exec','bash','-l','-i','-c',`exec 'codex' '--flag'`])
 })
 
 test('saved older shell invocations are rewritten with the same wrapper',()=>{

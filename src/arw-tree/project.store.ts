@@ -73,7 +73,31 @@ export class ProjectStore {
             }
         })()
     }
-    async open (project: ArwProject, workspace: Workspace, remote?: SSHSession, source?: object): Promise<void> {
+    private retries = new Map<string,Promise<void>>()
+    retry(project:ArwProject,workspace:Workspace,remote?:SSHSession,source?:object):Promise<void> {
+        const pending=this.retries.get(project.id)
+        if(pending)return pending
+        const attempt=Promise.resolve().then(async()=>{
+            const current=this.forwards.get(project.id)
+            if(current&&!current.server.pauseWhenIdle())throw new Error(t('仍有请求正在执行，请稍后重试'))
+            await this.close(project.id,undefined,true)
+            await this.open(project,workspace,remote,source)
+        }).finally(()=>{if(this.retries.get(project.id)===attempt)this.retries.delete(project.id)})
+        this.retries.set(project.id,attempt)
+        return attempt
+    }
+    async open(project:ArwProject,workspace:Workspace,remote?:SSHSession,source?:object):Promise<void> {
+        const client=remote?.ssh
+        for(let attempt=0;;attempt++){
+            try{return await this.openOnce(project,workspace,remote,source)}
+            catch(error){
+                if(attempt>=2||this.disposed||!remote?.open||remote.ssh!==client
+                    ||(source&&'sshSession' in source&&source.sshSession!==remote))throw error
+                await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)))
+            }
+        }
+    }
+    private async openOnce (project: ArwProject, workspace: Workspace, remote?: SSHSession, source?: object): Promise<void> {
         if (this.disposed || !Object.values(this.store.projects ?? {}).some(projects=>Array.isArray(projects)&&projects.some(entry=>entry.id===project.id))) return
         if (workspace.kind === 'local') { await this.close(project.id); return }
         const current=this.forwards.get(project.id)
@@ -133,8 +157,8 @@ export class ProjectStore {
         })()
         return entry.ready
     }
-    async close (id: string, error?:unknown): Promise<void> {
-        if(this.aiUsers.has(id)&&error===undefined)return
+    async close (id: string, error?:unknown, force=false): Promise<void> {
+        if(this.aiUsers.has(id)&&error===undefined&&!force)return
         const entry=this.forwards.get(id)
         if (!entry) return
         this.forwards.delete(id)

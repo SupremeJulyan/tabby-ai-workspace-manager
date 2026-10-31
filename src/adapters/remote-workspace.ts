@@ -1,3 +1,4 @@
+import { retainExecEventBuffers } from './exec-event-buffers'
 import { t } from '../shared/i18n'
 import { previewLimit } from '../shared/read-bytes'
 import { posix } from 'path'
@@ -92,6 +93,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
                 }
                 if (!session.open || !('openSessionChannel' in session.ssh)) throw new Error(t('SSH 已断开'))
                 const channel = await session.ssh.activateChannel(await session.ssh.openSessionChannel())
+                const release=retainExecEventBuffers(session.ssh,channel)
                 const closed = session.willDestroy$.subscribe(() => { void channel.close().catch(() => undefined) })
                 try{
                     const result=await executeChannel(channel,`find -- ${shellQuote(target)} -mindepth 1 -maxdepth 1 -printf '%f\\0%y\\0%l\\0%s\\0%T@\\0'`,root,{signal,maxBytes:512*1024,timeoutMs:3000})
@@ -101,7 +103,7 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
                     for(let index=0;index+4<fields.length;index+=5)entries.push(fields.slice(index,index+5).join('\0'))
                     if(entries.length>2000)throw new BackgroundDirectoryLimit(t('目录条目超过 2000，已停止后台目录检测。'))
                     return entries.sort().join('\0')
-                }finally{closed.unsubscribe()}
+                }finally{closed.unsubscribe();release()}
             }
             const poll=async(initial=false)=>{
                 signal.throwIfAborted()

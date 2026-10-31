@@ -113,3 +113,18 @@ test('Unix IPC remains usable when the configured temporary path exceeds socket 
     await server.stop();await rm(directory,{recursive:true,force:true});
   }
 })
+
+
+test('a paused forwarding endpoint rejects new commands before backend execution',async context=>{
+  let commands=0;
+  const server=new ForwardingServer({workspace:{id:'retry',root:'/project',host:'fixture'},
+    list:async()=>({entries:[]}),read:async()=>({content:''}),write:async()=>({}),
+    run:async()=>{commands++;return {stdout:'',stderr:'',exitCode:0};}});
+  context.after(()=>server.stop());
+  await server.start();
+  assert.equal(server.pauseWhenIdle(),true);
+  const response=await ipcFetch(server.connection,{body:JSON.stringify({name:'run_remote_command',arguments:{workspaceId:'retry',command:'ls'}})});
+  const result:any=(await response.json()).result;
+  assert.equal(result.status,'error');assert.match(result.message,/转发正在重建/);
+  assert.equal(commands,0);
+});

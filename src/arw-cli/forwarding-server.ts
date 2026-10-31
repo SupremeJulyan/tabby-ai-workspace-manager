@@ -1,3 +1,4 @@
+import { t } from '../shared/i18n';
 import { createServer, type Server } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -112,7 +113,17 @@ export class ForwardingServer {
     }
   }
 
+  private activeRequests=0;
+  private paused=false;
+  pauseWhenIdle():boolean {
+    if(this.activeRequests>0)return false;
+    this.paused=true;
+    return true;
+  }
+
   private async invoke(input: { name?: unknown; arguments?: unknown }): Promise<unknown> {
+    if(this.paused)throw new Error(t("转发正在重建，请稍后重试"));
+    this.activeRequests++;
     const activityId = agentActivity.start(this.backend.workspace, input, this.backend.activityScope);
     try {
       const result = await this.invokeAudited(input);
@@ -123,7 +134,7 @@ export class ForwardingServer {
       if(!(error instanceof CommandPolicyError)&&!(error instanceof RemotePathError))this.reportRequest(input.name,error);
       agentActivity.finish(activityId, undefined, error, error instanceof CommandPolicyError || error instanceof RemotePathError);
       throw error;
-    }
+    } finally {this.activeRequests--;}
   }
 
   private reportRequest(operation:unknown,error?:unknown):void {

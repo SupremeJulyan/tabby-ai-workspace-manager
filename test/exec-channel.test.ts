@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { executeChannel, type ExecChannel } from '../src/shared/exec-channel';
 class Events<T> {
   listeners = new Set<{ next(value: T): void }>();
@@ -10,13 +13,13 @@ class Events<T> {
   }
   emit(value: T) { for (const observer of this.listeners) observer.next(value); }
 }
-function channel(): ExecChannel {
+function channel(shell='/bin/sh',args=['-c'],prefix=''): ExecChannel {
   const data$ = new Events<Uint8Array>(), extendedData$ = new Events<[number, Uint8Array]>();
   const closed$ = new Events<void>();
   let child: ReturnType<typeof spawn> | undefined;
   return { data$, extendedData$, closed$,
     async requestExec(command) {
-      child = spawn('/bin/sh', ['-c', command]);
+      child = spawn(shell, [...args, prefix+command]);
       child.stdout!.on('data', chunk => {
         for (const byte of chunk) data$.emit(Buffer.from([byte]));
       });
@@ -90,4 +93,57 @@ test('exec aborts cleanly while waiting for readiness',async()=>{
   controller.abort();
   await assert.rejects(pending,/取消/);
   assert.equal(writes,0);
+});
+
+test('exec transport is a single line and a login-shell exit trap cannot corrupt the trailer',async()=>{
+  const remote=channel('/bin/bash',['--noprofile','--norc','-c'],"trap 'printf UNWANTED_LOGOUT' EXIT; "),request=remote.requestExec.bind(remote);
+  remote.requestExec=async script=>{
+    assert.ok(script.startsWith('exec /bin/sh -c '));
+    assert.equal(script.includes('\n'),false);
+    await request(script);
+  };
+  const result=await executeChannel(remote,"printf first; # comment\nprintf second; exit 23",'/tmp');
+  assert.equal(result.stdout,'firstsecond');assert.equal(result.exitCode,23);
+});
+for(const [shell,args] of [['tcsh',['-f','-c']],['fish',['--no-config','-c']]] as const){
+  test(`exec works through a ${shell} login shell with multiline commands and quoted cwd`,{skip:spawnSync(shell,['--version']).status!==0},async context=>{
+    const root=await mkdtemp(join(tmpdir(),"arw exec 'quoted' ! 中文 "));
+    context.after(()=>rm(root,{recursive:true,force:true}));
+    const result=await executeChannel(channel(shell,[...args]),"printf '中文 ! first\\n'; # comment\nprintf second; printf remote-error >&2; exit 19",root);
+    assert.equal(result.stdout,'中文 ! first\nsecond');assert.equal(result.exitCode,19);assert.ok(result.stderr.includes('remote-error'));
+  });
+}
+test('missing completion reports bounded redacted stderr without exposing command stdout or retrying',async()=>{
+  const remote=channel();let requests=0;
+  remote.requestExec=async()=>{
+    requests++;
+    (remote.data$ as Events<Uint8Array>).emit(Buffer.from('private stdout'));
+    (remote.extendedData$ as Events<[number,Uint8Array]>).emit([1,Buffer.from('exec denied\nAuthorization: Bearer arw-sensitive-value\n'+'x'.repeat(3000))]);
+    (remote.closed$ as Events<void>).emit();
+  };
+  await assert.rejects(executeChannel(remote,'true','/tmp'),error=>{
+    const message=String(error);
+    assert.match(message,/状态未知/);assert.match(message,/stdout=14 B/);assert.match(message,/exec denied/);
+    assert.equal(message.includes('private stdout'),false);assert.equal(message.includes('arw-sensitive-value'),false);assert.ok(message.length<1500);
+    return true;
+  });
+  assert.equal(requests,1);
+});
+
+test('exec completion survives an inner exec replacement and command syntax errors',async()=>{
+  const replaced=await executeChannel(channel(),'exec printf replaced','/tmp');
+  assert.equal(replaced.stdout,'replaced');assert.equal(replaced.exitCode,0);
+  const invalid=await executeChannel(channel(),'printf should-not-run; (','/tmp');
+  assert.notEqual(invalid.exitCode,0);assert.equal(invalid.stdout,'');assert.ok(invalid.stderr);
+})
+
+
+test('exec drains remote rejection after stdin EPIPE and never accepts a truncated successful upload',async()=>{
+  const rejected=channel();
+  rejected.write=async()=>{throw Object.assign(new Error('write EPIPE'),{code:'EPIPE'})};
+  const result=await executeChannel(rejected,'sleep 0.02; printf "writer failed" >&2; exit 1','/tmp',{input:Buffer.from('payload'),timeoutMs:1000});
+  assert.equal(result.exitCode,1);assert.equal(result.stderr,'writer failed');
+  const incomplete=channel();
+  incomplete.write=rejected.write;
+  await assert.rejects(executeChannel(incomplete,'sleep 0.02; true','/tmp',{input:Buffer.from('payload'),timeoutMs:1000}),/EPIPE/);
 });
