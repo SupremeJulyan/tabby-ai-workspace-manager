@@ -1,3 +1,4 @@
+import { terminalLocalWorkspace } from '../adapters/wsl-workspace'
 import { isMsysTerminal } from '../shared/msys-directory'
 import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath, terminalWorkspaceDisplayPath } from '../shared/wsl-directory'
 import { changeTerminalDirectory } from '../shared/terminal-directory'
@@ -14,7 +15,7 @@ import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy } from '@angular
 import { AppService, ConfigService, NotificationsService, PlatformService, TabsService } from 'tabby-core'
 import { Subscription } from 'rxjs'
 import { resolve, posix, relative, isAbsolute, sep } from 'node:path'
-import { WorkspaceFile, Workspace, localWorkspace } from './workspace'
+import { WorkspaceFile, Workspace } from './workspace'
 import { RemoteGit, GitChange, isGitConflict, parseGitStatus } from './git/remote-git'
 import { readBackgroundGit } from './git/background-git'
 import { workspaceGit } from './git/workspace-git'
@@ -325,7 +326,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const base=slash>=0?value.slice(0,slash+1):''
         const parent=await this.directoryTargetPath(base||'.',workspace).catch(()=>undefined)
         if(!parent)return
-        const target=workspace.kind==='local'?localWorkspace(parent)
+        const target=workspace.kind==='local'?terminalLocalWorkspace(parent,this.source??undefined)
             :this.selection?.remote?remoteWorkspace(this.selection.remote,parent):undefined
         if(!target)return
         try {
@@ -383,7 +384,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const version=this.version
         try {
             const root=await this.directoryTargetPath(input,workspace)
-            const target=workspace.kind==='remote' && this.selection?.remote?remoteWorkspace(this.selection.remote,root):workspace.kind==='local'?localWorkspace(root):undefined
+            const target=workspace.kind==='remote' && this.selection?.remote?remoteWorkspace(this.selection.remote,root):workspace.kind==='local'?terminalLocalWorkspace(root,this.source??undefined):undefined
             if(!target)return
             await target.list('.')
             if(version!==this.version || terminal!==this.selection?.terminal)return
@@ -558,7 +559,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             const saved=workspaceRecoveryState(selection.terminal)
             if(saved&&selection.workspace){
                 this.mode=saved.mode==='activity'&&!selection.remote?'files':saved.mode
-                const workspace=selection.remote?remoteWorkspace(selection.remote,saved.root):localWorkspace(saved.root)
+                const workspace=selection.remote?remoteWorkspace(selection.remote,saved.root):terminalLocalWorkspace(saved.root,this.source??undefined)
                 void this.showWorkspace(workspace,true)
             }else void this.refresh(true)
             return
@@ -617,7 +618,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private savedWorkspace (project: ArwProject): Workspace|undefined {
         const base = this.selection?.workspace
         if (!base) return undefined
-        const workspace = base.kind === 'local' ? localWorkspace(project.root)
+        const workspace = base.kind === 'local' ? terminalLocalWorkspace(project.root,this.source??undefined)
             : this.selection?.remote ? remoteWorkspace(this.selection.remote, project.root) : undefined
         return workspace ? {...workspace,sourceWorkspace:workspace,id:project.id} : undefined
     }
@@ -845,7 +846,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 return
             }
             const remote=isSshTab(terminal)?terminal.sshSession??undefined:undefined
-            const workspace=remote?remoteWorkspace(remote,root):localWorkspace(root)
+            const workspace=remote?remoteWorkspace(remote,root):terminalLocalWorkspace(root,this.source??undefined)
             this.selection={terminal,remote,workspace,pathSource:'terminal',hint:''}
             await this.showWorkspace(workspace)
         }catch(error){if(version===this.version&&this.browsingKey(this.selection)===key){this.error=String(error);this.render()}}
@@ -1010,7 +1011,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const workspace=this.browserWorkspace??this.selection?.workspace
         if(!workspace||!this.relativePath)return workspace
         return workspace.kind==='remote'&&this.selection?.remote ? remoteWorkspace(this.selection.remote,this.breadcrumb)
-            : workspace.kind==='local' ? localWorkspace(this.breadcrumb) : undefined
+            : workspace.kind==='local' ? terminalLocalWorkspace(this.breadcrumb,this.source??undefined) : undefined
     }
     private currentGitScope (): string {
         const workspace=this.browserWorkspace??this.selection?.workspace
@@ -1074,7 +1075,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 : await this.tasks.clone(tab as SSHTabComponent,{id:workspace.id,root:workspace.root,host:workspace.host},{...identity,directory:cloneDirectory(identity.url,this.gitSetupDirectory)},controller.signal,
                     message=>{if(tabKey===this.activeTab&&version===this.version){this.gitSetupProgress=message;this.render()}})
             if(tabKey!==this.activeTab||version!==this.version||scope!==this.currentGitScope())return
-            const backend=workspace.kind==='local'?localWorkspace(root):remoteWorkspace(remote!,root)
+            const backend=workspace.kind==='local'?terminalLocalWorkspace(root,this.source??undefined):remoteWorkspace(remote!,root)
             const repository:GitRepositoryView={workspace:backend,root,name:workspacePath(backend.kind).basename(root)||root,expanded:true,groups:[],error:'',count:0,loading:true,
                 branch:'',branches:[],commits:[],inspector:'',inspectorLoading:false,inspectorError:''}
             this.invalidateGitScanCache(backend)
@@ -1453,7 +1454,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         try {
             const discovery=await discoverGitRepositories(workspace,{maxDepth:2,maxDirectories:60,maxRepositories:10,maxDurationMs:3000,concurrency:2,scanNestedRepositories:false,signal:controller.signal,onRepository:root=>{
                 if(!active())return
-                const repository=workspace.kind==='remote' && selection?.remote ? remoteWorkspace(selection.remote,root) : localWorkspace(root)
+                const repository=workspace.kind==='remote' && selection?.remote ? remoteWorkspace(selection.remote,root) : terminalLocalWorkspace(root,this.source??undefined)
                 const entry:GitRepositoryView=previous.get(root)??{workspace:repository,name:workspacePath(repository.kind).basename(root)||root,root,
                     expanded:this.collapsed.has(this.repositoryKey(root))?!this.collapsed.get(this.repositoryKey(root)):root===workspace.root,groups:[],error:'',count:0,loading:true,
                     branch:'',branches:[],commits:[],inspector:'',inspectorLoading:false,inspectorError:''}
@@ -1541,7 +1542,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(!quiet)repository.relayProgress={fetch:t('正在提取上游状态…'),pull:t('正在拉取上游更新…'),push:t('正在推送到上游…')}[action]
             repository.relayCancel=()=>controller.abort();this.render()
             try{
-                const operation=()=>syncLocalGit(repository.workspace.root,action,controller.signal)
+                const operation=()=>syncLocalGit(repository.workspace.root,action,controller.signal,repository.workspace.executionEnvironment==='wsl'?async(args,signal)=>{
+                    const result=await repository.workspace.runGit!(args,signal)
+                    if(result.exitCode!==0||result.truncated)throw new Error(result.stderr.trim()||`Git failed (${result.exitCode})`)
+                    return result.stdout
+                }:undefined)
                 if(action==='fetch')await operation()
                 else await this.recordGitSync(repository,action,operation)
             }
@@ -1573,13 +1578,14 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(this.repositories.includes(entry)&&!entry.error)await this.loadGitInspector(entry,undefined,quiet)
     }
     cancelRelay(repository:GitRepositoryView):void{repository.relayCancel?.()}
-    get isRemote():boolean{return this.selection?.workspace?.kind==='remote'||Boolean(this.selection?.remote)}
+    get isRemote():boolean{return Boolean(this.source&&isWslTerminal(this.source))||this.selection?.workspace?.kind==='remote'||Boolean(this.selection?.remote)}
     get workspaceLabel():string{
         if(this.selection?.workspace)return this.selection.workspace.label
         const remote=this.selection?.remote
         return remote?`${remote.authUsername??remote.profile.options.user??''}@${remote.profile.options.host}`:t('未选择目录')
     }
     get connectionLabel():string{
+        if(this.source&&isWslTerminal(this.source))return t('WSL 远程工作区')
         if(this.selection?.workspace)return this.isRemote?t('SSH 远程工作区'):t('本地工作区')
         return this.selection?.remote?.open?t('SSH 已连接 · 等待路径'):this.selection?t('正在检测目录'):t('等待终端')
     }

@@ -17,6 +17,7 @@ export interface WorkspaceText { content: string; hash: string }
 import { textFileLimit } from '../shared/text-file-limit'
 export { textFileLimit } from '../shared/text-file-limit'
 export interface Workspace {
+  executionEnvironment?: 'wsl';
   saveIssue?(path:string):{message:string;busy:boolean}|undefined;
   verifySave?(path:string):Promise<WorkspaceText>;
   reloadSave?(path:string):Promise<WorkspaceText>;
@@ -44,6 +45,7 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
     const absolute = childRoot(workspace.root, root)
     return {
         sourceWorkspace: workspace,
+        executionEnvironment: workspace.executionEnvironment,
         id: `${workspace.id}:${root}`, kind: workspace.kind, host: workspace.host, label: absolute, root, name: leafName(root), titleName: inheritedWorkspaceName(workspace.kind,workspace.name),
         get waitForConnection(){return workspace.waitForConnection},
         get connectionStatus(){return workspace.connectionStatus},

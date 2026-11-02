@@ -3236,6 +3236,9 @@ test('following a WSL terminal requests a real shell report instead of using the
     tree.enableCwd=async()=>{enabled++}
     tree.showWorkspace=async()=>{shown++}
     try{
+        assert.equal(tree.isRemote,true)
+        assert.match(tree.connectionLabel,/WSL/)
+        assert.equal(tree.canForward,false)
         assert.equal(tree.canEnableCwd,true)
         await tree.followTerminal()
         assert.equal(enabled,1)

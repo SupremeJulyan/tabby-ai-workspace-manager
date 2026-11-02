@@ -12,7 +12,11 @@ import type { Workspace } from '../workspace';
 import { runWorkspaceGit } from './workspace-git';
 
 export async function setupLocalGit(workspace:Workspace,mode:'init'|'clone',input:GitIdentity & {directory:string},options:{signal?:AbortSignal;report?:(message:string)=>void;local?:LocalGitRunner}={}):Promise<string> {
-  const identity=validateGitIdentity(input),git=options.local??localGitRunner(),root=await realpath(workspace.root),{signal,report}=options;
+  const identity=validateGitIdentity(input),git=options.local??(workspace.executionEnvironment==='wsl'?async(args:string[],signal?:AbortSignal)=>{
+    const result=await workspace.runGit!(args,signal);
+    if(result.exitCode!==0||result.truncated)throw new Error(result.stderr.trim()||`Git failed (${result.exitCode})`);
+    return result.stdout;
+  }:localGitRunner()),root=await realpath(workspace.root),{signal,report}=options;
   signal?.throwIfAborted();
   let target=root;
   if(mode==='init'){

@@ -617,6 +617,7 @@ export const englishMessages: Record<string,string> = {
     "等待终端报告当前目录…": "Waiting for the terminal to report its directory…",
     "正在连接 SSH…": "Connecting SSH…",
     "远程工作区占位符元数据无效": "Remote workspace placeholder metadata is invalid",
+    "WSL 远程工作区": "WSL remote workspace",
     "正在检测本地终端目录…": "Detecting local terminal directory…",
     "当前显示远程浏览目录；终端尚未上报实际路径。": "Showing the remote browsing directory; the terminal has not reported its actual path yet.",
     "Tabby SFTP 当前路径不是目录": "Tabby SFTP Current path is not a directory",

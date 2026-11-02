@@ -1,3 +1,4 @@
+import { terminalLocalWorkspace } from '../adapters/wsl-workspace'
 import { isMsysTerminal } from '../shared/msys-directory'
 import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath } from '../shared/wsl-directory'
 import { workspaceRecoveryState } from '../shared/workspace-recovery'
@@ -9,7 +10,7 @@ import { AppService, BaseTabComponent } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { BehaviorSubject, Subject, Subscription, auditTime } from 'rxjs'
 import { isAbsolute } from 'path'
-import { Workspace, localWorkspace } from '../arw-tree/workspace'
+import { Workspace } from '../arw-tree/workspace'
 import { prepareCwdIntegration } from '../adapters/shell-integration'
 import { cwdIntegrationCommand, RemoteShell } from '../shared/shell-integration'
 import { TabbyRelayTransport } from '../adapters/transport'
@@ -265,7 +266,7 @@ export class WorkspaceRegistry {
                 }
                 if(pathSource==='sftp'&&isSshTab(terminal)&&!terminal.sftpPanelVisible&&(!terminal.sftpPath||terminal.sftpPath==='/'))terminal.sftpPath=root
                 entry.root=root;entry.session=session
-                entry.selection={terminal,remote,pathSource,hint,workspace:remote?remoteWorkspace(remote,root):localWorkspace(root)}
+                entry.selection={terminal,remote,pathSource,hint,workspace:remote?remoteWorkspace(remote,root):terminalLocalWorkspace(root,terminal)}
                 if(this.current.value?.terminal===terminal||terminal.hasFocus)this.emit(entry.selection)
             } catch (error) {
                 if (version !== entry.version || entry.pinned) return
