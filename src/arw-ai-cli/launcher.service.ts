@@ -1,3 +1,5 @@
+import { wslLaunchDirectory } from '../shared/wsl-launch-directory'
+import { isWslTerminal } from '../shared/wsl-directory'
 import { wslBridgeEnvironment } from './wsl-bridge'
 import { paneLayout, selectStackedPane } from '../shared/pane-layout'
 import { orderedAiPanes } from './collapsed-panes'
@@ -77,17 +79,26 @@ export class AiLauncherService {
         const args = configuredArgs.map((argument:string)=>argument.trim()).filter(Boolean)
         let shell:AgentShell|undefined
         try {
-            const profiles=await this.profiles.getProfiles({includeBuiltin:true})
-            const available=selectableShells(profiles as any[])
-            const selected=(configured?.shell ?? defaultShell(available,this.config.store.terminal?.profile)) as Partial<AgentShell>|undefined
-            if (!selected||typeof selected.command!=='string'||!selected.command.trim()) {
-                throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
+            const source=selection.sourceTerminal??selection.terminal
+            if(source&&isWslTerminal(source)){
+                shell=agentShellFromOptions(source.profile?.options)
+            }else if(selection.workspace?.executionEnvironment==='wsl'){
+                const distribution=wslLaunchDirectory(selection.workspace.root).distribution
+                shell={command:'wsl.exe',args:distribution?['--distribution',distribution]:[],env:{},shellType:'unix'}
+            }else{
+                const profiles=await this.profiles.getProfiles({includeBuiltin:true})
+                const available=selectableShells(profiles as any[])
+                const selected=(configured?.shell ?? defaultShell(available,this.config.store.terminal?.profile)) as Partial<AgentShell>|undefined
+                if (!selected||typeof selected.command!=='string'||!selected.command.trim()) {
+                    throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
+                }
+                const current=available.find(candidate=>sameShell(selected,candidate))
+                if (!current) {
+                    throw new Error(t('所选 Shell 已不可用，请在 Tabby 设置 → ai-workspace-manager 中重新选择'))
+                }
+                shell=current
             }
-            const current=available.find(candidate=>sameShell(selected,candidate))
-            if (!current) {
-                throw new Error(t('所选 Shell 已不可用，请在 Tabby 设置 → ai-workspace-manager 中重新选择'))
-            }
-            shell=current
+            if(!shell)throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
         } catch (error) { this.notifications.error(t('AI CLI 启动失败'),String(error)); return }
         const workspace = selection.workspace?{...selection.workspace}:undefined
         if (!workspace) return

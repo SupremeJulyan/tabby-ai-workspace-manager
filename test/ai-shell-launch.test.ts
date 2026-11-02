@@ -82,3 +82,9 @@ test('settings list only usable local shell profiles and require an explicit sel
     assert.throws(()=>configuredShell({}),/选择启动 Shell/)
     assert.deepEqual(configuredShell(shells[1]),{id:'local:fish',name:'Fish',command:'/usr/bin/fish',args:[],env:{},shellType:null})
 })
+
+
+test('WSL AI launch replaces the original terminal command and retains distro and user',()=>{
+    const launch=shellCommand({command:'wsl.exe',args:['--distribution','Ubuntu','--user','developer','--exec','bash','-lc','old command'],shellType:'unix'},['codex'])
+    assert.deepEqual(launch.args,['--distribution','Ubuntu','--user','developer','--exec','bash','-l','-i','-c',"exec 'codex'"])
+})

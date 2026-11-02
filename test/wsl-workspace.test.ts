@@ -75,3 +75,24 @@ test('WSL setup and commit use the workspace runner end to end', {skip:process.p
     assert.equal((await git.history())[0].subject,'WSL commit')
     assert.ok(calls>5)
 })
+
+
+test('restored WSL UNC roots route Git to the guest even without a WSL source profile',async()=>{
+    const {withWslExecution}=await import('../src/adapters/wsl-execution')
+    for(const root of ['\\\\wsl.localhost\\Ubuntu-24.04\\root\\project','//wsl.localhost/Ubuntu-24.04/root/project','\\\\wsl$\\Ubuntu-24.04\\root\\project']){
+        for(const terminal of [undefined,{profile:{type:'local',options:{command:'powershell.exe'}}}]){
+            let plan:any
+            const workspace=withWslExecution({root} as any,terminal,'win32',async value=>{
+                plan=value
+                return {stdout:'',stderr:'',exitCode:0,truncated:false}
+            })
+            assert.equal(workspace.executionEnvironment,'wsl')
+            await workspace.runGit!(['-C',root,'status','--porcelain'])
+            assert.equal(plan.command,'wsl.exe')
+            assert.deepEqual(plan.args.slice(0,2),['--distribution','Ubuntu-24.04'])
+            assert.match(plan.args.at(-1),/^cd -- '\/root\/project'/)
+            assert.match(plan.args.at(-1),/git --no-pager/)
+            assert.ok(plan.args.at(-1).includes(`\"$(wslpath -u ${shellQuote(root)})\"`))
+        }
+    }
+})

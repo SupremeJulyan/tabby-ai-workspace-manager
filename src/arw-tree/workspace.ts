@@ -1,3 +1,4 @@
+import { withWslExecution } from '../adapters/wsl-execution'
 import { readLocalBytes } from '../shared/read-bytes';
 import { shellQuote } from '../shared/shell-quote';
 import { open, readFile, readdir, opendir, stat, lstat } from 'node:fs/promises';
@@ -88,7 +89,7 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
   };
   const sameSnapshot=(left:Awaited<ReturnType<typeof snapshot>>,right:Awaited<ReturnType<typeof snapshot>>)=>
     left.dev===right.dev&&left.ino===right.ino&&left.mode===right.mode&&left.uid===right.uid&&left.gid===right.gid&&left.size===right.size&&left.mtimeMs===right.mtimeMs&&left.ctimeMs===right.ctimeMs;
-  return {
+  const workspace:Workspace = {
     id, kind: 'local', root, host: 'localhost', label: root, name: leafName(root), titleName: leafName(root),
     watch: (changed, failed, signal, directories) => watchLocalDirectory(root, changed, failed, signal, directories),
     async listForGit(input,limit,signal) {
@@ -144,4 +145,5 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
         env:{LC_ALL:'C',LANGUAGE:'C',GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0'}},signal,options?.maxBytes);
     }
   };
+  return withWslExecution(workspace);
 }

@@ -4,7 +4,7 @@
 
 Manage local and remote workspaces in Tabby with file browsing and editing, uploads and downloads, rich previews, Git integration, and AI terminal collaboration.
 
-Package: `tabby-ai-workspace-manager` · Version: `0.1.4`
+Package: `tabby-ai-workspace-manager` · Version: `0.1.5`
 
 ![Interface preview](docs/images/demo.jpg)
 
@@ -12,11 +12,11 @@ Package: `tabby-ai-workspace-manager` · Version: `0.1.4`
 
 Verified with Tabby 1.0.238, Node.js 22+, npm, and Git. Install and sign in to your AI CLI separately.
 
-1. Download `tabby-ai-workspace-manager-0.1.4.tgz` from [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.4).
+1. Download `tabby-ai-workspace-manager-0.1.5.tgz` from [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.5).
 2. Open **Settings → Plugins → Open Plugins Directory** in Tabby, then run in that directory:
 
    ```sh
-   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.4.tgz
+   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.5.tgz
    ```
 
 3. Fully quit and restart Tabby.
@@ -79,7 +79,7 @@ Discovery is limited to **two levels, 60 directories, 10 repositories, and 5000 
 
 Choose a local Tabby shell in Settings, then configure the AI CLI command, launch arguments, recovery arguments, and HTTP/HTTPS proxy. The AI CLI launches through that shell, so it loads the shell profile and inherits its environment. The plugin never executes the AI command directly and does not provide separate AI terminal environment variables. Enter one argument per line and reopen the AI terminal after changes.
 
-When WSL is selected as the AI launch shell on Windows, the plugin automatically adds an `arw` bridge to that session’s PATH. The bridge uses Windows Node.js and the installed Windows CLI to access the same workspace catalog and named pipes, including after session recovery. A managed bridge is also maintained at `~/.local/bin/arw` so AI shell snapshots that restore an older PATH still reach Windows. Existing links are not migrated, and foreign commands are preserved. No separate Linux CLI installation or shell configuration changes are needed. Windows Node.js must be available on the launch shell’s PATH. The startup directory is set explicitly: Linux filesystem directories keep their UNC paths on Windows and native paths such as `/home/...` inside WSL; mounted drives use their Windows drive paths. No distribution argument is inferred from UNC paths, so the default WSL profile uses the system default distribution. Restored WSL terminals load their saved browser directory before shell cwd reporting is available and restore the known terminal cwd through `--cd`. Following the terminal switches the browser to its first actual cwd report. WSL terminals are classified as remote terminals. Git queries, commits, initialization, cloning, fetching, pulling and pushing run through the selected distribution and user, using WSL Git, credentials and SSH configuration. File access continues through Windows drive or UNC paths. The WSL file browser displays and copies native Linux paths such as `/mnt/d/projects` and `/root`; directory entry and completion convert those paths internally for Windows filesystem access.
+When WSL is selected as the AI launch shell on Windows, the plugin automatically adds an `arw` bridge to that session’s PATH. The bridge uses Windows Node.js and the installed Windows CLI to access the same workspace catalog and named pipes, including after session recovery. A managed bridge is also maintained at `~/.local/bin/arw` so AI shell snapshots that restore an older PATH still reach Windows. Existing links are not migrated, and foreign commands are preserved. No separate Linux CLI installation or shell configuration changes are needed. Windows Node.js must be available on the launch shell’s PATH. The startup directory is set explicitly: Linux filesystem directories keep their UNC paths on Windows and native paths such as `/home/...` inside WSL; mounted drives use their Windows drive paths. No distribution argument is inferred from UNC paths, so the default WSL profile uses the system default distribution. Restored WSL terminals load their saved browser directory before shell cwd reporting is available and restore the known terminal cwd through `--cd`. Following the terminal switches the browser to its first actual cwd report. AI terminals for WSL workspaces automatically use the source terminal’s WSL distribution, user and environment settings. WSL terminals are classified as remote terminals. Git queries, commits, initialization, cloning, fetching, pulling and pushing run through the selected distribution and user, using WSL Git, credentials and SSH configuration. File access continues through Windows drive or UNC paths. The WSL file browser displays and copies native Linux paths such as `/mnt/d/projects` and `/root`; directory entry and completion convert those paths internally for Windows filesystem access.
 
 For Codex recovery, enter `resume` and `--last`; for Claude, use `--continue`. Launch and recovery arguments are configured separately. Tabby's tab recovery can restore these sessions.
 
@@ -127,7 +127,7 @@ File recovery diagnostics are stored at `<Tabby config directory>/omw/file-recov
 npm ci
 npm run check          # Build and run all tests
 npm run test:portable  # Run portable host tests after building
-npm run pack:plugin    # Generate artifacts/tabby-ai-workspace-manager-0.1.4.tgz
+npm run pack:plugin    # Generate artifacts/tabby-ai-workspace-manager-0.1.5.tgz
 npm run dev -- /opt/Tabby/tabby
 ```
 

@@ -4,7 +4,7 @@
 
 在 Tabby 中管理本地与远程工作区，支持文件浏览与编辑、上传下载、内容预览、Git 操作和 AI 终端协作。
 
-插件：`tabby-ai-workspace-manager` · 版本：`0.1.4`
+插件：`tabby-ai-workspace-manager` · 版本：`0.1.5`
 
 ![界面预览](docs/images/demo.jpg)
 
@@ -12,11 +12,11 @@
 
 验证环境：Tabby 1.0.238、Node.js 22+、npm、Git。AI CLI 需另行安装并登录。
 
-1. 从 [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.4) 下载 `tabby-ai-workspace-manager-0.1.4.tgz`。
+1. 从 [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.5) 下载 `tabby-ai-workspace-manager-0.1.5.tgz`。
 2. 在 Tabby 中打开 **Settings → Plugins → Open Plugins Directory**，进入该目录执行：
 
    ```sh
-   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.4.tgz
+   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.5.tgz
    ```
 
 3. 完全退出并重新启动 Tabby。
@@ -78,7 +78,7 @@ Markdown 默认打开为可编辑源码，点击“预览”可在同一标签�
 
 设置页可选择 Tabby 中的本地 Shell，并可配置 AI CLI 命令、启动参数、恢复参数、HTTP/HTTPS 代理。AI CLI 由所选 Shell 启动，因此会加载该 Shell 的登录配置并继承其环境变量；插件不再直接执行 AI 命令，也不提供独立的 AI 终端环境变量配置。参数每行一项，修改后重新打开 AI 终端生效。
 
-Windows 上选择 WSL 作为 AI 启动 Shell 时，插件会自动将 `arw` 桥接入口加入该会话的 PATH，通过 Windows Node.js 调用 Windows 插件中的 CLI，以访问同一套工作区目录和命名管道。会话恢复时同样生效，插件会在 WSL 的 `~/.local/bin/arw` 自动维护用户级桥接，以适配恢复旧 PATH 的 AI Shell 快照；不迁移旧链接，保留其他同名入口。无需手动安装 WSL 版 `arw` 或修改 Shell 配置；Windows Node.js 必须在启动 Shell 的 PATH 中可用。 启动时显式指定工作目录：WSL 文件系统目录在 Windows 侧保留 UNC 路径，在 WSL 内使用 `/home/...` 等原生路径；挂载盘目录转换为对应 Windows 盘符路径。不会从 UNC 路径自动添加发行版参数，默认 WSL 配置使用系统默认发行版。 WSL 终端恢复时，文件树先加载已保存的浏览目录，不必等待会话级路径上报；已知的终端工作目录通过 `--cd` 恢复。点击“跟随终端”后，会切换到首次上报的实际目录。 WSL 终端归类为远程终端；其 Git 查询、提交、初始化、克隆和拉取/推送通过对应发行版及用户执行，使用 WSL 内的 Git、凭据和 SSH 配置。文件访问仍通过 Windows 盘符或 UNC 路径完成。 WSL 资源管理器显示和复制原生 Linux 路径（如 `/mnt/d/projects`、`/root`），目录输入、补全和进入目录时在内部转换为 Windows 文件系统路径。
+Windows 上选择 WSL 作为 AI 启动 Shell 时，插件会自动将 `arw` 桥接入口加入该会话的 PATH，通过 Windows Node.js 调用 Windows 插件中的 CLI，以访问同一套工作区目录和命名管道。会话恢复时同样生效，插件会在 WSL 的 `~/.local/bin/arw` 自动维护用户级桥接，以适配恢复旧 PATH 的 AI Shell 快照；不迁移旧链接，保留其他同名入口。无需手动安装 WSL 版 `arw` 或修改 Shell 配置；Windows Node.js 必须在启动 Shell 的 PATH 中可用。 启动时显式指定工作目录：WSL 文件系统目录在 Windows 侧保留 UNC 路径，在 WSL 内使用 `/home/...` 等原生路径；挂载盘目录转换为对应 Windows 盘符路径。不会从 UNC 路径自动添加发行版参数，默认 WSL 配置使用系统默认发行版。 WSL 终端恢复时，文件树先加载已保存的浏览目录，不必等待会话级路径上报；已知的终端工作目录通过 `--cd` 恢复。点击“跟随终端”后，会切换到首次上报的实际目录。 WSL 工作区的 AI 终端会自动沿用来源终端的 WSL 发行版、用户和环境设置。WSL 终端归类为远程终端；其 Git 查询、提交、初始化、克隆和拉取/推送通过对应发行版及用户执行，使用 WSL 内的 Git、凭据和 SSH 配置。文件访问仍通过 Windows 盘符或 UNC 路径完成。 WSL 资源管理器显示和复制原生 Linux 路径（如 `/mnt/d/projects`、`/root`），目录输入、补全和进入目录时在内部转换为 Windows 文件系统路径。
 
 “打开文件”和“AI 终端布局”可分别选择“平铺”或“叠放”，文件默认叠放，AI 终端默认平铺，对新打开的内容生效。平铺文件位于终端上方，布局设置中可调整工作区/AI 窗格宽度及文件区/主终端高度，默认左右 50%/50%、上下 60%/40%；每对比例联动且合计 100%，在新开窗格或重新排列时应用；叠放沿用相同位置，同一组窗格只显示一个，通过标题栏的左右箭头循环切换，所有编辑器和终端会话保持运行。文件使用与 AI 终端相同的控制按钮。
 
@@ -128,7 +128,7 @@ ARW 检查远程路径边界并拦截高危命令。审计记录位于 `<Tabby �
 npm ci
 npm run check          # 构建并运行全部测试
 npm run test:portable  # 构建后运行跨平台本机测试
-npm run pack:plugin    # 生成 artifacts/tabby-ai-workspace-manager-0.1.4.tgz
+npm run pack:plugin    # 生成 artifacts/tabby-ai-workspace-manager-0.1.5.tgz
 npm run dev -- /opt/Tabby/tabby
 ```
 

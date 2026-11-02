@@ -3373,3 +3373,25 @@ test('manual forwarding retry replaces the endpoint without replaying unknown co
         assert.match(plugin.TreeComponent.component.template,/retryProjectForwarding\(project,\$event\)/)
     }finally{release?.();await store.ngOnDestroy();releaseAi?.();assert.equal(retained,0);await fs.rm(directory,{recursive:true,force:true})}
 })
+
+test('AI launch automatically follows the source WSL distribution instead of the configured Windows shell',async()=>{
+    const {Subject}=await import('rxjs')
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const plugin=load(),closed=new Subject()
+    const source={profile:{type:'local',options:{command:'wsl.exe',args:['-d','Ubuntu','-u','developer','--exec','bash'],env:{WSL_TEST:'retained'}}}}
+    let opened,pinned
+    const launcher=new plugin.AiLauncherService({
+        async getProfiles(){throw Error('WSL launch should use the source profile')},
+        async openNewTabForProfile(profile){opened=profile;return {destroyed$:closed}},
+    },{pin(tab,selection){pinned=selection}},{error(message,detail){throw Error(message+detail)}},
+    {store:{omw:{agent:{command:'codex',args:[],shell:{command:'powershell.exe',args:[]}}}}},{},{})
+    const selection={terminal:source,workspace:{id:'wsl-test',...localWorkspace(process.cwd()),executionEnvironment:'wsl'},hint:''}
+    await launcher.launchConfigured(selection)
+    assert.equal(opened.options.command,'wsl.exe')
+    assert.deepEqual(opened.options.args.slice(0,4),['-d','Ubuntu','-u','developer'])
+    assert.equal(opened.options.cwd,process.cwd())
+    assert.equal(opened.options.args.filter(value=>value==='--exec').length,1)
+    assert.equal(opened.options.env.WSL_TEST,'retained')
+    assert.equal(pinned,selection)
+    closed.next()
+})

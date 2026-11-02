@@ -154,7 +154,7 @@ function wslArguments (args:string[],tokens:string[],env:Record<string,string>={
     const prefix=wslDirectoryArguments(args,env.ARW_WSL_CWD)
     const exec=prefix.findIndex(argument=>argument==='--'||argument==='-e'||argument==='--exec')
     if(exec<0)prefix.push('--exec')
-    else prefix[exec]='--exec'
+    else prefix.splice(exec,prefix.length-exec,'--exec')
     prefix.push('bash','-l','-i','-c',`${wslBridgeSetup(env)}exec ${posixLine(tokens)}`)
     return prefix
 }

@@ -1578,14 +1578,14 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(this.repositories.includes(entry)&&!entry.error)await this.loadGitInspector(entry,undefined,quiet)
     }
     cancelRelay(repository:GitRepositoryView):void{repository.relayCancel?.()}
-    get isRemote():boolean{return Boolean(this.source&&isWslTerminal(this.source))||this.selection?.workspace?.kind==='remote'||Boolean(this.selection?.remote)}
+    get isRemote():boolean{return this.selection?.workspace?.executionEnvironment==='wsl'||Boolean(this.source&&isWslTerminal(this.source))||this.selection?.workspace?.kind==='remote'||Boolean(this.selection?.remote)}
     get workspaceLabel():string{
         if(this.selection?.workspace)return this.selection.workspace.label
         const remote=this.selection?.remote
         return remote?`${remote.authUsername??remote.profile.options.user??''}@${remote.profile.options.host}`:t('未选择目录')
     }
     get connectionLabel():string{
-        if(this.source&&isWslTerminal(this.source))return t('WSL 远程工作区')
+        if(this.selection?.workspace?.executionEnvironment==='wsl'||(this.source&&isWslTerminal(this.source)))return t('WSL 远程工作区')
         if(this.selection?.workspace)return this.isRemote?t('SSH 远程工作区'):t('本地工作区')
         return this.selection?.remote?.open?t('SSH 已连接 · 等待路径'):this.selection?t('正在检测目录'):t('等待终端')
     }
