@@ -6,7 +6,7 @@ Manage local, SSH, and WSL workspaces in Tabby with file browsing and editing, u
 
 Package: `tabby-ai-workspace-manager` · Version: `0.1.5`
 
-![Interface preview](docs/images/demo.jpg)
+![Interface preview](docs/images/demo.png)
 
 ## Installation
 
