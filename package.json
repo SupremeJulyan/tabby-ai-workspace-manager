@@ -46,6 +46,7 @@
   "author": "Julyan",
   "files": [
     "dist",
+    "docs/images/demo.jpg",
     "README.md",
     "README.en.md",
     "LICENSE",

@@ -6,6 +6,8 @@ Manage local, SSH, and WSL workspaces in Tabby with file browsing and editing, u
 
 Package: `tabby-ai-workspace-manager` · Version: `0.1.5`
 
+![Interface preview](docs/images/demo.jpg)
+
 ## Installation
 
 Verified with Tabby 1.0.238, Node.js 22+, npm, and Git. Install and sign in to your AI CLI separately.

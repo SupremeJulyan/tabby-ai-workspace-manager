@@ -6,6 +6,8 @@
 
 插件：`tabby-ai-workspace-manager` · 版本：`0.1.5`
 
+![界面预览](docs/images/demo.jpg)
+
 ## 安装
 
 验证环境：Tabby 1.0.238、Node.js 22+、npm、Git。AI CLI 需另行安装并登录。
