@@ -9,7 +9,7 @@ import { cliGuidance, terminalCliGuidance, legacyCliGuidance, placeholderGuidanc
 
 test('flat names escape separators, distinguish accounts, and bound long components',()=>{
     const storage=join(tmpdir(),'arw-flat-names'),identity={host:'192.0.2.10',port:22,user:'developer'}
-    assert.equal(basename(agentCwdPath('/home/share/developer/c2_tests',storage,identity)),'192.0.2.10@22@developer-home-share-developer-c2_tests')
+    assert.equal(basename(agentCwdPath('/home/share/developer/sample_project',storage,identity)),'192.0.2.10@22@developer-home-share-developer-sample_project')
     for(const [left,right] of [['/a-b/c','/a/b-c'],['/','/root'],['/foo/terminal','/foo'],['/a b','/a%20b']])
         assert.notEqual(agentCwdPath(left,storage,identity),agentCwdPath(right,storage,identity))
     assert.notEqual(agentCwdPath('/a',storage,{...identity,user:'alice-bob'}),agentCwdPath('/bob/a',storage,{...identity,user:'alice'}))
