@@ -52,6 +52,6 @@ test('a real shell failure is returned as a failed directory change',async t=>{
         shell.stderr.on('data',(chunk:Buffer)=>filter.feedFromSession(chunk))
     },remove(){}}}
     const tab:any={session,sessionChanged$:new Subject(),alternateScreenActive:false,sendInput:(text:string)=>shell.stdin.write(text)}
-    await assert.rejects(changeTerminalDirectory(tab,join(parent,'missing')),/退出码 1|exit code 1/)
+    await assert.rejects(changeTerminalDirectory(tab,join(parent,'missing')),/终端路径未同步，仍有未执行输入与任务|Terminal path is not synced/)
 })
 

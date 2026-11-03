@@ -58,14 +58,14 @@ export async function changeTerminalDirectory(tab:BaseTerminalTabComponent<any>,
     try {
         await new Promise<void>((resolve,reject)=>{
             filter=new DirectoryEchoFilter(marker,echoMarker,status=>{
-                if(status===undefined){reject(new Error(t('未收到终端目录切换结果。')));return}
-                if(status!==0){reject(new Error(t`终端目录切换失败（退出码 ${status}）。`));return}
+                if(status===undefined){reject(new Error(t('终端路径未同步，仍有未执行输入与任务')));return}
+                if(status!==0){reject(new Error(t('终端路径未同步，仍有未执行输入与任务')));return}
                 resolve()
             })
             session.middleware.push(filter as unknown as SessionMiddleware)
             closed=session.closed$.subscribe(()=>reject(new Error('Terminal closed during directory switch')))
             changed=tab.sessionChanged$.subscribe(()=>{if(tab.session!==session)reject(new Error('Terminal session changed'))})
-            timer=setTimeout(()=>reject(new Error('The shell did not acknowledge the directory switch')),3000)
+            timer=setTimeout(()=>reject(new Error(t('终端路径未同步，仍有未执行输入与任务'))),3000)
             // The exit marker is emitted only after cd, with its actual status.
             const converter=isWslTerminal(tab)?'wslpath':isMsysTerminal(tab)?'cygpath':undefined
             const directory=converter&&/^(?:[a-z]:[\\/]|\\\\)/i.test(root)?`"$(${converter} -u ${shellQuote(root)})"`:shellQuote(root)

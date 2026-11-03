@@ -1,3 +1,4 @@
+import { wslShellArguments } from '../shared/wsl-shell'
 import { wslDirectoryArguments } from '../shared/wsl-launch-directory'
 import { wslBridgeSetup } from './wsl-bridge'
 import { shellQuote } from '../shared/shell-quote'
@@ -155,7 +156,7 @@ function wslArguments (args:string[],tokens:string[],env:Record<string,string>={
     const exec=prefix.findIndex(argument=>argument==='--'||argument==='-e'||argument==='--exec')
     if(exec<0)prefix.push('--exec')
     else prefix.splice(exec,prefix.length-exec,'--exec')
-    prefix.push('bash','-l','-i','-c',`${wslBridgeSetup(env)}exec ${posixLine(tokens)}`)
+    prefix.push(...wslShellArguments(`${wslBridgeSetup(env)}exec ${posixLine(tokens)}`,true))
     return prefix
 }
 
@@ -181,6 +182,7 @@ export function shellCommand (shell:ShellCommand,agentArgs:string[]):ShellComman
  */
 export function replaceShellArguments (shell:ShellCommand,agentArgs:string[]):ShellCommand {
     const family=shellFamily(shell)
+    if(family==='wsl')return shellCommand(shell,agentArgs)
     const candidates=family==='cmd'?['/c','/k']:family==='powershell'?['-command','-c']:['-c','--command']
     let index=-1
     for (let position=shell.args.length-1;position>=0;position--) {
@@ -188,12 +190,8 @@ export function replaceShellArguments (shell:ShellCommand,agentArgs:string[]):Sh
     }
     if (index<0) return shellCommand(shell,agentArgs)
     const replacement=family==='powershell'?powershellLine(agentArgs):family==='cmd'?cmdLine(agentArgs):`exec ${posixLine(agentArgs)}`
-    const command=family==='wsl'?wslBridgeSetup(shell.env)+replacement:replacement
-    const prefix=family==='wsl'?wslDirectoryArguments(shell.args.slice(0,index+1),shell.env?.ARW_WSL_CWD):shell.args.slice(0,index+1)
-    if(family==='wsl'){
-        const marker=prefix.indexOf('--')
-        if(marker>=0)prefix[marker]='--exec'
-    }
+    const command=replacement
+    const prefix=shell.args.slice(0,index+1)
     return {command:shell.command,args:prefix.concat([command]),env:shell.env,shellType:shell.shellType}
 }
 

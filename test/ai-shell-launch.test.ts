@@ -1,3 +1,4 @@
+import { wslShellArguments } from '../src/shared/wsl-shell'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { configuredShell } from '../src/arw-ai-cli/settings-shell'
@@ -52,7 +53,7 @@ test('Windows Git Bash, MSYS2 and WSL profiles are routed to their real shell',(
     const msys2=shellCommand({command:'C:\\msys64\\msys2_shell.cmd',args:['-no-start','-mingw64'],shellType:'unix'},['codex'])
     assert.deepEqual(msys2.args,['-no-start','-mingw64','-c',`exec 'codex'`])
     const wsl=shellCommand({command:'C:\\Windows\\System32\\wsl.exe',args:['-d','Ubuntu'],shellType:'unix'},['codex','--flag'])
-    assert.deepEqual(wsl.args,['-d','Ubuntu','--exec','bash','-l','-i','-c',`exec 'codex' '--flag'`])
+    assert.deepEqual(wsl.args,['-d','Ubuntu','--exec',...wslShellArguments(`exec 'codex' '--flag'`,true)])
 })
 
 test('saved older shell invocations are rewritten with the same wrapper',()=>{
@@ -86,5 +87,5 @@ test('settings list only usable local shell profiles and require an explicit sel
 
 test('WSL AI launch replaces the original terminal command and retains distro and user',()=>{
     const launch=shellCommand({command:'wsl.exe',args:['--distribution','Ubuntu','--user','developer','--exec','bash','-lc','old command'],shellType:'unix'},['codex'])
-    assert.deepEqual(launch.args,['--distribution','Ubuntu','--user','developer','--exec','bash','-l','-i','-c',"exec 'codex'"])
+    assert.deepEqual(launch.args,['--distribution','Ubuntu','--user','developer','--exec',...wslShellArguments("exec 'codex'",true)])
 })

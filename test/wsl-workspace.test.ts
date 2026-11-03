@@ -1,3 +1,4 @@
+import { wslShellArguments } from '../src/shared/wsl-shell'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,7 +17,7 @@ const terminal={profile:{type:'local',options:{command:'C:\\Windows\\System32\\w
 test('WSL command execution preserves distro and user without replaying terminal startup commands',()=>{
     const plan=wslCommandPlan(terminal,"\\\\wsl.localhost\\Ubuntu\\home\\developer's project",'printf hello')
     assert.equal(plan.command,terminal.profile.options.command)
-    assert.deepEqual(plan.args.slice(0,-1),['--distribution','Ubuntu','--user','developer','--exec','sh','-c'])
+    assert.deepEqual(plan.args.slice(0,-1),['--distribution','Ubuntu','--user','developer','--exec',...wslShellArguments('').slice(0,-1)])
     assert.equal(plan.args.at(-1),`cd -- ${shellQuote("/home/developer's project")} || exit; printf hello`)
     assert.match(wslCommandPlan({profile:{options:{args:[]}}},'\\\\wsl$\\Debian\\home','true').args.join(' '),/--distribution Debian/)
 })

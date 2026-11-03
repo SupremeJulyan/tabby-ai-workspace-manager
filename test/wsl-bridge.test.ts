@@ -1,3 +1,4 @@
+import { wslShellArguments } from '../src/shared/wsl-shell'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm, symlink, readFile, lstat, realpath } from 'node:fs/promises'
@@ -17,7 +18,7 @@ test('WSL receives a bridge for Windows Node and host workspace context',()=>{
     assert.equal(bridge.ARW_WSL_CLI,source)
     assert.deepEqual(JSON.parse(bridge.ARW_WSL_CONTEXT),{ARW_WORKSPACE_ROOT:'/srv/project',TABBY_CONFIG_DIRECTORY:'C:\\Tabby config'})
     const launch=shellCommand({command:'wsl.exe',args:['-d','Ubuntu'],env:bridge,shellType:null},['codex','--model','a b'])
-    assert.deepEqual(launch.args.slice(0,7),['-d','Ubuntu','--exec','bash','-l','-i','-c'])
+    assert.deepEqual(launch.args.slice(0,-1),['-d','Ubuntu','--exec',...wslShellArguments('',true).slice(0,-1)])
     assert.match(launch.args.at(-1)!,/export PATH="\$__arw_bin:\$PATH"/)
     const restored=replaceShellArguments({...launch,args:launch.args},['codex','resume','--last'])
     assert.match(restored.args.at(-1)!,/export PATH="\$__arw_bin:\$PATH"/)
@@ -50,12 +51,12 @@ test('bridge preserves cwd, stdin, literal arguments, context and exit status',{
     assert.deepEqual(JSON.parse(result.output),{cwd:physicalRoot,args,config:'C:\\Tabby config',stdin:'stdin payload'})
 })
 
-test('WSL starts Bash directly so bridge variables are not expanded by an outer shell',()=>{
+test('WSL loads the guest login shell and preserves the literal bridge script',()=>{
     const env=wslBridgeEnvironment('wsl.exe',{PATH:'C:\\nodejs'},'C:\\Users\\user\\AppData\\Roaming\\tabby\\plugins\\node_modules\\manager\\dist\\arw.cjs',undefined,'win32',()=>true)
     for(const args of [[],['--'],['-e'],['--exec']]){
         const launch=shellCommand({command:'wsl.exe',args,env,shellType:null},['codex'])
         assert.equal(launch.args[0],'--exec')
-        assert.equal(launch.args[1],'bash')
+        assert.deepEqual(launch.args.slice(1,-1),wslShellArguments('',true).slice(0,-1))
         assert.ok(launch.args.at(-1)!.includes('$__arw_bin'))
         assert.ok(launch.args.at(-1)!.includes('AppData'))
     }

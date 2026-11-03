@@ -1,3 +1,4 @@
+import { wslShellArguments } from '../src/shared/wsl-shell'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -35,7 +36,7 @@ test('startup flags precede command delimiters and stale directory options are r
 test('WSL AI launch explicitly uses the selected workspace rather than the host cwd',()=>{
     const env=wslBridgeEnvironment('wsl.exe',{PATH:'C:\\nodejs'},'C:\\plugin\\dist\\arw.cjs',root,'win32',()=>true)
     const launch=shellCommand({command:'wsl.exe',args:[],env,shellType:null},['codex'])
-    assert.deepEqual(launch.args.slice(0,7),['--cd','/home/developer','--exec','bash','-l','-i','-c'])
+    assert.deepEqual(launch.args.slice(0,-1),['--cd','/home/developer','--exec',...wslShellArguments('',true).slice(0,-1)])
     assert.ok(launch.args.at(-1)!.startsWith("cd -- '/home/developer' || exit; "))
     assert.equal(env.ARW_WSL_CWD,root)
 })

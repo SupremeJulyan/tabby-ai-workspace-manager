@@ -1,3 +1,4 @@
+import { wslShellArguments } from '../shared/wsl-shell'
 import type { Workspace } from '../arw-tree/workspace'
 import { executeCaptured } from '../shared/process'
 import { shellQuote } from '../shared/shell-quote'
@@ -16,7 +17,7 @@ export function wslCommandPlan(terminal:{profile?:any},root:string,command:strin
     const directory=parsed.native?shellQuote(parsed.directory):`"$(wslpath -u ${shellQuote(root)})"`
     return {command:terminal.profile?.options?.command??'wsl.exe',args:[
         ...((distribution??parsed.distribution)?['--distribution',(distribution??parsed.distribution)!]:[]),
-        ...(user?['--user',user]:[]),'--exec','sh','-c',`cd -- ${directory} || exit; ${command}`]}
+        ...(user?['--user',user]:[]),'--exec',...wslShellArguments(`cd -- ${directory} || exit; ${command}`)]}
 }
 
 /** UNC roots must stay in WSL even when restored without a source terminal. */
