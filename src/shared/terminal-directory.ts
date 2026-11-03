@@ -12,18 +12,29 @@ export class DirectoryEchoFilter {
     readonly outputToTerminal$ = new Subject<Buffer>()
     private pending = Buffer.alloc(0)
     private active = true
-    constructor(private marker:Buffer,private acknowledged:()=>void) {}
+    constructor(private marker:Buffer,private echoMarker:Buffer,private acknowledged:(status?:number)=>void) {}
     feedFromTerminal(data:Buffer):void {this.outputToSession$.next(data)}
     feedFromSession(data:Buffer):void {
         if(!this.active){this.outputToTerminal$.next(data);return}
         this.pending=Buffer.concat([this.pending,data])
         const index=this.pending.indexOf(this.marker)
         if(index<0)return
+        const before=this.pending.subarray(0,index)
         const rest=this.pending.subarray(index+this.marker.length)
+        // PTY output can split the status code and its delimiter across chunks.
+        const status=/^(-?\d+)\x1f/.exec(rest.toString('latin1'))
+        if(!status)return
         this.pending=Buffer.alloc(0);this.active=false
-        // Replace the old prompt; the shell will print its new directory prompt.
-        this.outputToTerminal$.next(Buffer.concat([Buffer.from('\r\x1b[2K'),rest]))
-        this.acknowledged()
+        // Remove only the echoed injected line. Keep output generated before cd.
+        let visibleBefore=before
+        const echoedAt=before.indexOf(this.echoMarker)
+        if(echoedAt>=0){
+            const start=before.lastIndexOf(0x0a,echoedAt)+1,end=before.indexOf(0x0a,echoedAt)
+            if(end>=0)visibleBefore=Buffer.concat([before.subarray(0,start),before.subarray(end+1)])
+        }
+        const visibleAfter=rest.subarray(status[0].length)
+        this.outputToTerminal$.next(Buffer.concat([Buffer.from('\r\x1b[2K'),visibleBefore,visibleAfter]))
+        this.acknowledged(Number(status[1]))
     }
     restore():void {
         this.active=false
@@ -37,26 +48,28 @@ const switching=new WeakSet<object>()
 export async function changeTerminalDirectory(tab:BaseTerminalTabComponent<any>,root:string):Promise<void> {
     const session=tab.session
     if(!session?.open)throw new Error(t('终端尚未连接，无法切换目录'))
-    if(tab.alternateScreenActive)throw new Error(t('终端正在运行全屏程序，请先退出到 shell 提示符再切换目录'))
     if(switching.has(session))throw new Error('A directory switch is already pending')
     switching.add(session)
-    const nonce=randomBytes(16).toString('hex'),marker=Buffer.from(`\x1eARW_CD_${nonce}\x1f`)
+    const nonce=randomBytes(16).toString('hex'),marker=Buffer.from(`\x1eARW_CD_${nonce}:`),echoMarker=Buffer.from(`ARW_CD_${nonce}`)
     let timer:ReturnType<typeof setTimeout>|undefined
     let closed:{unsubscribe():void}|undefined
     let changed:{unsubscribe():void}|undefined
     let filter:DirectoryEchoFilter|undefined
     try {
         await new Promise<void>((resolve,reject)=>{
-            filter=new DirectoryEchoFilter(marker,resolve)
+            filter=new DirectoryEchoFilter(marker,echoMarker,status=>{
+                if(status===undefined){reject(new Error(t('未收到终端目录切换结果。')));return}
+                if(status!==0){reject(new Error(t`终端目录切换失败（退出码 ${status}）。`));return}
+                resolve()
+            })
             session.middleware.push(filter as unknown as SessionMiddleware)
             closed=session.closed$.subscribe(()=>reject(new Error('Terminal closed during directory switch')))
             changed=tab.sessionChanged$.subscribe(()=>{if(tab.session!==session)reject(new Error('Terminal session changed'))})
             timer=setTimeout(()=>reject(new Error('The shell did not acknowledge the directory switch')),3000)
-            // Escapes keep the marker out of the echoed command itself. cd runs in
-            // the interactive shell, so its cwd and environment remain in effect.
+            // The exit marker is emitted only after cd, with its actual status.
             const converter=isWslTerminal(tab)?'wslpath':isMsysTerminal(tab)?'cygpath':undefined
             const directory=converter&&/^(?:[a-z]:[\\/]|\\\\)/i.test(root)?`"$(${converter} -u ${shellQuote(root)})"`:shellQuote(root)
-            tab.sendInput(` printf '\\036ARW_CD_${nonce}\\037'; cd -- ${directory}\r`)
+            tab.sendInput(` cd -- ${directory}; arw_status=$?; printf '\\036ARW_CD_${nonce}:%s\\037' "$arw_status"\r`)
         })
     } finally {
         if(timer)clearTimeout(timer)

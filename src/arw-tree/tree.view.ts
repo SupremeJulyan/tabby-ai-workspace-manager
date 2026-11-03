@@ -19,6 +19,7 @@ export const TREE_TEMPLATE = `
     </div>
     <div class="project-empty" *ngIf="!projects.length">{{terminalMode ? ('终端模式：不能添加工作区' | arwTranslate) : ('点击顶部 + 保存当前目录' | arwTranslate)}}</div>
 </div>
+<div class="workspace-switch-notice" *ngIf="workspaceSwitchNotice" role="status">{{workspaceSwitchNotice}}</div>
 <div class="current-directory" [title]="selection?.workspace ? displayDirectory : workspaceLabel">
   <span *ngIf="!selection?.workspace" class="current-directory-label">{{connectionLabel}}</span>
   <div *ngIf="selection?.workspace" class="directory-completion" [title]="('当前目录：' | arwTranslate)+directoryInput">
@@ -120,6 +121,7 @@ export const TREE_TEMPLATE = `
 `;
 
 export const TREE_STYLES = scaleTypography(`
+.workspace-switch-notice{flex:none;margin:0 10px 8px;padding:6px 8px;color:var(--arw-muted);font-size:10px;line-height:1.5;overflow-wrap:anywhere}
 .commit-sync{display:inline-block;margin-left:8px;padding:1px 5px;border:1px solid var(--arw-border);border-radius:3px;color:var(--arw-muted)}.commit-sync[data-sync=pushed],.commit-sync[data-sync=pulled],.commit-sync[data-sync=synced]{color:#7bc89a}.commit-sync[data-sync=unpushed],.commit-sync[data-sync=incoming]{color:#d7b56a}
 .error>span{flex:1;min-width:0;white-space:pre-wrap}.error>.dismiss-error{flex:none;align-self:flex-start;margin-left:auto;width:20px;height:20px;color:inherit}
 .directory-completion{position:relative;flex:1;min-width:0}.directory-ghost{position:absolute;inset:1px;overflow:hidden;pointer-events:none;padding:5px 9px;white-space:pre;color:var(--arw-muted);line-height:inherit}.directory-ghost>span{display:block;width:max-content}.directory-ghost-prefix{color:transparent}

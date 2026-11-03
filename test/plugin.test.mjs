@@ -461,13 +461,14 @@ test('workspace tree saves the browsed root and opens files and AI against the s
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
     const {Subject}=await import('rxjs')
     let echoFilter
+    const notices=[]
     const terminal={session:{open:true,closed$:new Subject(),middleware:{push(filter){echoFilter=filter},remove(){echoFilter=undefined}}},sessionChanged$:new Subject(),sendInput(value){
         this.lastInput=value
-        const nonce=/ARW_CD_([a-f0-9]+)/.exec(value)?.[1]
-        if(nonce)echoFilter.feedFromSession(Buffer.from(`\x1eARW_CD_${nonce}\x1f`))
+        const nonce=/ARW_CD_([a-f0-9]+):/.exec(value)?.[1]
+        if(nonce)echoFilter.feedFromSession(Buffer.from(`\x1eARW_CD_${nonce}:0\x1f`))
     }}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
     let contextMenu
-    const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(){}},{},{},{launchConfigured:async value=>launched.push(value)},{popupContextMenu(items){contextMenu=items}},store)
+    const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(message){notices.push(message)}},{},{},{launchConfigured:async value=>launched.push(value)},{popupContextMenu(items){contextMenu=items}},store)
     try {
         await mkdir(join(root,'src'));await writeFile(join(root,'src/main.ts'),'main')
         await tree.refresh()
@@ -483,8 +484,9 @@ test('workspace tree saves the browsed root and opens files and AI against the s
         assert.equal(project.root,join(root,'src'))
         await tree.addProject();assert.equal(tree.projects.length,1)
         await tree.selectProject(project)
+        assert.equal(tree.workspaceSwitchNotice,'','successful synchronization clears the inline notice')
         assert.equal(tree.breadcrumb,join(root,'src'))
-        assert.ok(terminal.lastInput.endsWith(`; cd -- '${project.root}'\r`),'selecting a saved workspace also changes the source terminal directory')
+        assert.ok(terminal.lastInput.startsWith(` cd -- '${project.root}';`),'selecting a saved workspace also changes the source terminal directory')
         assert.equal(tree.nodes[0].path,'main.ts')
         await tree.open(tree.nodes[0]);assert.equal(opened[0].inputs.workspace.root,project.root)
         await tree.launchProject(project)

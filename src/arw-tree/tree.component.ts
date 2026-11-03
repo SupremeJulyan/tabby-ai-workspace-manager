@@ -551,6 +551,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         })
     }
     private restoreTabState(key:object,selection:WorkspaceSelection):void{
+        this.workspaceSwitchNotice=''
         this.fileSelection.clear();this.renamingPath=null;this.draggedItems=undefined
         this.treeAbort?.abort()
         const state=this.tabStates.get(key)
@@ -744,6 +745,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }
     }
     switchingWorkspace=false
+    workspaceSwitchNotice=''
     private projectSelectionRequest=0
     async selectProject (project: ArwProject): Promise<void> {
         if(this.switchingWorkspace)return
@@ -751,12 +753,19 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const workspace = this.savedWorkspace(project)
         if (!workspace) return
         this.switchingWorkspace=true
+        this.workspaceSwitchNotice=''
         let terminalChange:Promise<void>|undefined
         try {
             const terminal=this.selection?.sourceTerminal??this.selection?.terminal
-            if(terminal?.session?.open&&!terminal.alternateScreenActive){
+            if(terminal?.session?.open){
                 terminalChange=changeTerminalDirectory(terminal,workspace.root)
-                    .catch(error=>logOperation('切换终端工作目录',{root:workspace.root,error:String(error)}))
+                try {await terminalChange}
+                catch(error){
+                    terminalChange=undefined
+                    logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})
+                    this.workspaceSwitchNotice=error instanceof Error?error.message:String(error)
+                }
+                if(request!==this.projectSelectionRequest||tab!==this.activeTab)return
             }
             this.mode = 'files'
             this.activeProject = project.id
