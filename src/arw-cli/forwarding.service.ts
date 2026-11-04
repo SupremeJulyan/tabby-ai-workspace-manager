@@ -16,6 +16,7 @@ import { tmpdir } from 'os'
 import { ForwardingServer } from './forwarding-server'
 import { shellQuote } from '../shared/shell-quote'
 import { ArwEditorComponent } from '../arw-tree/editor.component'
+import { ArwPreviewComponent } from '../arw-tree/preview.component'
 import { remoteWorkspace, remoteWorkspaceSession } from '../adapters/remote-workspace'
 import { orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
 import { selectedStackedPane } from '../shared/pane-layout'
@@ -117,13 +118,14 @@ export class ForwardingService {
                     const tab = this.app.activeTab
                     const panes = tab && 'getAllTabs' in tab ? (tab as any).getAllTabs() : tab ? [tab] : []
                     const focused = tab && 'getFocusedTab' in tab ? (tab as any).getFocusedTab() : tab
-                    const active = focused instanceof ArwEditorComponent ? focused
-                        : tab ? selectedStackedPane(tab, 'file', orderedFilePanes(tab, panes.filter((pane:any) => pane instanceof ArwEditorComponent)))
+                    const isRemoteFilePane=(pane:any):pane is ArwEditorComponent|ArwPreviewComponent => pane instanceof ArwEditorComponent||pane instanceof ArwPreviewComponent
+                    const active = isRemoteFilePane(focused) ? focused
+                        : tab ? selectedStackedPane(tab, 'file', orderedFilePanes(tab, panes.filter(isRemoteFilePane)))
                             : undefined
-                    if (!(active instanceof ArwEditorComponent) || active.workspace?.kind !== 'remote' || active.isDiff) return null;
+                    if (!isRemoteFilePane(active) || active.workspace?.kind !== 'remote' || ('isDiff' in active && active.isDiff)) return null;
                     const path = posix.resolve(active.workspace.sourceWorkspace?.root ?? active.workspace.root, active.workspace.sourceWorkspace ? active.workspace.root : '.', active.filePath);
                     return remoteWorkspaceSession(active.workspace) === session && (path === root || path.startsWith(root === '/' ? '/' : root + '/'))
-                        ? {path, dirty: active.dirty} : null;
+                        ? {path, dirty: active instanceof ArwEditorComponent ? active.dirty : false} : null;
                 },
                 validateCommand: workspace.validateCommand?.bind(workspace),
             }, tabbyConfigPath ? join(dirname(tabbyConfigPath), 'omw', 'audit.jsonl') : undefined)
