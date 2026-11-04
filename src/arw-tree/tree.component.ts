@@ -164,9 +164,9 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             this.cancelRename()
         }catch(error){this.error=String(error);this.render()}
     }
-    private async runFileAction(workspace:Workspace,action:'copy'|'move'|'delete'|'rename',inputs:string[],destination:string|undefined,operation:(path:string)=>Promise<void>,version=this.version):Promise<void> {
+    private async runFileAction(workspace:Workspace,action:'copy'|'paste'|'move'|'delete'|'rename',inputs:string[],destination:string|undefined,operation:(path:string)=>Promise<void>,version=this.version):Promise<void> {
         if(this.fileActionBusy)return
-        const paths=[...inputs],label=action==='copy'?t('复制'):action==='move'?t('移动'):action==='rename'?t('重命名'):t('删除')
+        const paths=[...inputs],label=action==='copy'?t('复制'):action==='paste'?t('粘贴'):action==='move'?t('移动'):action==='rename'?t('重命名'):t('删除')
         this.fileActionBusy=true;this.render()
         let completed=0,started=false
         try{
@@ -1152,7 +1152,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const source=copiedWorkspaceItem()
         if(!source)return
         const hostKey=this.copyHostKey(workspace),remote=this.selection?.remote
-        await this.runFileAction(workspace,'copy',source.paths??[source.path],directory,path=>pasteWorkspaceItem({...source,path},workspace,directory,hostKey,remote))
+        await this.runFileAction(workspace,'paste',source.paths??[source.path],directory,path=>pasteWorkspaceItem({...source,path},workspace,directory,hostKey,remote))
     }
     showBackgroundContextMenu(event:MouseEvent):void {
         event.preventDefault();event.stopPropagation()
@@ -1177,10 +1177,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             }})
             items.push({label:t('删除'),enabled:!this.fileActionBusy,click:()=>this.deleteSelected(node)})
             items.push({label:t('重命名'),enabled:selected.length===1&&!this.fileActionBusy,click:()=>this.beginRename(node)})
-            if(node.directory){
-                const source=copiedWorkspaceItem()
-                if(source&&!node.symlink&&!node.loading&&canPasteWorkspaceItem(source,workspace,this.copyHostKey(workspace)))
-                    items.unshift({label:t('粘贴'),click:()=>this.pasteIntoWorkspace(workspace,node.path)})
+            const source=copiedWorkspaceItem()
+            if(source&&!node.symlink&&!node.loading&&canPasteWorkspaceItem(source,workspace,this.copyHostKey(workspace))){
+                const paths=workspacePath(workspace.kind),directory=node.directory?node.path:paths.dirname(node.path)
+                items.unshift({label:t('粘贴'),click:()=>this.pasteIntoWorkspace(workspace,directory)})
             }
         }
         if(workspace&&node.directory){

@@ -16,10 +16,27 @@ export function canPasteWorkspaceItem(source:CopySource,target:Workspace,hostKey
     return source.workspace.kind!==target.kind||source.hostKey===hostKey
 }
 
+async function copyDestination(source:CopySource,target:Workspace,directory:string):Promise<string> {
+    const paths=workspacePath(target.kind),name=paths.basename(source.path)
+    let isDirectory=false
+    try {
+        const parent=paths.dirname(source.path)
+        const entries=await source.workspace.list(parent)
+        isDirectory=entries.find(entry=>entry.name===name)?.directory??false
+    } catch { /* Keep paste available for workspace adapters without parent listings. */ }
+    const entries=typeof target.list==='function'?await target.list(directory):[]
+    const names=new Set(entries.map(entry=>entry.name))
+    const extension=isDirectory?'':paths.extname(name)
+    const stem=extension?name.slice(0,-extension.length):name
+    let candidate=`${stem} copy${extension}`,index=2
+    while(names.has(candidate))candidate=`${stem} copy ${index++}${extension}`
+    return paths.resolve(target.root,directory,candidate)
+}
+
 /** Copy locally or on the shared remote host; use SFTP between local and remote. */
 export async function pasteWorkspaceItem(source:CopySource,target:Workspace,directory:string,hostKey:string,targetRemote?:SSHSession):Promise<void> {
     if(!canPasteWorkspaceItem(source,target,hostKey))throw new Error('Copy requires source and destination on the same host and account')
-    const paths=workspacePath(target.kind), destination=paths.resolve(target.root,directory,paths.basename(source.path))
+    const paths=workspacePath(target.kind), destination=await copyDestination(source,target,directory)
     if(source.workspace.kind!==target.kind){
         const uploading=target.kind==='remote', remote=uploading?targetRemote:source.remote
         const remoteWorkspace=uploading?target:source.workspace
@@ -37,11 +54,10 @@ export async function pasteWorkspaceItem(source:CopySource,target:Workspace,dire
                 }
                 return await copy(args,args.action==='cancel'?new AbortController().signal:controller.signal) as Record<string,unknown>
             }
-            await transfer(uploading?'upload':'download',{source:source.path,target:paths.resolve(target.root,directory),recursive:true},invoke)
+            await transfer(uploading?'upload':'download',{source:source.path,target:destination,recursive:true},invoke)
         }finally{closed.unsubscribe();controller.abort();remote.unref()}
         return
     }
-    if(source.path===destination)throw new Error('Copy target already exists')
     if(target.kind==='local'){
         await cp(source.path,destination,{recursive:true,force:false,errorOnExist:true,verbatimSymlinks:true})
         return
