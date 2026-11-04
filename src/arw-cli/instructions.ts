@@ -44,11 +44,13 @@ Use the arw-cli skill for remote operations. This local directory is a placehold
 This AI terminal is already bound: run arw without --id. Sidebar switches do not change the target. If unavailable, reconnect or reopen it; never choose another workspace automatically. Use arw workspaces and --id ID only for intentional cross-workspace operations or older unbound terminals.
 
 Read applicable remote project instructions, including AGENTS.md, before changes. Use known commands directly; consult arw COMMAND --help only for unfamiliar syntax or usage errors. Do not bypass POLICY_DENIED.
+
+Use dedicated arw file commands for project contents: list/read/search/find to inspect files, and write/edit/create/delete/move/chmod to change them. Reserve arw exec for shell tasks such as builds, tests, Git and process diagnostics. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, redirection, heredocs or scripts.
 `;
 
 export const terminalCliGuidance = `# ARW terminal mode
 
-Use the arw-cli skill. This local directory is a placeholder, not project files. Use arw exec for all project operations in the existing terminal, and arw output for stored output. The terminal must be at a shell prompt.
+Use the arw-cli skill. This local directory is a placeholder, not project files. Use arw exec only for shell tasks such as builds, tests, Git and process diagnostics, and arw output to continue stored output. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, redirection, heredocs or scripts. Use native file tools when available; if they cannot access the bound workspace, ask the user to open the regular remote workspace mode. The terminal must be at a shell prompt.
 
 Omit --id for this bound terminal. If unavailable, reopen the AI terminal in terminal mode; never substitute another session. Read applicable remote project instructions before changes. Use known commands directly; consult arw COMMAND --help only for unfamiliar syntax or usage errors. Do not bypass POLICY_DENIED.
 `;
@@ -80,7 +82,7 @@ function skillPlaceholderGuidance(remoteRoot:string):string {
     return `# ARW workspace\n\nThis local directory is only an AI startup placeholder, not a project copy or mount.\nRemote project root: ${JSON.stringify(remoteRoot)}. The workspace binding is in .awm/workspace.json.\nUse this directory as the local working directory when running arw; remote paths are command arguments. arw does not use inherited ARW_WORKSPACE_* variables or search parent directories for a binding.\nUse arw for remote project files and commands; see the arw-cli skill for usage. Read the remote project's applicable instructions before changes.\n`
 }
 
-export function placeholderGuidance(remoteRoot:string):string {
+function previousCurrentPlaceholderGuidance(remoteRoot:string):string {
     return [
         '# ARW workspace','',
         'This local directory is only an AI startup placeholder, not a project copy or mount.',
@@ -110,6 +112,37 @@ export function placeholderGuidance(remoteRoot:string):string {
     ].join('\n')
 }
 
+export function placeholderGuidance(remoteRoot:string):string {
+    return [
+        '# ARW workspace','',
+        'This local directory is only an AI startup placeholder, not a project copy or mount.',
+        `Remote project root: ${JSON.stringify(remoteRoot)}.`,
+        'arw reads .awm/workspace.json in its local working directory. Run arw with this placeholder as the local workdir; pass remote paths as arguments. Parent directories and inherited ARW_WORKSPACE_* variables are not used for binding.',
+        'Omit --id for this bound workspace. If unavailable, reconnect it in Tabby; never switch targets automatically. In an unbound terminal, ask the user to identify the target, list forwarded choices with arw workspaces, and use --id ID. An explicit --id also overrides the binding.','',
+        'Common commands:',
+        '```sh',
+        'arw list src',
+        'arw read AGENTS.md',
+        'arw read src/main.ts --head 80',
+        'arw search TODO src',
+        "arw find '*.ts' src",
+        "arw exec -- 'git status --short'",
+        "arw exec -- 'npm test'",
+        "arw write notes.txt --content 'text'",
+        'arw write notes.txt --file ./local-text.txt',
+        'arw upload ./local-file.txt remote-file.txt',
+        'arw download -r remote-folder ./local-folder',
+        'arw git-pull',
+        'arw git-push --path subproject',
+        '```','',
+        'Remote relative paths start at the workspace root; local transfer paths start at the local workdir. Read applicable remote project instructions before changes. Keep mutations inside the remote root.',
+        'Use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. Reserve arw exec for shell tasks such as builds, tests, Git and process diagnostics. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, shell redirection, heredocs or scripts.',
+        'Use known commands directly. Only consult arw COMMAND --help for unfamiliar syntax or usage errors; do not routinely query the help index or enumerate workspaces first.',
+        'Reads/searches return JSON; exec prints output and propagates exit status. Honor truncation and continuation fields. Continue stored output with arw output OUTPUT_ID stdout --offset OFFSET instead of rerunning a mutation. Inspect state before retrying interrupted mutations. Do not bypass POLICY_DENIED.',
+        'Terminal-mode bindings support only arw exec and arw output, running in the existing terminal at a shell prompt.','',
+    ].join('\n')
+}
+
 export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):void {
     removeGeneratedAgentGuidance(placeholder)
     try{writeFileSync(join(placeholder,'AGENTS.md'),placeholderGuidance(remoteRoot),{mode:0o600,flag:'wx'})}
@@ -118,7 +151,7 @@ export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):
         const file=join(placeholder,'AGENTS.md')
         if(lstatSync(file).isFile()){
             const content=readFileSync(file,'utf8')
-            if([previousPlaceholderGuidance(remoteRoot),skillPlaceholderGuidance(remoteRoot)].includes(content))writeFileSync(file,placeholderGuidance(remoteRoot),{mode:0o600})
+            if([previousPlaceholderGuidance(remoteRoot),skillPlaceholderGuidance(remoteRoot),previousCurrentPlaceholderGuidance(remoteRoot)].includes(content))writeFileSync(file,placeholderGuidance(remoteRoot),{mode:0o600})
         }
     }
 }
