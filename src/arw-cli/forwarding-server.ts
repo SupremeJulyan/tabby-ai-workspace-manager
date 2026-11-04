@@ -29,6 +29,15 @@ export interface ForwardingBackend {
   validateCommand?(command: string, signal: AbortSignal): Promise<void>;
 }
 
+function policyErrorMessage(error:unknown):string {
+  const message=redactSensitiveText(error instanceof Error?error.message:String(error));
+  const workspaceBoundary=(error instanceof CommandPolicyError&&/outside-workspace/.test(message))
+    ||(error instanceof RemotePathError&&/(outside workspaceRoot|escapes workspaceRoot)/.test(message));
+  return workspaceBoundary
+    ?`${message}. This request was blocked before execution. Keep the current agent session open and retry using paths inside the current workspace root. Do not bypass this boundary.`
+    :message;
+}
+
 /** Authenticated local CLI bridge. No MCP protocol. */
 export class ForwardingServer {
   private server?: Server;
@@ -81,8 +90,9 @@ export class ForwardingServer {
         this.controller.signal.throwIfAborted();
         reply(200, { result });
       } catch (error) {
+        const policyDenied=error instanceof CommandPolicyError||error instanceof RemotePathError;
         reply(200, { result: { status: 'error', code: error instanceof CommandPolicyError || error instanceof RemotePathError ? 'POLICY_DENIED' : 'REMOTE_TOOL_ERROR',
-          message: redactSensitiveText(error instanceof Error ? error.message : String(error)) } });
+          message: policyDenied?policyErrorMessage(error):redactSensitiveText(error instanceof Error ? error.message : String(error)) } });
       }
     });
     server.requestTimeout = 30_000;
@@ -224,7 +234,7 @@ export class ForwardingServer {
             results.push({index, ok, result});
             if (!ok) break;
           } catch (error) {
-            results.push({index, ok: false, result: {status: 'error', message: redactSensitiveText(error instanceof Error ? error.message : String(error))}});
+            results.push({index, ok: false, result: {status: 'error', message: policyErrorMessage(error)}});
             break;
           }
         }
