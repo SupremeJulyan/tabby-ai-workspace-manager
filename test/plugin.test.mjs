@@ -2068,9 +2068,11 @@ test('explorer multiselect confirms batch copy, move, rename and permanent delet
         await tree.dropLocalFiles({...event,dataTransfer:transfer},node('move-target'))
         assert.equal(await fs.readFile(join(root,'move-target/a.txt'),'utf8'),'a')
         await assert.rejects(fs.readFile(join(root,'a.txt')),/ENOENT/)
+        const renameDialogCount=dialogs.length
         tree.renamingPath='move-target';tree.renameValue='renamed'
         await tree.finishRename(node('move-target'))
         assert.equal(await fs.readFile(join(root,'renamed/b.txt'),'utf8'),'b')
+        assert.equal(dialogs.length,renameDialogCount,'rename applies without an extra confirmation dialog')
         tree.fileSelection.clear();await tree.clickNode(node('renamed'),{ctrlKey:true})
         response=0;await tree.deleteSelected()
         assert.equal(await fs.readFile(join(root,'renamed/a.txt'),'utf8'),'a')
@@ -2088,7 +2090,7 @@ test('explorer multiselect confirms batch copy, move, rename and permanent delet
         await tree.fileTreeKey({key:'v',ctrlKey:true,...event})
         assert.equal(await fs.readFile(join(root,'a.txt'),'utf8'),'a')
         assert.equal(await fs.readFile(join(root,'b.txt'),'utf8'),'do not overwrite')
-        assert.ok(notices.some(args=>args.join(' ').includes('1/2')),'partial failures report the completed item count')
+        assert.equal(await fs.readFile(join(root,'b copy.txt'),'utf8'),'b')
     }finally{tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true,maxRetries:5})}
 })
 

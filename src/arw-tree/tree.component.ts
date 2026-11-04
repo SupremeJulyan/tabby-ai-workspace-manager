@@ -160,19 +160,22 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(this.renameValue===node.name){this.cancelRename();return}
         try{
             const target=renamedPath(workspace,node.path,this.renameValue)
-            await this.runFileAction(workspace,'rename',[node.path],target,()=>moveWorkspaceItem(workspace,node.path,target))
+            await this.runFileAction(workspace,'rename',[node.path],target,()=>moveWorkspaceItem(workspace,node.path,target),this.version,false)
             this.cancelRename()
         }catch(error){this.error=String(error);this.render()}
     }
-    private async runFileAction(workspace:Workspace,action:'copy'|'paste'|'move'|'delete'|'rename',inputs:string[],destination:string|undefined,operation:(path:string)=>Promise<void>,version=this.version):Promise<void> {
+    private async runFileAction(workspace:Workspace,action:'copy'|'paste'|'move'|'delete'|'rename',inputs:string[],destination:string|undefined,operation:(path:string)=>Promise<void>,version=this.version,confirm=true):Promise<void> {
         if(this.fileActionBusy)return
         const paths=[...inputs],label=action==='copy'?t('复制'):action==='paste'?t('粘贴'):action==='move'?t('移动'):action==='rename'?t('重命名'):t('删除')
         this.fileActionBusy=true;this.render()
         let completed=0,started=false
         try{
-            const confirmation=await this.platform.showMessageBox({type:'warning',message:t`${label} ${paths.length} 项？`,
-                detail:paths.join('\n')+(destination?`\n${t('目标：')}${workspacePath(workspace.kind).resolve(workspace.root,destination)}`:'')+(action==='delete'?`\n${t('永久删除，不会移入回收站。')}`:''),buttons:[t('取消'),label],defaultId:0,cancelId:0})
-            if(confirmation.response!==1||version!==this.version||this.browserWorkspace!==workspace&&this.selection?.workspace!==workspace)return
+            if(confirm){
+                const confirmation=await this.platform.showMessageBox({type:'warning',message:t`${label} ${paths.length} 项？`,
+                    detail:paths.join('\n')+(destination?`\n${t('目标：')}${workspacePath(workspace.kind).resolve(workspace.root,destination)}`:'')+(action==='delete'?`\n${t('永久删除，不会移入回收站。')}`:''),buttons:[t('取消'),label],defaultId:0,cancelId:0})
+                if(confirmation.response!==1)return
+            }
+            if(version!==this.version||this.browserWorkspace!==workspace&&this.selection?.workspace!==workspace)return
             started=true;this.error=''
             for(const path of paths){await operation(path);completed++}
             this.notifications.info(t`${label}完成：${completed} 项`)
