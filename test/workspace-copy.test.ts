@@ -15,7 +15,10 @@ test('copy between local workspaces handles files and directories without overwr
         const source=localWorkspace(from),target=localWorkspace(to)
         await pasteWorkspaceItem({workspace:source,path:join(from,'folder'),hostKey:'local'},target,'.','local')
         assert.deepEqual(await readFile(join(to,'folder','data.bin')),Buffer.from([0,1,255]))
-        await assert.rejects(pasteWorkspaceItem({workspace:source,path:join(from,'folder'),hostKey:'local'},target,'.','local'))
+        await pasteWorkspaceItem({workspace:source,path:join(from,'folder'),hostKey:'local'},target,'.','local')
+        assert.deepEqual(await readFile(join(to,'folder copy','data.bin')),Buffer.from([0,1,255]))
+        await pasteWorkspaceItem({workspace:source,path:join(from,'folder'),hostKey:'local'},target,'.','local')
+        assert.deepEqual(await readFile(join(to,'folder copy 2','data.bin')),Buffer.from([0,1,255]))
         await assert.rejects(pasteWorkspaceItem({workspace:source,path:join(from,'folder'),hostKey:'local'},target,'.','other'),/same host/)
     }finally{await rm(root,{recursive:true,force:true})}
 })

@@ -26,6 +26,7 @@ async function copyDestination(source:CopySource,target:Workspace,directory:stri
     } catch { /* Keep paste available for workspace adapters without parent listings. */ }
     const entries=typeof target.list==='function'?await target.list(directory):[]
     const names=new Set(entries.map(entry=>entry.name))
+    if(!names.has(name))return paths.resolve(target.root,directory,name)
     const extension=isDirectory?'':paths.extname(name)
     const stem=extension?name.slice(0,-extension.length):name
     let candidate=`${stem} copy${extension}`,index=2
