@@ -1,7 +1,6 @@
 /** Shared wire names and schemas keep CLI and HTTP validation in sync. */
 export const commands: Record<string, { tool: string; positional?: string[]; fields: string[] }> = {
   workspaces: { tool: 'list_remote_workspaces', fields: [] },
-  'current-file': { tool: 'current_remote_file', fields: [] },
   output: { tool: 'remote_output', positional: ['outputId', 'stream'], fields: ['outputId', 'stream', 'offset', 'length'] },
   upload: { tool: 'remote_upload', positional: ['source', 'target'], fields: ['source', 'target', 'recursive'] },
   download: { tool: 'remote_download', positional: ['source', 'target'], fields: ['source', 'target', 'recursive'] },
@@ -24,7 +23,7 @@ export const commands: Record<string, { tool: string; positional?: string[]; fie
 export const help = `Usage: arw workspaces
        arw COMMAND [--id ID] [arguments]
 
-Workspace: workspaces, current-file (focused remote file path and dirty state)
+Workspace: workspaces
 Read:      list, read, read-many, search, find, output
 Write:     write, edit, create, delete, chmod, move
 Transfer:  upload, download
@@ -44,15 +43,6 @@ const commandHelp: Record<string, string> = {
 
 List IDs and identities of currently forwarded workspaces only. Does not accept --id.
 Match the target before operating; do not switch targets implicitly.`,
-  'current-file': `Usage: arw current-file --id ID
-
-Return the currently focused ARW remote file as {path, dirty}, or null if there is no
-focused file in this bound workspace. Does not read the file contents.
---workspace aliases --id. --input JSON|- supplies structured fields (camelCase);
---input - reads stdin. --compact omits successful/empty status metadata.
-Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
-read-only paths may access outside it subject to account permissions.
-`,
   'list': `Usage: arw list [PATH] --id ID [--limit N] [--cursor N]
 
 PATH defaults to workspaceRoot.

@@ -4,7 +4,7 @@
 
 Manage local, SSH, and WSL workspaces in Tabby with file browsing and editing, uploads and downloads, rich previews, Git operations, and AI terminal collaboration.
 
-Package: `tabby-ai-workspace-manager` · Version: `0.1.5`
+Package: `tabby-ai-workspace-manager` · Version: `0.1.6`
 
 ![Interface preview](docs/images/demo.png)
 
@@ -12,11 +12,11 @@ Package: `tabby-ai-workspace-manager` · Version: `0.1.5`
 
 Verified with Tabby 1.0.238, Node.js 22+, npm, and Git. Install and sign in to your AI CLI separately.
 
-1. Download `tabby-ai-workspace-manager-0.1.5.tgz` from [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.5).
+1. Download `tabby-ai-workspace-manager-0.1.6.tgz` from [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.1.6).
 2. Open **Settings → Plugins → Open Plugins Directory** in Tabby, then run in that directory:
 
    ```sh
-   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.5.tgz
+   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.1.6.tgz
    ```
 
 3. Fully quit and restart Tabby.

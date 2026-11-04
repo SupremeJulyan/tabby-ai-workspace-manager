@@ -78,7 +78,6 @@ test('expanded CLI performs structured reads, searches, edits, file management a
     list: async path => ({entries: await workspace.list(path)}),
     read: path => workspace.read(path),
     write: (path, content, _signal, hash) => workspace.write(path, content, hash),
-    currentFile: () => ({path: join(root, 'a.txt'), dirty: false}),
     run: (command, signal, options) => workspace.run(command, signal, options),
   }, join(root, 'audit.jsonl'));
   await server.start();
@@ -103,7 +102,6 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"git-push"}]}'), /Unsupported batch command/);
   assert.equal(gitCalls.length, 3);
   await writeFile(join(root, 'a.txt'), 'one\n你好\nthree\n');
-  assert.equal((await cli('current-file')).file.path, join(root, 'a.txt'));
   assert.equal((await cli('read', 'a.txt', '--head', '2')).content, 'one\n你好\n');
   assert.equal((await cli('read', '--path', 'a.txt', '--tail', '1')).content, 'three\n');
   assert.equal((await cli('read', 'a.txt', '--start-line', '2', '--line-count', '1')).content, '你好\n');

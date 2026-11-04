@@ -22,7 +22,6 @@ export interface ForwardingBackend {
   write(path: string, content: string, signal: AbortSignal, expectedHash?: string): Promise<unknown>;
   run(command: string, signal: AbortSignal, options?: {maxBytes?: number}): Promise<unknown>;
   terminalOnly?():boolean;
-  currentFile?(): unknown;
   onRequestFinished?(operation:string,error?:unknown):void;
   git?(direction:'pull'|'push',path:string,signal:AbortSignal):Promise<unknown>;
   copy?(args: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
@@ -148,7 +147,7 @@ export class ForwardingServer {
   }
 
   private reportRequest(operation:unknown,error?:unknown):void {
-    if(typeof operation!=='string'||['list_remote_workspaces','current_remote_file','remote_output','arw_cli_batch'].includes(operation))return;
+    if(typeof operation!=='string'||['list_remote_workspaces','remote_output','arw_cli_batch'].includes(operation))return;
     try{this.backend.onRequestFinished?.(operation,error)}catch{/* Status rendering must not change request results. */}
   }
 
@@ -205,7 +204,6 @@ export class ForwardingServer {
         if(!this.backend.git)throw new Error('Local Git relay is unavailable for this workspace');
         return this.backend.git(action,path,signal);
       }
-      case 'current_remote_file': return {file: this.backend.currentFile?.() ?? null};
       case 'remote_output': {
         const output = this.outputs.get(text(values.outputId, 'outputId'));
         if (!output) throw new Error('Output expired or unavailable in this workspace');
