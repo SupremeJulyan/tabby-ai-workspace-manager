@@ -125,6 +125,7 @@ export function restoredFileWorkspace(token:FileWorkspaceToken,app:AppService,po
         }
     }
     const workspace:Workspace={id:`recovered:${token.host}:${token.root}`,kind:'remote',root:token.root,host:token.host,
+        identityKey:JSON.stringify([token.profileId??null,token.host,token.port??22,token.user??'']),
         name:posix.basename(token.root),label:`${token.user??''}@${token.host}:${token.root}`,
         get waitForConnection(){return !findRemoteSession(app,token)},
         get connectionStatus(){return findRemoteSession(app,token)?undefined:t`正在等待 SSH 连接到 ${token.host}…`},

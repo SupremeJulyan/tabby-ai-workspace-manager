@@ -25,6 +25,7 @@ export interface Workspace {
   retrySave?(path:string,content:string):Promise<WorkspaceText>;
   readonly waitForConnection?:boolean;
   readonly connectionStatus?:string;
+  readonly identityKey?:string;
   sourceWorkspace?: Workspace;
   validateCommand?(command: string, signal?: AbortSignal): Promise<void>;
   watch?(changed: () => void, failed: (error: Error) => void, signal: AbortSignal, directories?:()=>string[]): Promise<void>;
@@ -47,6 +48,7 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
     return {
         sourceWorkspace: workspace,
         executionEnvironment: workspace.executionEnvironment,
+        identityKey: workspace.identityKey,
         id: `${workspace.id}:${root}`, kind: workspace.kind, host: workspace.host, label: absolute, root, name: leafName(root), titleName: inheritedWorkspaceName(workspace.kind,workspace.name),
         get waitForConnection(){return workspace.waitForConnection},
         get connectionStatus(){return workspace.connectionStatus},

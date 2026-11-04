@@ -76,7 +76,9 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
         return readShellText(transport, target,signal)
     }
     const workspace: Workspace = {
-        id: randomUUID(), kind: 'remote', root, host: session.profile.options.host, name: leafName(root), titleName: leafName(root),
+        id: randomUUID(), kind: 'remote', root, host: session.profile.options.host,
+        identityKey:JSON.stringify([session.profile.id??null,session.profile.options.host,session.profile.options.port??22,session.authUsername??session.profile.options.user??'']),
+        name: leafName(root), titleName: leafName(root),
         label: `${session.authUsername ?? session.profile.options.user ?? ''}@${session.profile.options.host}:${root}`,
         async watchSnapshot(directories, changed, signal) {
             const sftp = await optionalSftp(session)

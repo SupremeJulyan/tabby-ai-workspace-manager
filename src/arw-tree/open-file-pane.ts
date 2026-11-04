@@ -1,9 +1,8 @@
 import { paneLayout, selectStackedPane } from '../shared/pane-layout'
 import { orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
 import { isFilePane } from '../shared/pane-kind'
-import { posix, resolve } from 'node:path'
+import { isAbsolute, posix, resolve } from 'node:path'
 import type { Workspace } from './workspace'
-import { fileWorkspaceToken } from './file-recovery'
 import { collapsedAiPanes } from '../arw-ai-cli/collapsed-panes'
 import type { AppService, BaseTabComponent, SplitTabComponent, TabsService } from 'tabby-core'
 import type { NewTabParameters } from 'tabby-core/typings/services/tabs.service'
@@ -36,13 +35,22 @@ function sameFile(pane:any,inputs:any,type:any):boolean {
     if(!isFilePane(pane)||!(pane instanceof type)||!inputs?.workspace||typeof inputs.filePath!=='string'||pane.isDiff||pane.readonly||inputs.diffPatch!==undefined||inputs.readonly)return false
     const left=pane.workspace as Workspace,right=inputs.workspace as Workspace
     if(!left||typeof pane.filePath!=='string')return false
-    const leftToken=fileWorkspaceToken(left),rightToken=fileWorkspaceToken(right)
-    if(!leftToken||!rightToken||leftToken.kind!==rightToken.kind)return false
-    const normalizeRoot=(token:typeof leftToken)=>token.kind==='remote'?posix.resolve(token.root):resolve(token.root)
-    if(normalizeRoot(leftToken)!==normalizeRoot(rightToken))return false
-    if(leftToken.kind==='remote'&&(leftToken.host!==rightToken.host||(leftToken.port??22)!==(rightToken.port??22)||(leftToken.user??'')!==(rightToken.user??'')))return false
-    const normalizePath=(token:typeof leftToken,path:string)=>token.kind==='remote'?posix.resolve(token.root,path):resolve(token.root,path)
-    return normalizePath(leftToken,pane.filePath)===normalizePath(rightToken,inputs.filePath)
+    if(left.kind!==right.kind)return false
+    const root=(workspace:Workspace):string=>{
+        let current=workspace,path=workspace.root
+        const seen=new Set<Workspace>()
+        while(current.sourceWorkspace&&!seen.has(current)){
+            seen.add(current)
+            const parent=current.sourceWorkspace
+            if(!(workspace.kind==='remote'?posix.isAbsolute(path):isAbsolute(path)))path=workspace.kind==='remote'?posix.resolve(parent.root,path):resolve(parent.root,path)
+            current=parent
+        }
+        return workspace.kind==='remote'?posix.resolve(path):resolve(path)
+    }
+    if(root(left)!==root(right))return false
+    if(left.kind==='remote'&&(left.identityKey&&right.identityKey?left.identityKey!==right.identityKey:left.host!==right.host))return false
+    const absolutePath=(workspace:Workspace,path:string)=>workspace.kind==='remote'?posix.resolve(root(workspace),path):resolve(root(workspace),path)
+    return absolutePath(left,pane.filePath)===absolutePath(right,inputs.filePath)
 }
 
 /** Open a file inside the current split instead of creating another top-level tab. */
