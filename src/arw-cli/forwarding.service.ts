@@ -18,6 +18,7 @@ import { shellQuote } from '../shared/shell-quote'
 import { ArwEditorComponent } from '../arw-tree/editor.component'
 import { ArwPreviewComponent } from '../arw-tree/preview.component'
 import { remoteWorkspace, remoteWorkspaceSession } from '../adapters/remote-workspace'
+import { fileWorkspaceToken } from '../arw-tree/file-recovery'
 import { orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
 import { selectedStackedPane } from '../shared/pane-layout'
 import type { SSHTabComponent, SSHSession } from '../adapters/ssh-compat'
@@ -115,17 +116,34 @@ export class ForwardingService {
                 },
                 run: (command, signal, options) => isTerminalCommandMode(tab)?runTerminalCommand(tab,root,command,signal,options?.maxBytes):workspace.run(command, signal, options),
                 currentFile: () => {
-                    const tab = this.app.activeTab
-                    const panes = tab && 'getAllTabs' in tab ? (tab as any).getAllTabs() : tab ? [tab] : []
-                    const focused = tab && 'getFocusedTab' in tab ? (tab as any).getFocusedTab() : tab
                     const isRemoteFilePane=(pane:any):pane is ArwEditorComponent|ArwPreviewComponent => pane instanceof ArwEditorComponent||pane instanceof ArwPreviewComponent
-                    const active = isRemoteFilePane(focused) ? focused
-                        : tab ? selectedStackedPane(tab, 'file', orderedFilePanes(tab, panes.filter(isRemoteFilePane)))
-                            : undefined
-                    if (!isRemoteFilePane(active) || active.workspace?.kind !== 'remote' || ('isDiff' in active && active.isDiff)) return null;
-                    const path = posix.resolve(active.workspace.sourceWorkspace?.root ?? active.workspace.root, active.workspace.sourceWorkspace ? active.workspace.root : '.', active.filePath);
-                    return remoteWorkspaceSession(active.workspace) === session && (path === root || path.startsWith(root === '/' ? '/' : root + '/'))
-                        ? {path, dirty: active instanceof ArwEditorComponent ? active.dirty : false} : null;
+                    const belongsToBoundWorkspace=(pane:any):{path:string;dirty:boolean}|undefined=>{
+                        if(!isRemoteFilePane(pane)||pane.workspace?.kind!=='remote'||('isDiff' in pane&&pane.isDiff))return
+                        if(remoteWorkspaceSession(pane.workspace)!==session)return
+                        const token=fileWorkspaceToken(pane.workspace)
+                        if(!token||token.kind!=='remote')return
+                        const path=posix.resolve(token.root,pane.filePath)
+                        if(path!==root&&!path.startsWith(root==='/'?'/':root+'/'))return
+                        return {path,dirty:pane instanceof ArwEditorComponent?pane.dirty:false}
+                    }
+                    const topTabs=this.app.tabs??[],activeTop=this.app.activeTab
+                    const orderedTabs=activeTop&&topTabs.includes(activeTop)?[activeTop,...topTabs.filter(candidate=>candidate!==activeTop)]:topTabs
+                    for(const top of orderedTabs){
+                        const panes=top&&'getAllTabs' in top?(top as any).getAllTabs():[top]
+                        const candidates=panes.filter(isRemoteFilePane)
+                        let focused:any=top
+                        while(focused&&typeof focused.getFocusedTab==='function'){
+                            const next=focused.getFocusedTab()
+                            if(!next||next===focused)break
+                            focused=next
+                        }
+                        const focusedFile=belongsToBoundWorkspace(focused)
+                        if(focusedFile)return focusedFile
+                        const selected=selectedStackedPane(top,'file',orderedFilePanes(top,candidates))
+                        const selectedFile=belongsToBoundWorkspace(selected)
+                        if(selectedFile)return selectedFile
+                    }
+                    return null
                 },
                 validateCommand: workspace.validateCommand?.bind(workspace),
             }, tabbyConfigPath ? join(dirname(tabbyConfigPath), 'omw', 'audit.jsonl') : undefined)
