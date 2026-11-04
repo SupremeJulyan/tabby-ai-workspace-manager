@@ -8,7 +8,7 @@ import { logOperation } from '../services/operation-log'
 import { setTerminalCommandMode } from '../shared/terminal-command'
 import { openFilePane } from './open-file-pane'
 import { FileSelection } from './file-selection'
-import { topLevelItems, moveWorkspaceItem, deleteWorkspaceItem, renamedPath } from './workspace-file-actions'
+import { topLevelItems, moveWorkspaceItem, deleteWorkspaceItem, renamedPath, createWorkspaceItem } from './workspace-file-actions'
 import { copyWorkspaceItem, copiedWorkspaceItem, pasteWorkspaceItem, canPasteWorkspaceItem } from './workspace-copy'
 import { t } from '../shared/i18n'
 import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy } from '@angular/core'
@@ -103,6 +103,30 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     fileActionBusy=false
     renamingPath:string|null=null
     renameValue=''
+    creatingItem?:{workspace:Workspace;directory:string;isDirectory:boolean;version:number}
+    createName=''
+    beginCreate(workspace:Workspace,directory:string,isDirectory:boolean):void {
+        if(this.fileActionBusy)return
+        this.cancelRename()
+        this.creatingItem={workspace,directory,isDirectory,version:this.version};this.createName='';this.render()
+        setTimeout(()=>document.querySelector<HTMLInputElement>('.arw-tree-host .file-create-input')?.focus(),0)
+    }
+    cancelCreate():void {if(this.fileActionBusy)return;this.creatingItem=undefined;this.render()}
+    async finishCreate():Promise<void> {
+        const item=this.creatingItem
+        if(!item||this.fileActionBusy)return
+        if(item.version!==this.version||item.workspace!==(this.browserWorkspace??this.selection?.workspace)){this.cancelCreate();return}
+        this.fileActionBusy=true;this.error='';this.render()
+        try{
+            await createWorkspaceItem(item.workspace,item.directory,this.createName,item.isDirectory)
+            this.creatingItem=undefined
+            if(item.version===this.version)await this.refreshFiles({preserveError:true})
+        }catch(error){this.error=String(error)}
+        finally{this.fileActionBusy=false;this.render()}
+    }
+    private createMenuItems(workspace:Workspace,directory:string) {
+        return [false,true].map(isDirectory=>({label:isDirectory?t('新建文件夹'):t('新建文件'),enabled:!this.fileActionBusy,click:()=>this.beginCreate(workspace,directory,isDirectory)}))
+    }
     private draggedItems?:{workspace:Workspace;paths:string[]}
     private fileScrollPositions=new WeakMap<object,Map<string,number>>()
     private fileScrollRestoring=false
@@ -149,6 +173,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     beginRename(node:TreeNode):void {
         if(this.fileActionBusy)return
+        this.cancelCreate()
         this.fileSelection.select(node.path,this.visibleNodes.map(item=>item.path))
         this.renamingPath=node.path;this.renameValue=node.name;this.render()
         setTimeout(()=>{const input=document.querySelector<HTMLInputElement>('.arw-tree-host .file-rename-input');input?.focus();input?.select()},0)
@@ -1160,9 +1185,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     showBackgroundContextMenu(event:MouseEvent):void {
         event.preventDefault();event.stopPropagation()
         const workspace=this.browserWorkspace??this.selection?.workspace,source=copiedWorkspaceItem()
-        if(!workspace||!source||!canPasteWorkspaceItem(source,workspace,this.copyHostKey(workspace)))return
-        const directory=this.relativePath||'.'
-        this.platform.popupContextMenu([{label:t('粘贴'),click:()=>this.pasteIntoWorkspace(workspace,directory)}],event)
+        if(!workspace)return
+        const directory=this.relativePath||'.',items=this.createMenuItems(workspace,directory)
+        if(source&&canPasteWorkspaceItem(source,workspace,this.copyHostKey(workspace)))items.push({label:t('粘贴'),enabled:!this.fileActionBusy,click:()=>{void this.pasteIntoWorkspace(workspace,directory)}})
+        this.platform.popupContextMenu(items,event)
     }
     private downloadingNodes=new WeakSet<TreeNode>()
     showNodeContextMenu (node:TreeNode, event:MouseEvent):void {
@@ -1175,6 +1201,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             click:()=>{const path=workspace?workspacePath(workspace.kind).resolve(workspace.root,node.path):node.path;this.platform.setClipboard({text:path});this.notifications.info(t('路径已复制'))},
         }]
         if(workspace){
+            if(!node.symlink&&!node.loading)items.push(...this.createMenuItems(workspace,node.directory?node.path:workspacePath(workspace.kind).dirname(node.path)))
             items.unshift({label:t('复制'),enabled:!node.symlink&&!node.loading,click:()=>{
                 this.copySelected(node)
             }})

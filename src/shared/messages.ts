@@ -5,6 +5,8 @@ export const englishMessages: Record<string,string> = {
     "仍有请求正在执行，请稍后重试": "A request is still running. Retry after it finishes.",
     "刷新文件列表和已打开的文件": "Refresh the file list and open files",
     "重命名": "Rename",
+    "新建文件": "New File",
+    "新建文件夹": "New Folder",
     "删除": "Delete",
     "移动": "Move",
     "确定": "OK",

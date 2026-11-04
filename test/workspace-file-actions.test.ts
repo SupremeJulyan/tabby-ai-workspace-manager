@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { localWorkspace } from '../src/arw-tree/workspace'
-import { topLevelItems, moveWorkspaceItem, deleteWorkspaceItem, renamedPath } from '../src/arw-tree/workspace-file-actions'
+import { topLevelItems, moveWorkspaceItem, deleteWorkspaceItem, renamedPath, createWorkspaceItem } from '../src/arw-tree/workspace-file-actions'
 
 test('local move and rename preserve files, refuse collisions and reject recursive moves',async()=>{
     const root=await mkdtemp(join(tmpdir(),'arw-file-actions-'))
@@ -53,5 +53,28 @@ test('remote move and delete validate canonical paths and preserve same-name des
         await deleteWorkspaceItem(workspace,'renamed')
         assert.equal(await readFile(join(root,'keep'),'utf8'),'keep')
         await assert.rejects(readFile(join(root,'renamed',"it's data")),/ENOENT/)
+    }finally{await rm(root,{recursive:true,force:true,maxRetries:5})}
+})
+
+for(const kind of ['local','remote'] as const)test(`${kind} creation refuses collisions and paths outside the workspace`,async t=>{
+    if(kind==='remote'&&process.platform==='win32'){t.skip('requires POSIX shell');return}
+    const root=await mkdtemp(join(tmpdir(),'arw-create-'))
+    try{
+        const workspace={...localWorkspace(root),kind}
+        await createWorkspaceItem(workspace,'.',"it's folder",true)
+        await createWorkspaceItem(workspace,"it's folder",'empty.txt',false)
+        assert.equal(await readFile(join(root,"it's folder/empty.txt"),'utf8'),'')
+        await writeFile(join(root,"it's folder/empty.txt"),'keep')
+        await assert.rejects(createWorkspaceItem(workspace,"it's folder",'empty.txt',false))
+        await assert.rejects(createWorkspaceItem(workspace,'.',"it's folder",true))
+        assert.equal(await readFile(join(root,"it's folder/empty.txt"),'utf8'),'keep')
+        await assert.rejects(createWorkspaceItem(workspace,'.','../escape',false),/valid/)
+        await assert.rejects(createWorkspaceItem(workspace,'..','escape',true),/inside/)
+        if(process.platform!=='win32'){
+            await mkdir(join(root,'workspace'))
+            await symlink(root,join(root,'workspace/link'))
+            const nested={...localWorkspace(join(root,'workspace')),kind}
+            await assert.rejects(createWorkspaceItem(nested,'link','escape',false),/symbolic link/)
+        }
     }finally{await rm(root,{recursive:true,force:true,maxRetries:5})}
 })

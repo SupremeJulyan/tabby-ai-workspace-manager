@@ -1,4 +1,4 @@
-import { lstat, realpath, rename, rm } from 'node:fs/promises'
+import { lstat, realpath, rename, rm, mkdir, open } from 'node:fs/promises'
 import { workspacePath } from '../shared/workspace-path'
 import { shellQuote } from '../shared/shell-quote'
 import { RemotePathGuard } from '../security/remote-path'
@@ -56,4 +56,22 @@ export function renamedPath(workspace:Workspace,input:string,name:string):string
     if(!name.trim()||name==='.'||name==='..'||/[\x00-\x1f/\\]/.test(name))throw new Error('Enter a valid file or directory name')
     if(workspace.kind==='local'&&process.platform==='win32'&&(/[<>:"|?*]/.test(name)||/[. ]$/.test(name)))throw new Error('Invalid Windows file name')
     return workspacePath(workspace.kind).join(workspacePath(workspace.kind).dirname(input),name)
+}
+
+export async function createWorkspaceItem(workspace:Workspace,directory:string,name:string,isDirectory:boolean):Promise<string> {
+    const paths=workspacePath(workspace.kind)
+    const target=fileActionPath(workspace,renamedPath(workspace,paths.join(directory,'_'),name))
+    if(workspace.kind==='local'){
+        await checkedLocalPath(workspace,target)
+        if(isDirectory)await mkdir(target)
+        else{const file=await open(target,'wx',0o600);await file.close()}
+    }else{
+        const guard=new RemotePathGuard(workspace.root,(command,signal)=>workspace.run(command,signal))
+        await guard.resolveDirectory(paths.dirname(target))
+        await guard.resolve(target,true)
+        const quoted=shellQuote(target)
+        const result=await workspace.run(isDirectory?`mkdir -- ${quoted}`:`(set -C; : > ${quoted})`)
+        if(result.exitCode!==0)throw new Error(result.stderr||'Create failed')
+    }
+    return target
 }
