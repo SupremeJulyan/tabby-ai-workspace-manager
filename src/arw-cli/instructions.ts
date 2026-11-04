@@ -46,6 +46,8 @@ This AI terminal is already bound: run arw without --id. Sidebar switches do not
 Read applicable remote project instructions, including AGENTS.md, before changes. Use known commands directly; consult arw COMMAND --help only for unfamiliar syntax or usage errors. Do not bypass POLICY_DENIED.
 
 Use dedicated arw file commands for project contents: list/read/search/find to inspect files, and write/edit/create/delete/move/chmod to change them. Reserve arw exec for shell tasks such as builds, tests, Git and process diagnostics. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, redirection, heredocs or scripts.
+
+Use arw current-file to identify the focused remote file in this workspace; it returns the absolute path and dirty state, or null. It does not return file contents.
 `;
 
 export const terminalCliGuidance = `# ARW terminal mode
@@ -92,6 +94,7 @@ function previousCurrentPlaceholderGuidance(remoteRoot:string):string {
         'Common commands:',
         '```sh',
         'arw list src',
+        'arw current-file',
         'arw read AGENTS.md',
         'arw read src/main.ts --head 80',
         'arw search TODO src',

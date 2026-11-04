@@ -17,6 +17,8 @@ import { ForwardingServer } from './forwarding-server'
 import { shellQuote } from '../shared/shell-quote'
 import { ArwEditorComponent } from '../arw-tree/editor.component'
 import { remoteWorkspace, remoteWorkspaceSession } from '../adapters/remote-workspace'
+import { orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
+import { selectedStackedPane } from '../shared/pane-layout'
 import type { SSHTabComponent, SSHSession } from '../adapters/ssh-compat'
 
 interface ForwardingEntry {
@@ -112,8 +114,12 @@ export class ForwardingService {
                 },
                 run: (command, signal, options) => isTerminalCommandMode(tab)?runTerminalCommand(tab,root,command,signal,options?.maxBytes):workspace.run(command, signal, options),
                 currentFile: () => {
-                    const tab = this.app.activeTab;
-                    const active = tab && 'getFocusedTab' in tab ? (tab as any).getFocusedTab() : tab;
+                    const tab = this.app.activeTab
+                    const panes = tab && 'getAllTabs' in tab ? (tab as any).getAllTabs() : tab ? [tab] : []
+                    const focused = tab && 'getFocusedTab' in tab ? (tab as any).getFocusedTab() : tab
+                    const active = focused instanceof ArwEditorComponent ? focused
+                        : tab ? selectedStackedPane(tab, 'file', orderedFilePanes(tab, panes.filter((pane:any) => pane instanceof ArwEditorComponent)))
+                            : undefined
                     if (!(active instanceof ArwEditorComponent) || active.workspace?.kind !== 'remote' || active.isDiff) return null;
                     const path = posix.resolve(active.workspace.sourceWorkspace?.root ?? active.workspace.root, active.workspace.sourceWorkspace ? active.workspace.root : '.', active.filePath);
                     return remoteWorkspaceSession(active.workspace) === session && (path === root || path.startsWith(root === '/' ? '/' : root + '/'))

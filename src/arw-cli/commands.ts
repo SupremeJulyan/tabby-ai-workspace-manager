@@ -24,7 +24,7 @@ export const commands: Record<string, { tool: string; positional?: string[]; fie
 export const help = `Usage: arw workspaces
        arw COMMAND [--id ID] [arguments]
 
-Workspace: workspaces, current-file
+Workspace: workspaces, current-file (focused remote file path and dirty state)
 Read:      list, read, read-many, search, find, output
 Write:     write, edit, create, delete, chmod, move
 Transfer:  upload, download
@@ -46,7 +46,8 @@ List IDs and identities of currently forwarded workspaces only. Does not accept 
 Match the target before operating; do not switch targets implicitly.`,
   'current-file': `Usage: arw current-file --id ID
 
-Return the currently open file, or null.
+Return the currently focused ARW remote file as {path, dirty}, or null if there is no
+focused file in this bound workspace. Does not read the file contents.
 --workspace aliases --id. --input JSON|- supplies structured fields (camelCase);
 --input - reads stdin. --compact omits successful/empty status metadata.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
