@@ -76,7 +76,7 @@ export class ForwardingService {
 
     private watchSession (tab:SSHTabComponent):void {
         if(this.sessionWatches.has(tab))return
-        const subscription=tab.sessionChanged$.subscribe(()=>{void this.reconnect(tab)})
+        const subscription=tab.sessionChanged$?.subscribe(()=>{void this.reconnect(tab)})??{unsubscribe(){}}
         this.sessionWatches.set(tab,subscription)
         tab.destroyed$?.subscribe(()=>{
             this.desired.delete(tab)
