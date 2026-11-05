@@ -1,6 +1,6 @@
 {
   "name": "tabby-ai-workspace-manager",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Tabby 本地、SSH 与 WSL 工作区管理，支持 AI 终端、文件编辑与传输、内容预览和 Git 操作。 / Manage local, SSH, and WSL workspaces in Tabby with AI terminals, file editing and transfers, rich previews, and Git operations.",
   "keywords": [
     "tabby-plugin",
