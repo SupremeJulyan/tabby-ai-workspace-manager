@@ -38,19 +38,21 @@ export class WorkspaceTerminalDecorator extends TerminalDecorator {
         const env=terminal.profile?.options?.env
         if(!env?.ARW_WORKSPACE_ROOT||env.ARW_WORKSPACE_KIND!=='remote'||!selection.workspace||!selection.remote?.open||!this.projects)return
         const project=this.projects.findRemoteProject(selection.workspace,selection.remote)
-        if(!project)return
+        const target=project??{id:selection.workspace.id,root:selection.workspace.root,name:selection.workspace.titleName??selection.workspace.name}
         let held=this.aiForwarding.get(terminal)
-        if(held?.id!==project.id){held?.release();held=undefined}
+        if(held?.id!==target.id){held?.release();held=undefined}
         if(!held){
-            held={id:project.id,release:this.projects.retainForAi(project.id)}
+            held={id:target.id,release:this.projects.retainForAi(target.id)}
             this.aiForwarding.set(terminal,held)
             if(!this.aiForwardingAttached.has(terminal)){
                 this.aiForwardingAttached.add(terminal)
                 terminal.destroyed$?.subscribe(()=>this.releaseAiForwarding(terminal))
             }
         }
-        const workspace={...selection.workspace,sourceWorkspace:selection.workspace,id:project.id}
-        void this.projects.open(project,workspace,selection.remote,selection.sourceTerminal??selection.terminal)
+        const workspace={...selection.workspace,sourceWorkspace:selection.workspace,id:target.id}
+        const source=selection.sourceTerminal??selection.terminal
+        void (project?this.projects.open(project,workspace,selection.remote,source)
+            :this.projects.openTransient(target,workspace,selection.remote,source))
             .catch(error=>logOperation('恢复 AI 工作区转发',{root:workspace.root,error:String(error)}))
     }
     attach (terminal: BaseTerminalTabComponent<any>): void {

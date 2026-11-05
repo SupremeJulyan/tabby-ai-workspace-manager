@@ -35,6 +35,9 @@ export class SaveConfirmation {
         const cancelled=new Promise<never>((_resolve,reject)=>{
             const fail=(reason:string)=>{
                 attempt.message=reason
+                // A disconnected SSH session cannot keep making progress. Let a
+                // replacement session inspect the file or retry with a fresh hash.
+                if(reason===t('连接已断开，保存未确认，远端内容可能不完整'))attempt.busy=false
                 controller.abort(new Error(reason))
                 reject(controller.signal.reason)
             }

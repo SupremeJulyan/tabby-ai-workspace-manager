@@ -741,6 +741,108 @@ test('saved workspace forwarding routes CLI by ID, survives other entries, and c
         assert.equal(store.connection(pending.id),undefined)
     } finally {await store.ngOnDestroy();await rm(directory,{recursive:true,force:true})}
 })
+
+test('manual forwarding automatically reconnects with the same workspace ID until disabled',async()=>{
+    const {mkdtemp,rm}=await import('node:fs/promises')
+    const {tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {Subject}=await import('rxjs'),{readWorkspaceCatalog}=require('../.build/arw-cli/workspace-catalog.js')
+    const directory=await mkdtemp(join(tmpdir(),'arw-manual-reconnect-')),plugin=load()
+    const notices=[],forwarding=new plugin.ForwardingService({info(message){notices.push(message)},error(message,detail){throw Error(message+detail)}},
+        {getConfigPath:()=>join(directory,'config.yaml')},{})
+    const makeSession=()=>{const willDestroy$=new Subject();let references=0;return {open:true,ssh:{},profile:{id:'ssh',options:{host:'host',port:22,user:'agent'}},authUsername:'agent',willDestroy$,
+        async openSFTP(){return {async stat(){return {isDirectory:true}}}},ref(){references++},unref(){references--},references:()=>references}}
+    const tab={sshSession:makeSession(),sessionChanged$:new Subject(),destroyed$:new Subject(),sftpPanelVisible:true,sftpPath:'/project'}
+    const catalog=()=>readWorkspaceCatalog(join(directory,'omw/workspaces.json'))
+    const waitForEntry=async()=>{for(let i=0;i<100;i++){const found=(await catalog()).workspaces[0];if(found)return found;await new Promise(resolve=>setTimeout(resolve,5))}throw Error('Manual forward did not start')}
+    try{
+        await forwarding.toggle(tab,'/project',()=>true)
+        const first=await waitForEntry(),oldSession=tab.sshSession
+        oldSession.open=false;oldSession.willDestroy$.next()
+        for(let i=0;i<100&&(await catalog()).workspaces.length;i++)await new Promise(resolve=>setTimeout(resolve,5))
+        tab.sshSession=makeSession();tab.sessionChanged$.next()
+        const recovered=await waitForEntry()
+        assert.equal(recovered.workspaceId,first.workspaceId)
+        assert.notEqual(recovered.configPath,first.configPath)
+        await forwarding.toggle(tab,'/project',()=>true)
+        assert.deepEqual((await catalog()).workspaces,[])
+        tab.sshSession=makeSession();tab.sessionChanged$.next()
+        await new Promise(resolve=>setTimeout(resolve,30))
+        assert.deepEqual((await catalog()).workspaces,[],'manual disable cancels automatic reconnect')
+        assert.equal(notices.length,2)
+    }finally{tab.destroyed$.next();await forwarding.disable(tab);await rm(directory,{recursive:true,force:true})}
+})
+
+test('transient AI workspaces rebuild their arw endpoint after SSH reconnect',async()=>{
+    const {mkdtemp,rm,access}=await import('node:fs/promises')
+    const {tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {Subject}=await import('rxjs'),{readWorkspaceCatalog}=require('../.build/arw-cli/workspace-catalog.js')
+    const directory=await mkdtemp(join(tmpdir(),'arw-transient-forward-'))
+    const plugin=load(),config={store:{omw:{projects:{}}},async save(){}}
+    const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory(config,{getConfigPath:()=>join(directory,'config.yaml')})
+    const root=join(directory,'remote'),workspace={...require('../.build/arw-tree/workspace.js').localWorkspace(root),kind:'remote',host:'fixture'}
+    const project={id:'transient-workspace',name:'remote',root},makeSession=()=>{
+        const willDestroy$=new Subject();let references=0
+        return {open:true,ssh:{},profile:{id:'fixture',options:{host:'fixture',port:22,user:'agent'}},authUsername:'agent',willDestroy$,
+            ref(){references++},unref(){references--},references:()=>references}
+    }
+    const first=makeSession(),second=makeSession()
+    try{
+        await store.openTransient(project,workspace,first)
+        let entry=(await readWorkspaceCatalog(join(directory,'omw/workspaces.json'))).workspaces.find(value=>value.workspaceId===project.id)
+        assert.ok(entry?.configPath)
+        const oldConfig=entry.configPath
+        first.open=false;first.willDestroy$.next()
+        for(let i=0;i<100&&first.references();i++)await new Promise(resolve=>setTimeout(resolve,5))
+        assert.equal(first.references(),0)
+        await assert.rejects(access(oldConfig))
+        assert.equal((await readWorkspaceCatalog(join(directory,'omw/workspaces.json'))).workspaces.length,0)
+        await store.openTransient(project,workspace,second)
+        entry=(await readWorkspaceCatalog(join(directory,'omw/workspaces.json'))).workspaces.find(value=>value.workspaceId===project.id)
+        assert.ok(entry?.configPath)
+        assert.notEqual(entry.configPath,oldConfig)
+        assert.equal(second.references(),1)
+        await store.close(project.id)
+        assert.equal(second.references(),0)
+    }finally{await store.ngOnDestroy();await rm(directory,{recursive:true,force:true})}
+})
+
+test('restored AI bindings automatically open transient forwarding on the replacement SSH session',async()=>{
+    const {mkdtemp,rm}=await import('node:fs/promises')
+    const {tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const {Subject}=await import('rxjs'),{readWorkspaceCatalog}=require('../.build/arw-cli/workspace-catalog.js')
+    const directory=await mkdtemp(join(tmpdir(),'arw-transient-recovery-'))
+    const plugin=load(),config={store:{omw:{projects:{}}},async save(){}}
+    const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory(config,{getConfigPath:()=>join(directory,'config.yaml')})
+    const registry=new plugin.WorkspaceRegistry({activeTabChange$:new Subject()},{run:fn=>fn()})
+    const decorator=new plugin.WorkspaceTerminalDecorator(registry,undefined,undefined,undefined,undefined,undefined,store)
+    const source={},ai={profile:{options:{env:{ARW_WORKSPACE_ROOT:'/remote/project',ARW_WORKSPACE_KIND:'remote'}}},destroyed$:new Subject()}
+    const makeRemote=()=>{let references=0;return {open:true,ssh:{},profile:{id:'ssh',options:{host:'host',port:2222,user:'agent'}},authUsername:'agent',willDestroy$:new Subject(),ref(){references++},unref(){references--},references:()=>references}}
+    const makeSelection=remote=>({terminal:ai,sourceTerminal:source,remote,workspace:{id:'bound-agent',kind:'remote',root:'/remote/project',host:'host',name:'project',titleName:'project',run:async()=>({stdout:'',stderr:'',exitCode:0}),list:async()=>[],read:async()=>({content:''}),write:async()=>({})}})
+    const waitForForward=async()=>{
+        for(let i=0;i<100;i++){
+            const entries=(await readWorkspaceCatalog(join(directory,'omw/workspaces.json'))).workspaces
+            const entry=entries.find(value=>value.workspaceId==='bound-agent')
+            if(entry)return entry
+            await new Promise(resolve=>setTimeout(resolve,5))
+        }
+        throw new Error('Transient workspace forwarding did not start')
+    }
+    try{
+        const first=makeRemote();registry.selectionChanged.next({terminal:ai,selection:makeSelection(first)})
+        const original=await waitForForward()
+        first.open=false;first.willDestroy$.next()
+        for(let i=0;i<100&&(await readWorkspaceCatalog(join(directory,'omw/workspaces.json'))).workspaces.length;i++)await new Promise(resolve=>setTimeout(resolve,5))
+        for(let i=0;i<100&&first.references();i++)await new Promise(resolve=>setTimeout(resolve,5))
+        const replacement=makeRemote();registry.selectionChanged.next({terminal:ai,selection:makeSelection(replacement)})
+        const recovered=await waitForForward()
+        assert.notEqual(recovered.configPath,original.configPath)
+        assert.equal(replacement.open,true)
+        ai.destroyed$.next()
+        for(let i=0;i<100&&replacement.references();i++)await new Promise(resolve=>setTimeout(resolve,5))
+        for(let i=0;i<100&&(await readWorkspaceCatalog(join(directory,'omw/workspaces.json'))).workspaces.length;i++)await new Promise(resolve=>setTimeout(resolve,5))
+        assert.deepEqual((await readWorkspaceCatalog(join(directory,'omw/workspaces.json'))).workspaces,[])
+    }finally{decorator.ngOnDestroy();await store.ngOnDestroy();await rm(directory,{recursive:true,force:true})}
+})
 test('AI terminal opens as the right split pane of the workspace terminal',async()=>{
     const {Subject}=await import('rxjs')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
@@ -1310,6 +1412,14 @@ test('remote AI launch uses a persistent placeholder, private session config and
         secondConfig=JSON.parse(await readFile(secondEntry.configPath,'utf8'))
         const list=async connection=>(await(await ipcFetch(connection,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'list_remote_workspaces',arguments:{}})})).json()).result.workspaces[0].workspaceId
         assert.equal(await list(config),'bound');assert.equal(await list(secondConfig),'second')
+        session.open=false;disconnect.next()
+        for(let i=0;i<100&&(await catalog()).workspaces.length;i++)await new Promise(r=>setTimeout(r,5))
+        assert.deepEqual((await catalog()).workspaces,[],'disconnect removes dead AI forwarding entries immediately')
+        for(let i=0;i<100;i++){
+            try{await access(firstEntry.configPath);await new Promise(r=>setTimeout(r,5))}
+            catch{break}
+        }
+        await assert.rejects(access(firstEntry.configPath));await assert.rejects(access(secondEntry.configPath))
     }finally{
         destroyed.next()
         for(let i=0;i<100&&references;i++)await new Promise(r=>setTimeout(r,10))

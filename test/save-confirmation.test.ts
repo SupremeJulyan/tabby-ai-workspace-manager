@@ -55,6 +55,20 @@ test('disconnect aborts the active save without marking unrelated files',async()
     assert.equal(disconnected.observed,false)
 })
 
+test('disconnect releases the stale save lock so a hash-checked retry can proceed',async()=>{
+    const {saves,disconnected}=fixture(1000),blocked=deferred()
+    const pending=saves.run('file','new',async(_signal,permissions,started)=>{
+        permissions('640:1:2');started();await blocked.promise
+    })
+    await new Promise(resolve=>setImmediate(resolve))
+    disconnected.next()
+    await assert.rejects(pending,/断开/)
+    assert.equal(saves.issue('file')?.busy,false)
+    await saves.run('file','retry',async(_signal,_permissions,started)=>{started()},true)
+    assert.equal(saves.issue('file'),undefined)
+    blocked.resolve()
+})
+
 test('a previously disconnected session never starts the write',async()=>{
     let writes=0
     const saves=new SaveConfirmation(()=>({unsubscribe(){}}),()=>false)

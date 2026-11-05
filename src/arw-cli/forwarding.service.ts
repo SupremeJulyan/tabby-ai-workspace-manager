@@ -33,6 +33,9 @@ export class ForwardingService {
     readonly changed = new Subject<void>()
     private entries = new WeakMap<SSHTabComponent, ForwardingEntry>()
     private pending = new WeakMap<SSHTabComponent, object>()
+    private desired = new WeakMap<SSHTabComponent,{root:string;workspaceId:string;isCurrent?:()=>boolean}>()
+    private sessionWatches = new WeakMap<SSHTabComponent,{unsubscribe():void}>()
+    private stopping = new WeakMap<SSHTabComponent,Promise<void>>()
 
     constructor (private notifications: NotificationsService, private platform: PlatformService, private app: AppService) { }
 
@@ -44,19 +47,55 @@ export class ForwardingService {
     busy (tab: SSHTabComponent): boolean { return this.pending.has(tab) }
 
     async disable (tab: SSHTabComponent): Promise<void> {
+        this.desired.delete(tab)
+        await this.stop(tab)
+    }
+
+    private async stop (tab: SSHTabComponent): Promise<void> {
         this.pending.delete(tab)
+        const previous=this.stopping.get(tab)
+        if(previous)return previous
         const entry = this.entries.get(tab)
         if (!entry) return
         this.entries.delete(tab)
         entry.closed.unsubscribe()
         this.changed.next()
-        try { await entry.server.stop() } finally {
-            try { await entry.unregister?.() }
-            finally {
-                try { await rm(entry.configDirectory, { recursive: true, force: true }) }
-                finally { entry.session.unref() }
+        const task=(async()=>{
+            try { await entry.server.stop() } finally {
+                try { await entry.unregister?.() }
+                finally {
+                    try { await rm(entry.configDirectory, { recursive: true, force: true }) }
+                    finally { entry.session.unref() }
+                }
             }
-        }
+        })()
+        this.stopping.set(tab,task)
+        try { await task }
+        finally { if(this.stopping.get(tab)===task)this.stopping.delete(tab) }
+    }
+
+    private watchSession (tab:SSHTabComponent):void {
+        if(this.sessionWatches.has(tab))return
+        const subscription=tab.sessionChanged$.subscribe(()=>{void this.reconnect(tab)})
+        this.sessionWatches.set(tab,subscription)
+        tab.destroyed$?.subscribe(()=>{
+            this.desired.delete(tab)
+            this.sessionWatches.get(tab)?.unsubscribe()
+            this.sessionWatches.delete(tab)
+            void this.stop(tab)
+        })
+    }
+
+    private async reconnect (tab:SSHTabComponent):Promise<void> {
+        const wanted=this.desired.get(tab)
+        if(!wanted||this.busy(tab))return
+        const stopping=this.stopping.get(tab)
+        if(stopping)await stopping
+        const existing=this.entries.get(tab)
+        if(existing&&(existing.session!==tab.sshSession||!existing.session.open))await this.stop(tab)
+        const session=tab.sshSession
+        if(!session?.open||this.state(tab,wanted.root))return
+        await this.start(tab,wanted.root,wanted.workspaceId,wanted.isCurrent)
     }
 
     copy (tab: SSHTabComponent, root: string): void {
@@ -70,9 +109,21 @@ export class ForwardingService {
         const root = posix.normalize(directory)
         if (this.state(tab, root)) { await this.disable(tab); return }
         if (this.busy(tab)) return
-        await this.disable(tab)
         const session = tab.sshSession
         if (!session?.open) { this.notifications.error(t('ARW：SSH 尚未连接')); return }
+        if (!root.startsWith('/') || /[\x00-\x1f\x7f]/.test(root)) { this.notifications.error(t('ARW 转发开启失败'),t('远程目录路径无效')); return }
+        const previous=this.desired.get(tab)
+        const wanted={root,workspaceId:previous?.root===root?previous.workspaceId:randomUUID(),isCurrent}
+        this.desired.set(tab,wanted)
+        this.watchSession(tab)
+        await this.stop(tab)
+        await this.start(tab,root,wanted.workspaceId,isCurrent)
+    }
+
+    private async start (tab:SSHTabComponent,root:string,workspaceId:string,isCurrent?:()=>boolean):Promise<void> {
+        if(this.busy(tab))return
+        const session = tab.sshSession
+        if (!session?.open) return
         const ticket = {}
         this.pending.set(tab, ticket)
         this.changed.next()
@@ -82,13 +133,11 @@ export class ForwardingService {
         let unregister: (()=>Promise<void>)|undefined
         let configDirectory: string|undefined
         try {
-            if (!root.startsWith('/') || /[\x00-\x1f\x7f]/.test(root)) throw new Error(t('远程目录路径无效'))
             const sftp = await session.openSFTP()
             if (!(await sftp.stat(root)).isDirectory) throw new Error(t('请选择远程目录'))
             const workspace = remoteWorkspace(session, root)
             const cliFiles = cliWorkspaceFiles(workspace)
             const tabbyConfigPath = this.platform.getConfigPath?.()
-            const workspaceId = randomUUID()
             server = new ForwardingServer({
                 activityScope: activityScope(tab),
                 workspace: { id: workspaceId, root, host: session.profile.options.host },
@@ -132,7 +181,7 @@ export class ForwardingService {
                 name:root, status:'forwarded',configPath,
             })
             if (this.pending.get(tab)!==ticket || tab.sshSession!==session || !session.open || (isCurrent && !isCurrent())) return
-            const closed = session.willDestroy$.subscribe(() => { void this.disable(tab) })
+            const closed = session.willDestroy$.subscribe(() => { void this.stop(tab) })
             this.entries.set(tab, { root, server, session, closed, configPath, configDirectory, unregister })
             retained = true
             this.notifications.info(t('ARW：已开启此目录的 Agent 转发'), root)
@@ -152,6 +201,8 @@ export class ForwardingService {
                 }
             }
             this.changed.next()
+            if(this.desired.get(tab)?.workspaceId===workspaceId&&tab.sshSession!==session)
+                queueMicrotask(()=>{void this.reconnect(tab)})
         }
     }
 }

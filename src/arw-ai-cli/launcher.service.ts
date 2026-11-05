@@ -110,13 +110,20 @@ export class AiLauncherService {
         let agentCwd:string|undefined
         const remote = selection.remote
         let disconnected: {unsubscribe():void}|undefined
+        let cleanupTask:Promise<void>|undefined
         const cleanup = async () => {
-            disconnected?.unsubscribe()
-            await unregister?.()
-            await server?.stop()
-            if(directory)await rm(directory, { recursive: true, force: true })
-            if (retained) { retained = false; remote?.unref() }
-            releaseForwarding?.()
+            if(cleanupTask)return cleanupTask
+            const task=(async()=>{
+                disconnected?.unsubscribe()
+                await unregister?.()
+                await server?.stop()
+                if(directory)await rm(directory, { recursive: true, force: true })
+                if (retained) { retained = false; remote?.unref() }
+                releaseForwarding?.()
+            })()
+            cleanupTask=task
+            try { await task }
+            finally { if(cleanupTask===task)cleanupTask=undefined }
         }
         try {
             const source=selection.sourceTerminal??selection.terminal
@@ -166,7 +173,9 @@ export class AiLauncherService {
                         validateCommand: workspace.validateCommand?.bind(workspace),
                     }, this.auditFile)
                     await server.start()
-                    disconnected = remote?.willDestroy$.subscribe(() => { void server?.stop() })
+                    // Tear down the catalog entry as well as the socket. Otherwise
+                    // arw keeps discovering a forwarded workspace whose endpoint is dead.
+                    disconnected = remote?.willDestroy$.subscribe(() => { void cleanup() })
                     if (remote&&!remote.open) throw new Error(t('SSH 会话已断开'))
                     directory=await mkdtemp(join(tmpdir(),'arw-forward-'))
                     const connectionPath=join(directory,'connection.json')
@@ -178,6 +187,7 @@ export class AiLauncherService {
                         port:remote?.profile.options.port??22,user:remote?.authUsername??remote?.profile.options.user,
                         status:'forwarded',configPath:connectionPath,
                     })
+                    if(!remote?.open)throw new Error(t('SSH 会话已断开'))
                 }
             }
             if(workspace.kind==='remote'&&remote){

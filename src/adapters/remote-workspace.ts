@@ -242,7 +242,9 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
                 notifyWorkspaceChange(workspace)
                 return { content, hash: version }
               } finally { finishForegroundWrite(priority) }
-            },confirmedRetry)
+            // arw callers that read the file first and provide its hash have
+            // explicitly opted into a conflict-checked retry after a lost save.
+            },confirmedRetry||expectedHash!==undefined)
     }
     workspaceSessions.set(workspace, session)
     return workspace

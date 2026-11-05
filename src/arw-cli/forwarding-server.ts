@@ -28,6 +28,18 @@ export interface ForwardingBackend {
   validateCommand?(command: string, signal: AbortSignal): Promise<void>;
 }
 
+const retainedOutputs=new Map<string,{values:Map<string,Record<string,unknown>>;timer?:ReturnType<typeof setTimeout>}>()
+function outputCache(workspaceId:string):Map<string,Record<string,unknown>> {
+  let entry=retainedOutputs.get(workspaceId)
+  if(!entry){entry={values:new Map()};retainedOutputs.set(workspaceId,entry)}
+  if(entry.timer)clearTimeout(entry.timer)
+  entry.timer=setTimeout(()=>{
+    if(retainedOutputs.get(workspaceId)===entry){entry.values.clear();retainedOutputs.delete(workspaceId)}
+  },10*60_000)
+  entry.timer.unref?.()
+  return entry.values
+}
+
 function policyErrorMessage(error:unknown):string {
   const message=redactSensitiveText(error instanceof Error?error.message:String(error));
   const workspaceBoundary=(error instanceof CommandPolicyError&&/outside-workspace/.test(message))
@@ -40,7 +52,7 @@ function policyErrorMessage(error:unknown):string {
 /** Authenticated local CLI bridge. No MCP protocol. */
 export class ForwardingServer {
   private server?: Server;
-  private outputs = new Map<string, Record<string, unknown>>();
+  private outputs:Map<string,Record<string,unknown>>;
   private controller = new AbortController();
   private token = randomBytes(32).toString('hex');
   private endpoint?: IpcConnection;
@@ -48,7 +60,7 @@ export class ForwardingServer {
   private starting?: Promise<void>;
   private stopping?: Promise<void>;
   constructor(private backend: ForwardingBackend,
-    private auditFile = join(dirname(workspaceCatalogPath()), 'audit.jsonl')) {}
+    private auditFile = join(dirname(workspaceCatalogPath()), 'audit.jsonl')) {this.outputs=outputCache(backend.workspace.id)}
   get connection(): IpcConnection { if (!this.endpoint) throw new Error('Forwarding is not enabled'); return {...this.endpoint}; }
 
   start(): Promise<void> {
@@ -205,6 +217,7 @@ export class ForwardingServer {
         return this.backend.git(action,path,signal);
       }
       case 'remote_output': {
+        this.outputs=outputCache(workspace.id)
         const output = this.outputs.get(text(values.outputId, 'outputId'));
         if (!output) throw new Error('Output expired or unavailable in this workspace');
         const stream = text(values.stream, 'stream');
@@ -261,6 +274,7 @@ export class ForwardingServer {
         signal.throwIfAborted();
         if (Buffer.byteLength(String(result.stdout ?? '')) + Buffer.byteLength(String(result.stderr ?? '')) <= 65536) return result;
         const outputId = randomUUID();
+        this.outputs=outputCache(workspace.id)
         if (this.outputs.size >= 4) this.outputs.delete(this.outputs.keys().next().value!);
         this.outputs.set(outputId, result);
         const stdout = selectText(String(result.stdout ?? ''), {offset: 0, length: 32768});
@@ -279,7 +293,7 @@ export class ForwardingServer {
   private async shutdown(): Promise<void> {
     await this.starting?.catch(()=>undefined);
     this.controller.abort();
-    this.outputs.clear();
+    outputCache(this.backend.workspace.id)
     const server = this.server;
     this.server = undefined;
     this.endpoint = undefined;

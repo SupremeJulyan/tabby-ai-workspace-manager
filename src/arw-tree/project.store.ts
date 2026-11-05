@@ -10,7 +10,7 @@ import { Subject } from 'rxjs'
 import { redactSensitiveText } from '../shared/redact'
 import { ConfigService } from 'tabby-core'
 import { Workspace } from './workspace'
-import { SavedWorkspace, writeWorkspaceCatalog, workspaceCatalogPath } from '../arw-cli/workspace-catalog'
+import { SavedWorkspace, registerActiveWorkspace, writeWorkspaceCatalog, workspaceCatalogPath } from '../arw-cli/workspace-catalog'
 import { ForwardingServer } from '../arw-cli/forwarding-server'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -31,6 +31,7 @@ interface ProjectForwarding {
     source?: object
     directory?: string
     configPath?: string
+    unregister?:()=>Promise<void>
     retained: boolean
     closed?: { unsubscribe():void }
     ready: Promise<void>
@@ -66,10 +67,14 @@ export class ProjectStore {
     private cleanup (entry: ProjectForwarding): Promise<void> {
         return entry.cleanup ??= (async()=>{
             entry.closed?.unsubscribe()
-            try { await entry.server.stop() }
-            finally {
-                try { if (entry.directory) await rm(entry.directory,{recursive:true,force:true}) }
-                finally { if (entry.retained) { entry.retained=false;entry.remote?.unref() } }
+            try {
+                await entry.unregister?.()
+            } finally {
+                try { await entry.server.stop() }
+                finally {
+                    try { if (entry.directory) await rm(entry.directory,{recursive:true,force:true}) }
+                    finally { if (entry.retained) { entry.retained=false;entry.remote?.unref() } }
+                }
             }
         })()
     }
@@ -86,10 +91,13 @@ export class ProjectStore {
         this.retries.set(project.id,attempt)
         return attempt
     }
-    async open(project:ArwProject,workspace:Workspace,remote?:SSHSession,source?:object):Promise<void> {
+    openTransient(project:ArwProject,workspace:Workspace,remote:SSHSession,source?:object):Promise<void> {
+        return this.open(project,workspace,remote,source,true)
+    }
+    async open(project:ArwProject,workspace:Workspace,remote?:SSHSession,source?:object,transient=false):Promise<void> {
         const client=remote?.ssh
         for(let attempt=0;;attempt++){
-            try{return await this.openOnce(project,workspace,remote,source)}
+            try{return await this.openOnce(project,workspace,remote,source,transient)}
             catch(error){
                 if(attempt>=2||this.disposed||!remote?.open||remote.ssh!==client
                     ||(source&&'sshSession' in source&&source.sshSession!==remote))throw error
@@ -97,8 +105,9 @@ export class ProjectStore {
             }
         }
     }
-    private async openOnce (project: ArwProject, workspace: Workspace, remote?: SSHSession, source?: object): Promise<void> {
-        if (this.disposed || !Object.values(this.store.projects ?? {}).some(projects=>Array.isArray(projects)&&projects.some(entry=>entry.id===project.id))) return
+    private async openOnce (project: ArwProject, workspace: Workspace, remote?: SSHSession, source?: object,transient=false): Promise<void> {
+        const saved=()=>Object.values(this.store.projects ?? {}).some(projects=>Array.isArray(projects)&&projects.some(entry=>entry.id===project.id))
+        if (this.disposed || !transient&&!saved()) return
         if (workspace.kind === 'local') { await this.close(project.id); return }
         const current=this.forwards.get(project.id)
         const ownerCurrent=!current?.source||!('sshSession' in current.source)||current.source.sshSession===current.remote
@@ -107,7 +116,7 @@ export class ProjectStore {
                 && (current.remote===remote || Boolean(source&&current.source&&source!==current.source))
             : !current.remote)) return current.ready
         if (current) await this.close(project.id,new Error(t('替换失效的 SSH 转发')))
-        if(this.disposed||!Object.values(this.store.projects??{}).some(projects=>Array.isArray(projects)&&projects.some(entry=>entry.id===project.id)))return
+        if(this.disposed||!transient&&!saved())return
         if (workspace.kind==='remote' && !remote?.open) {
             const error=new Error(t('SSH 会话已断开'));this.setState(project.id,'error',t('启动转发'),error);throw error
         }
@@ -140,12 +149,19 @@ export class ProjectStore {
                 entry.directory=await mkdtemp(join(tmpdir(),'arw-project-'))
                 const configPath=join(entry.directory,'connection.json')
                 await writeFile(configPath,JSON.stringify(entry.server.connection),{mode:0o600,flag:'wx'})
-                if (this.forwards.get(project.id)!==entry || (remote && !remote.open)) {
+                if (this.forwards.get(project.id)!==entry || (remote && !remote.open) || (!transient&&!saved())) {
                     if (this.forwards.get(project.id)===entry) this.forwards.delete(project.id)
                     await this.cleanup(entry);await this.syncCatalog();return
                 }
                 entry.configPath=configPath
-                await this.syncCatalog()
+                if(transient){
+                    entry.unregister=await registerActiveWorkspace(this.catalogFile??workspaceCatalogPath(),{
+                        workspaceId:project.id,workspaceRoot:workspace.root,name:project.name,host:workspace.host,
+                        port:remote?.profile.options.port??22,user:remote?.authUsername??remote?.profile.options.user,
+                        status:'forwarded',configPath,
+                    })
+                    if(this.forwards.get(project.id)!==entry||remote&&!remote.open){this.forwards.delete(project.id);await this.cleanup(entry);return}
+                }else await this.syncCatalog()
                 if(this.forwards.get(project.id)===entry)this.setState(project.id,'forwarding')
             } catch (error) {
                 const active=this.forwards.get(project.id)===entry

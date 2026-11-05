@@ -1,4 +1,4 @@
-import { ipcFetch, parseIpcConnection, NAMED_PIPE_PREFIX, isArwNamedPipe } from '../src/arw-cli/ipc-client';
+import { ipcFetch, parseIpcConnection, NAMED_PIPE_PREFIX, isArwNamedPipe, type IpcConnection } from '../src/arw-cli/ipc-client';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -95,6 +95,25 @@ test('IPC start and stop serialize concurrent lifecycle calls and discard old co
   await assert.rejects(ipcFetch(server.connection,{signal:controller.signal}),{name:'AbortError'});
   const response=await ipcFetch(server.connection,{body:JSON.stringify({name:'list_remote_workspaces',arguments:{}})});
   assert.equal(response.status,200);
+})
+
+test('truncated command output remains readable after forwarding reconnects',async context=>{
+  const directory=await mkdtemp(join(tmpdir(),'arw-output-reconnect-'))
+  const output='x'.repeat(70000),workspace={id:'output-reconnect',root:'/project',host:'fixture'}
+  const makeServer=()=>new ForwardingServer({workspace,list:async()=>({}),read:async()=>({}),write:async()=>({}),
+    run:async()=>({stdout:output,stderr:'',exitCode:0})},join(directory,'audit.jsonl'))
+  const request=(connection:IpcConnection,name:string,arguments_:Record<string,unknown>)=>ipcFetch(connection,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,arguments:{...arguments_,workspaceId:workspace.id}})})
+  const first=makeServer();context.after(async()=>{await first.stop();await rm(directory,{recursive:true,force:true})})
+  await first.start()
+  const started=await(await request(first.connection,'run_remote_command',{command:'pwd'})).json() as any
+  const outputId=started.result.outputId
+  assert.ok(outputId)
+  await first.stop()
+  const replacement=makeServer();context.after(()=>replacement.stop())
+  await replacement.start()
+  const continued=await(await request(replacement.connection,'remote_output',{outputId,stream:'stdout',offset:32768,length:1000})).json() as any
+  assert.equal(continued.result.content,'x'.repeat(1000))
+  assert.equal(continued.result.offset,32768)
 })
 
 
