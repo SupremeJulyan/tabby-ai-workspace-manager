@@ -59,7 +59,7 @@ test('editor actions use hollow SVG icons without filled Bootstrap buttons',()=>
 
 test('every preview action uses an accessible hollow line icon',()=>{
     const buttons=[...PREVIEW_TEMPLATE.matchAll(/<button((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)<\/button>/gs)]
-    assert.equal(buttons.filter(([,attributes])=>attributes.includes('class="file-icon-button"')).length,16)
+    assert.equal(buttons.filter(([,attributes])=>attributes.includes('class="file-icon-button"')).length,17)
     for(const [,attributes,body] of buttons.filter(([,attributes])=>attributes.includes('class="file-icon-button"'))){
         assert.match(attributes,/class="file-icon-button"/)
         assert.match(attributes,/\[title\]=/)
