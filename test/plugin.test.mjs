@@ -1402,9 +1402,11 @@ test('remote AI launch uses a persistent placeholder, private session config and
         assert.equal(result.result.workspaces[0].workspaceId,'bound')
         firstProfile=profile
         await launcher.launchConfigured({...selection,workspace:{...selection.workspace,id:'second'}})
-        assert.notEqual(profile.options.cwd,firstProfile.options.cwd)
+        assert.equal(profile.options.cwd,firstProfile.options.cwd)
+        assert.equal(firstProfile.options.env.ARW_SESSION_WORKSPACE_ID,'bound')
+        assert.equal(profile.options.env.ARW_SESSION_WORKSPACE_ID,'second')
         assert.equal(await readFile(firstProfile.options.cwd+'/AGENTS.md','utf8'),'legacy')
-        assert.equal(JSON.parse(await readFile(profile.options.cwd+'/.awm/workspace.json','utf8')).workspaceId,'second')
+        assert.equal(JSON.parse(await readFile(profile.options.cwd+'/.awm/workspace.json','utf8')).workspaceId,'bound')
         await assert.rejects(access(profile.options.cwd+'/CLAUDE.md'))
         assert.equal(profile.options.env.ARW_CONFIG,undefined)
         const secondEntry=(await catalog()).workspaces.find(entry=>entry.workspaceId==='second')

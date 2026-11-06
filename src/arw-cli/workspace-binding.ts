@@ -1,4 +1,5 @@
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { renameSync, unlinkSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
 export interface WorkspaceBinding {
@@ -10,6 +11,7 @@ export interface WorkspaceBinding {
     port:number
     user:string
     terminalOnly:boolean
+    targetOnly?:boolean
     catalogPath?:string
 }
 
@@ -25,15 +27,27 @@ export function readWorkspaceBinding(directory:string,allowLegacy=false):Workspa
         if(value?.version!==2||value.kind!=='remote'||typeof value.workspaceId!=='string'||!value.workspaceId
             ||typeof value.remoteRoot!=='string'||!value.remoteRoot.startsWith('/')||typeof value.host!=='string'||!value.host
             ||!Number.isInteger(value.port)||value.port<1||value.port>65535||typeof value.user!=='string'||typeof value.terminalOnly!=='boolean'
+            ||value.targetOnly!==undefined&&typeof value.targetOnly!=='boolean'
             ||value.catalogPath!==undefined&&(typeof value.catalogPath!=='string'||!isAbsolute(value.catalogPath)))
             throw new Error('Invalid .awm/workspace.json binding; reopen this AI terminal')
         return value
     }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error}
 }
 
-export function writeWorkspaceBinding(directory:string,binding:WorkspaceBinding):void {
+export function writeWorkspaceBinding(directory:string,binding:WorkspaceBinding,reuseTarget=false):void {
     const previous=readWorkspaceBinding(directory)
     if(previous){
+        const sameTarget=['remoteRoot','host','port','user','terminalOnly','catalogPath'].every(key=>previous[key as keyof WorkspaceBinding]===binding[key as keyof WorkspaceBinding])
+        if(reuseTarget&&sameTarget){
+            const updated={...binding,workspaceId:previous.workspaceId,targetOnly:!binding.terminalOnly}
+            if(JSON.stringify(previous)===JSON.stringify(updated))return
+            const file=join(directory,'.awm','workspace.json'),temporary=file+'.'+randomUUID()+'.tmp'
+            try{
+                writeFileSync(temporary,JSON.stringify(updated,null,2)+'\n',{mode:0o600,flag:'wx'})
+                renameSync(temporary,file)
+            }finally{try{unlinkSync(temporary)}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}}
+            return
+        }
         if(['workspaceId','remoteRoot','host','port','user','terminalOnly','catalogPath'].some(key=>previous[key as keyof WorkspaceBinding]!==binding[key as keyof WorkspaceBinding]))
             throw new Error('Placeholder already belongs to another workspace binding')
         return

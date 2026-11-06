@@ -69,7 +69,15 @@ async function main(): Promise<void> {
       .map(({status:_status,configPath:_configPath,...entry})=>entry);
     console.log(JSON.stringify({workspaces}));return;
   }
-  const workspace=catalog.workspaces.find(entry=>entry.workspaceId===values.id);
+  let workspace=catalog.workspaces.find(entry=>entry.workspaceId===values.id);
+  if(boundWorkspace&&binding!.targetOnly){
+    const candidates=catalog.workspaces.filter(entry=>entry.status==='forwarded'&&entry.configPath
+      &&!entry.workspaceId.startsWith('terminal:')&&entry.workspaceRoot===binding!.remoteRoot
+      &&entry.host===binding!.host&&(entry.port??22)===binding!.port&&(entry.user??'')===binding!.user);
+    workspace=candidates.find(entry=>entry.workspaceId===process.env.ARW_SESSION_WORKSPACE_ID)
+      ??candidates.find(entry=>entry.workspaceId===binding!.workspaceId)??candidates[0];
+    if(workspace){values.id=workspace.workspaceId;args.workspaceId=workspace.workspaceId;}
+  }
   if(boundWorkspace){
     if(!workspace)throw new Error('Bound workspace is unavailable; reconnect it in Tabby or reopen this AI terminal');
     if(workspace.workspaceRoot!==binding!.remoteRoot||workspace.host!==binding!.host

@@ -135,6 +135,7 @@ export class AiLauncherService {
             const title=workspaceNames([workspace])[0]
             const env: Record<string,string> = {
                 PATH: currentCliPath(join(__dirname,'arw.cjs'),shellPathEnvironment(shell)),
+                ARW_SESSION_WORKSPACE_ID: workspace.id,
                 ARW_WORKSPACE_ROOT: workspace.root, ARW_WORKSPACE_NAME: workspace.titleName??workspace.name,
                 ARW_WORKSPACE_KIND: workspace.kind, ARW_AI_FRESH_START: '1', ARW_PANE_LAYOUT:paneLayout(this.config.store.omw?.aiLayout),
                 ...aiProxyEnvironment(configured?.proxyUrl),

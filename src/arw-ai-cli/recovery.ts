@@ -54,7 +54,7 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
         const path=relative(join(storageRoot,'agent-cwd'),cwd)
         if(!path||isAbsolute(path)||path==='..'||path.startsWith(`..${sep}`))throw new Error(t('AI 占位目录不属于当前 Tabby 配置'))
         const binding=readWorkspaceBinding(cwd,true)
-        if(binding&&env.ARW_WORKSPACE_ID&&binding.workspaceId!==env.ARW_WORKSPACE_ID)throw new Error(t('AI 工作区元数据不匹配'))
+        if(binding&&!binding.targetOnly&&env.ARW_WORKSPACE_ID&&binding.workspaceId!==env.ARW_WORKSPACE_ID)throw new Error(t('AI 工作区元数据不匹配'))
         const remoteRoot=binding?.remoteRoot??env.ARW_WORKSPACE_ROOT
         if(env.ARW_TERMINAL_MODE!==undefined&&!['0','1'].includes(env.ARW_TERMINAL_MODE))throw new Error(t('AI 工作区元数据不匹配'))
         const terminalMode=binding?.terminalOnly??(env.ARW_TERMINAL_MODE===undefined?/(?:^[a-f0-9]{16}-terminal|--terminal)(?:-[a-f0-9]{16})?$/.test(basename(cwd)):env.ARW_TERMINAL_MODE==='1')

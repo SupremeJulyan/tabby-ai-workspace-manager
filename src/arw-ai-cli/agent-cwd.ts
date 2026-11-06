@@ -3,7 +3,7 @@ import { lstat, mkdir } from 'node:fs/promises'
 import { lstatSync, readFileSync, rmdirSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, posix } from 'node:path'
 import { ensurePlaceholderGuidance } from '../arw-cli/instructions'
-import { readWorkspaceBinding, writeWorkspaceBinding, type WorkspaceBinding } from '../arw-cli/workspace-binding'
+import { writeWorkspaceBinding, type WorkspaceBinding } from '../arw-cli/workspace-binding'
 
 export interface AgentCwdIdentity { host: string; port?: number; user?: string }
 export interface AgentCwdPlaceholder { localPath: string; created: boolean }
@@ -89,12 +89,7 @@ export async function ensureAgentCwdPlaceholder (
 ): Promise<AgentCwdPlaceholder> {
     if (!posix.isAbsolute(remoteRoot)) throw new Error(`Agent cwd requires an absolute remote path: ${remoteRoot}`)
     const root = posix.normalize(remoteRoot)
-    let localPath = agentCwdPath(root,storageRoot,identity,terminalOnly,workspaceId)
-    if(binding){
-        removeLegacyAgentMetadata(localPath,root)
-        const previous=readWorkspaceBinding(localPath)
-        if(previous&&previous.workspaceId!==binding.workspaceId)localPath=isolatedAgentCwdPath(localPath,binding.workspaceId)
-    }
+    const localPath = agentCwdPath(root,storageRoot,identity,terminalOnly,workspaceId)
     let created = false
     try { await lstat(localPath) } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -102,7 +97,7 @@ export async function ensureAgentCwdPlaceholder (
     }
     await mkdir(localPath, { recursive: true, mode: 0o700 })
     removeLegacyAgentMetadata(localPath,root)
-    if(binding)writeWorkspaceBinding(localPath,binding)
+    if(binding)writeWorkspaceBinding(localPath,{...binding,targetOnly:!terminalOnly},!terminalOnly)
     ensurePlaceholderGuidance(localPath,root)
     return { localPath, created }
 }

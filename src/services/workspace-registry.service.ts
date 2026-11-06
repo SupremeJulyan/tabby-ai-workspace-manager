@@ -212,7 +212,7 @@ export class WorkspaceRegistry {
                 // A manual cd into a placeholder does not bind an ordinary local terminal.
                 const binding=!remote&&env?.ARW_WORKSPACE_ROOT&&env?.ARW_LOCAL_WORKSPACE_ROOT?readWorkspaceBinding(env.ARW_LOCAL_WORKSPACE_ROOT,true):undefined
                 if(binding){
-                    if(env?.ARW_WORKSPACE_ID&&env.ARW_WORKSPACE_ID!==binding.workspaceId)throw new Error(t('远程工作区占位符元数据无效'))
+                    if(!binding.targetOnly&&env?.ARW_WORKSPACE_ID&&env.ARW_WORKSPACE_ID!==binding.workspaceId)throw new Error(t('远程工作区占位符元数据无效'))
                     entry.restored=binding;this.restoreBindings();return
                 }
                 if (!remote && env?.ARW_WORKSPACE_ROOT && (env.ARW_LOCAL_WORKSPACE_ROOT||env.ARW_WORKSPACE_KIND==='remote')) {

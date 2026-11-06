@@ -181,3 +181,30 @@ test('UTF-8 continuation always advances and does not split a character', () => 
   assert.throws(() => selectText('text', {head: -1}), /integer/);
   assert.throws(() => selectText('text', {offset: 0, tail: 2}), /Choose/);
 });
+
+test('shared target binding preserves session choice and survives session cleanup',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'arw-shared-target-'));
+  const servers:ForwardingServer[]=[],removes:Array<()=>Promise<void>>=[];
+  t.after(async()=>{for(const remove of removes)await remove();await Promise.all(servers.map(server=>server.stop()));await rm(root,{recursive:true,force:true,maxRetries:5})});
+  const catalogPath=join(root,'omw','workspaces.json');
+  const binding={version:2 as const,kind:'remote' as const,workspaceId:'one',remoteRoot:'/project',host:'fixture',port:22,user:'alice',terminalOnly:false,catalogPath};
+  for(const id of ['one','two','wrong-user','terminal:other']){
+    const server=new ForwardingServer({workspace:{id,root:'/project',host:'fixture'},list:async()=>({entries:[]}),read:async()=>({content:id,hash:id}),write:async()=>({}),run:async()=>({stdout:id,stderr:'',exitCode:0})});
+    servers.push(server);await server.start();
+    const config=join(root,id.replace(':','-')+'.json');await writeFile(config,JSON.stringify(server.connection));
+    removes.push(await registerActiveWorkspace(catalogPath,{workspaceId:id,workspaceRoot:'/project',host:'fixture',port:22,user:id==='wrong-user'?'bob':'alice',name:id,status:'forwarded',configPath:config}));
+  }
+  writeWorkspaceBinding(root,binding);
+  writeWorkspaceBinding(root,{...binding,workspaceId:'two'},true);
+  assert.equal(JSON.parse(await readFile(join(root,'.awm','workspace.json'),'utf8')).workspaceId,'one');
+  const cli=async(session:string)=>JSON.parse((await execute(process.execPath,[resolve('dist/arw.cjs'),'read','file'],{cwd:root,env:{...process.env,ARW_SESSION_WORKSPACE_ID:session}})).stdout).content;
+  assert.equal(await cli('one'),'one');
+  assert.equal(await cli('two'),'two');
+  assert.equal(await cli('wrong-user'),'one');
+  assert.equal(await cli('terminal:other'),'one');
+  await removes[1]();await servers[1].stop();
+  assert.equal(await cli('one'),'one');
+  assert.equal(await cli('two'),'one');
+  await removes[0]();await servers[0].stop();
+  await assert.rejects(cli('one'),/Bound workspace is unavailable/);
+});

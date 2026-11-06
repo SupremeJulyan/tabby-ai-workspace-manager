@@ -164,3 +164,23 @@ test('launch and recovery preserve user instructions and restore missing minimal
         }
     }finally{await rm(storage,{recursive:true,force:true})}
 })
+
+test('same remote target reuses its placeholder when the workspace ID changes',async()=>{
+    const storage=await mkdtemp(join(tmpdir(),'arw-stable-placeholder-'))
+    try{
+        const identity={host:'host',port:22,user:'alice'}
+        const binding={version:2 as const,kind:'remote' as const,workspaceId:'first',remoteRoot:'/project',...identity,terminalOnly:false}
+        const first=await ensureAgentCwdPlaceholder('/project',storage,identity,false,undefined,binding)
+        await writeFile(join(first.localPath,'session.txt'),'keep')
+        const next=await ensureAgentCwdPlaceholder('/project',storage,identity,false,undefined,{...binding,workspaceId:'second'})
+        assert.equal(next.localPath,first.localPath)
+        assert.equal(next.created,false)
+        assert.equal(JSON.parse(await readFile(join(next.localPath,'.awm','workspace.json'),'utf8')).workspaceId,'first')
+        assert.equal(await readFile(join(next.localPath,'session.txt'),'utf8'),'keep')
+        const terminal={profile:{type:'local',options:{command:'codex',args:[],cwd:next.localPath,env:{ARW_LOCAL_WORKSPACE_ROOT:next.localPath,ARW_WORKSPACE_ROOT:'/project',ARW_WORKSPACE_ID:'second',ARW_SESSION_WORKSPACE_ID:'second'}}}}
+        prepareAiRecovery(terminal,storage,'/missing/arw.cjs')
+        assert.equal(terminal.profile.options.cwd,first.localPath)
+        assert.equal(terminal.profile.options.env.ARW_SESSION_WORKSPACE_ID,'second')
+        await assert.rejects(ensureAgentCwdPlaceholder('/project',storage,identity,false,undefined,{...binding,host:'other'}),/another workspace/)
+    }finally{await rm(storage,{recursive:true,force:true})}
+})
