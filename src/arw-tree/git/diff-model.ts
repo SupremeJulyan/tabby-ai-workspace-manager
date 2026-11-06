@@ -80,3 +80,26 @@ export function addedFilePatch (content: string): string {
     if (newline) lines.pop()
     return `new file\n@@ -0,0 +1,${lines.length} @@\n${lines.map(line=>`+${line}`).join('\n')}\n${newline ? '' : '\\ No newline at end of file\n'}`
 }
+
+export interface CommitFileDiff { path:string; patch:string }
+
+/** Split Git patches at file boundaries, including binary and metadata-only changes. */
+export function commitFileDiffs (patch:string):CommitFileDiff[] {
+    const decodePath=(value:string):string=>{
+        if(!value.startsWith('"'))return value
+        const bytes:number[]=[]
+        for(const token of value.slice(1,-1).match(/\\[0-7]{1,3}|\\.|[^\\]+/g)??[]){
+            if(/^\\[0-7]/.test(token))bytes.push(parseInt(token.slice(1),8))
+            else bytes.push(...Buffer.from(token.startsWith('\\')?({'t':'\t','n':'\n','r':'\r'}[token[1]]??token[1]):token))
+        }
+        return Buffer.from(bytes).toString('utf8')
+    }
+    return patch.split(/(?=^diff --git )/m).filter(part=>part.startsWith('diff --git ')).map(part=>{
+        const next=/^\+\+\+ (.+)$/m.exec(part)?.[1]
+        const old=/^--- (.+)$/m.exec(part)?.[1]
+        const header=part.split('\n',1)[0]
+        const fallback=/ ("b\/.*"|b\/.*)$/.exec(header)?.[1]??header
+        const path=decodePath(next&&next!=='/dev/null'?next:old&&old!=='/dev/null'?old:fallback).replace(/^[ab]\//,'')
+        return {path,patch:part}
+    })
+}

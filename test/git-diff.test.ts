@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, access } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RemoteGit } from '../src/arw-tree/git/remote-git'
-import { parseDiff, addedFilePatch } from '../src/arw-tree/git/diff-model'
+import { parseDiff, addedFilePatch, commitFileDiffs } from '../src/arw-tree/git/diff-model'
 import { execGitFixture } from './git-fixture-exec'
 
 test('diff model preserves line numbers and aligns replacement blocks', () => {
@@ -102,4 +102,17 @@ test('Git diff ignores external diff and text conversion tools', async t => {
     const patch = await git.diff((await git.status())[0], false)
     assert.equal(parseDiff(patch).added, 1)
     assert.match(patch, /\+after/)
+})
+
+test('commit file list preserves individual patches and decodes Git paths', () => {
+    const patches=[
+        'diff --git a/space name b/space name\n--- a/space name\n+++ b/space name\n@@ -1 +1 @@\n-old\n+new\n',
+        'diff --git a/deleted b/deleted\ndeleted file mode 100644\n--- a/deleted\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n',
+        'diff --git a/old b/new\nsimilarity index 100%\nrename from old\nrename to new\n',
+        'diff --git "a/\\344\\270\\255.png" "b/\\344\\270\\255.png"\nBinary files differ\n',
+    ]
+    const files=commitFileDiffs(patches.join(''))
+    assert.deepEqual(files.map(file=>file.path),['space name','deleted','new','中.png'])
+    assert.deepEqual(files.map(file=>file.patch),patches)
+    assert.deepEqual(commitFileDiffs(''),[])
 })

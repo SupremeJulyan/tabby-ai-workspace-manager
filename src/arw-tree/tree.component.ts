@@ -40,7 +40,7 @@ import { fileWorkspaceToken } from './file-recovery'
 import { ArwProject, ProjectStore } from './project.store'
 
 import { TREE_TEMPLATE, TREE_STYLES } from './tree.view'
-import { addedFilePatch } from './git/diff-model'
+import { addedFilePatch, commitFileDiffs, CommitFileDiff } from './git/diff-model'
 import { agentActivity, AgentActivity, activityScope } from '../arw-cli/agent-activity'
 import { initializeRemoteGit, setupLocalGit, validateGitIdentity, cloneDirectory } from './git/git-bootstrap'
 import { redactSensitiveText } from '../shared/redact'
@@ -50,7 +50,7 @@ import { GitSyncState, readGitSyncState, readCommitSyncHistory, syncStateLabel }
 import { LocalGitSyncAction, syncLocalGit } from './git/local-git-sync'
 
 interface GitRepositoryView { workspace:Workspace; name:string; root:string; expanded:boolean; watchedStatus?:string; groups:Array<{title:string;staged:boolean;changes:GitChange[]}>; error:string; count:number; loading:boolean; busy?:boolean; message?:string; relayProgress?:string; syncState?:GitSyncState; syncError?:string; pushedCommits?:Set<string>; pulledCommits?:Set<string>;
-    branch:string; branches:GitBranch[]; commits:GitCommit[]; inspector:string; inspectorLoading:boolean; inspectorError:string; inspectorPending?:boolean; inspectorVersion?:number; relayCancel?:()=>void }
+    commitDetails?:Map<string,{expanded:boolean;loading:boolean;files:CommitFileDiff[]}>; branch:string; branches:GitBranch[]; commits:GitCommit[]; inspector:string; inspectorLoading:boolean; inspectorError:string; inspectorPending?:boolean; inspectorVersion?:number; relayCancel?:()=>void }
 interface GitScanCache {root:string;context:string;repositories:GitRepositoryView[];complete:boolean;notice:string}
 interface TabState {
     gitScanCache:Map<string,GitScanCache>;
@@ -1356,17 +1356,29 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const date=new Date(commit.date)
         return Number.isNaN(date.getTime())?commit.date:date.toLocaleDateString()
     }
+    showCommitContextMenu(commit:GitCommit,event:MouseEvent):void {
+        event.preventDefault();event.stopPropagation()
+        this.platform.popupContextMenu([
+            {label:t('复制提交文本'),click:()=>{this.platform.setClipboard({text:commit.subject})}},
+            {label:t('复制提交哈希'),click:()=>{this.platform.setClipboard({text:commit.hash})}},
+        ],event)
+    }
     async openCommit (repository:GitRepositoryView, commit:GitCommit):Promise<void>{
-        if(repository.inspectorLoading)return
-        const tab=this.activeTab
-        repository.inspectorLoading=true;repository.error='';this.render()
+        repository.commitDetails??=new Map()
+        const existing=repository.commitDetails.get(commit.hash)
+        if(existing){existing.expanded=!existing.expanded;this.render();return}
+        const detail={expanded:true,loading:true,files:[] as CommitFileDiff[]}
+        repository.commitDetails.set(commit.hash,detail)
+        repository.error='';this.render()
+        try { detail.files=commitFileDiffs(await this.git(repository).showCommit(commit.hash)) }
+        catch(error){repository.error=String(error);repository.commitDetails.delete(commit.hash)}
+        finally{detail.loading=false;this.render()}
+    }
+    async openCommitFile(repository:GitRepositoryView,commit:GitCommit,file:CommitFileDiff):Promise<void>{
         try {
-            const patch=await this.git(repository).showCommit(commit.hash)
-            if(tab!==this.activeTab||!this.repositories.includes(repository))return
-            await openFilePane(this.app,{type:ArwEditorComponent,inputs:{workspace:repository.workspace,filePath:`${commit.shortHash} ${commit.subject}`,readonly:true,diffPatch:patch,
+            await openFilePane(this.app,{type:ArwEditorComponent,inputs:{workspace:repository.workspace,filePath:`${commit.shortHash} ${file.path}`,readonly:true,diffPatch:file.patch,
                 diffLabel:t('父提交 → 当前提交'),diffDescription:`${commit.hash}\n${commit.author} · ${commit.date}\n${commit.subject}`}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
-        } catch(error){if(tab===this.activeTab)repository.error=String(error)}
-        finally{if(tab===this.activeTab){repository.inspectorLoading=false;this.render()}}
+        } catch(error){repository.error=String(error);this.render()}
     }
     async switchBranch (repository:GitRepositoryView, branch:GitBranch):Promise<void>{
         if(repository.busy||branch.current)return
