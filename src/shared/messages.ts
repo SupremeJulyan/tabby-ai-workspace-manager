@@ -534,6 +534,7 @@ export const englishMessages: Record<string,string> = {
     "复制提交文本": "Copy commit message",
     "复制提交哈希": "Copy commit hash",
     "此提交没有文件改动": "No file changes in this commit",
+    "Git 无法获取登录凭据，插件不能交互输入用户名或密码。如果使用 GitHub HTTPS 地址，请在本机终端依次执行 gh auth login 和 gh auth setup-git，再重试；WSL 工作区请在对应 WSL 环境中执行。其他 Git 服务请配置 credential helper，或使用已配置密钥的 SSH 地址。": "Git could not obtain login credentials. The plugin cannot prompt for a username or password. For GitHub HTTPS URLs, run gh auth login followed by gh auth setup-git in a local terminal, then retry. For WSL workspaces, run them in the corresponding WSL environment. For other Git services, configure a credential helper or use an SSH URL with a configured key.",
     "提交记录": "History",
     "分支": "Branches",
     "正在读取提交记录…": "Loading commit history…",

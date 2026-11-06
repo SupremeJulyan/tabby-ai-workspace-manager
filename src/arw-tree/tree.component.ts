@@ -47,6 +47,7 @@ import { redactSensitiveText } from '../shared/redact'
 import { shellQuote } from '../shared/shell-quote'
 import { GitBranch, GitCommit } from './git/git-history'
 import { GitSyncState, readGitSyncState, readCommitSyncHistory, syncStateLabel } from './git/git-sync-state'
+import { describeGitOperationError } from './git/git-error'
 import { LocalGitSyncAction, syncLocalGit } from './git/local-git-sync'
 
 interface GitRepositoryView { workspace:Workspace; name:string; root:string; expanded:boolean; watchedStatus?:string; groups:Array<{title:string;staged:boolean;changes:GitChange[]}>; error:string; count:number; loading:boolean; busy?:boolean; message?:string; relayProgress?:string; syncState?:GitSyncState; syncError?:string; pushedCommits?:Set<string>; pulledCommits?:Set<string>;
@@ -899,7 +900,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         const version=this.version
         repository.busy=true;if(!quiet){repository.error='';repository.message=undefined;this.gitNoticeByRoot.delete(repository.root)}this.render()
         try { await operation(); if(message&&!quiet){repository.message=message;if(version===this.version&&this.repositories.includes(repository))this.gitNoticeByRoot.set(repository.root,{error:'',message})} }
-        catch(error){logOperation(message??'Git 操作',{root:repository.root,background:quiet,error:String(error)});if(!quiet){repository.error=String(error);if(version===this.version&&this.repositories.includes(repository))this.gitNoticeByRoot.set(repository.root,{error:repository.error});this.render()}}
+        catch(error){logOperation(message??'Git 操作',{root:repository.root,background:quiet,error:String(error)});if(!quiet){repository.error=describeGitOperationError(error);if(version===this.version&&this.repositories.includes(repository))this.gitNoticeByRoot.set(repository.root,{error:repository.error});this.render()}}
         finally{
             if(version===this.version&&this.repositories.includes(repository)){
                 try{
