@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, readdir, unlink, link } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, unlink, copyFile, constants } from 'node:fs/promises';
 import { basename, dirname, join, posix, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { object, text } from './operations';
@@ -89,8 +89,9 @@ export async function transfer(direction:'upload'|'download',args: Record<string
           if (!chunk.length) throw new Error('Copy transfer made no progress');
         }
         await local.close();
-        // Publish without replacing an existing destination.
-        await link(temporary, to.path);
+        // Exclusive copy also works where hard links are emulated with symlinks
+        // (for example PRoot); the published download must be a regular file.
+        await copyFile(temporary, to.path, constants.COPYFILE_EXCL);
       } finally {
         await local.close();
         await unlink(temporary).catch(() => undefined);
