@@ -1779,11 +1779,11 @@ test('Git history and branches use the repository backend and preserve dirty wor
     const {mkdtemp,writeFile,readFile,rm}=await import('node:fs/promises')
     const {tmpdir}=await import('node:os'),{join}=await import('node:path')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
-    const root=await mkdtemp(join(tmpdir(),'arw-git-inspector-')),workspace=localWorkspace(root),opened=[],confirmations=[]
+    const root=await mkdtemp(join(tmpdir(),'arw-git-inspector-')),workspace=localWorkspace(root),opened=[],confirmations=[],menus=[],copied=[]
     const current=new BehaviorSubject(null)
     let answer=0
     const tree=new plugin.TreeComponent({current},
-        {openNewTab:entry=>opened.push(entry)},{info(){}},{},{},{},{async showMessageBox(options){confirmations.push(options);return {response:answer}}})
+        {openNewTab:entry=>opened.push(entry)},{info(){}},{},{},{},{popupContextMenu:items=>menus.push(items),setClipboard:value=>copied.push(value.text),async showMessageBox(options){confirmations.push(options);return {response:answer}}})
     try{
         for(const command of ['git init -b main',"git config user.name 'ARW Test'",'git config user.email arw@example.test'])assert.equal((await workspace.run(command)).exitCode,0)
         await writeFile(join(root,'file.txt'),'first\n')
@@ -1798,7 +1798,21 @@ test('Git history and branches use the repository backend and preserve dirty wor
         assert.equal(repository.branches.find(branch=>branch.current).name,'main')
         tree.showInspector(repository,'history');assert.equal(repository.inspector,'history')
         tree.showInspector(repository,'branches');assert.equal(repository.inspector,'branches')
-        await tree.openCommit(repository,repository.commits[0])
+        const commit=repository.commits[0]
+        await tree.openCommit(repository,commit)
+        assert.equal(opened.length,0,'expanding a commit does not open a diff')
+        const detail=repository.commitDetails.get(commit.hash)
+        assert.equal(detail.expanded,true)
+        assert.equal(detail.loading,false)
+        assert.equal(detail.files.length,1)
+        assert.equal(detail.files[0].path,'file.txt')
+        await tree.openCommitFile(repository,commit,detail.files[0])
+        await tree.openCommit(repository,commit)
+        assert.equal(detail.expanded,false)
+        tree.showCommitContextMenu(commit,{preventDefault(){},stopPropagation(){}})
+        assert.equal(menus[0].length,2)
+        menus[0][0].click();menus[0][1].click()
+        assert.deepEqual(copied,[commit.subject,commit.hash])
         assert.equal(opened[0].inputs.workspace.root,root)
         assert.match(opened[0].inputs.diffPatch,/\+first/)
         assert.equal(opened[0].inputs.readonly,true)
