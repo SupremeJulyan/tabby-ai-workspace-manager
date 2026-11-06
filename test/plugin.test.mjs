@@ -3509,3 +3509,32 @@ test('AI launch automatically follows the source WSL distribution instead of the
     assert.equal(pinned,selection)
     closed.next()
 })
+
+test('manual cd into a remote placeholder keeps an ordinary terminal local',async()=>{
+    const {Subject}=await import('rxjs')
+    const {mkdtemp,mkdir,writeFile,rm}=await import('node:fs/promises')
+    const {tmpdir}=await import('node:os')
+    const {join}=await import('node:path')
+    const directory=await mkdtemp(join(tmpdir(),'arw-local-placeholder-'))
+    const root=join(directory,'agent-cwd','endpoint','project')
+    await mkdir(join(root,'.awm'),{recursive:true})
+    await writeFile(join(root,'.awm','workspace.json'),JSON.stringify({version:2,kind:'remote',workspaceId:'remote-id',remoteRoot:'/remote/project',host:'host',port:22,user:'alice',terminalOnly:false}))
+    let cwd=directory
+    const reports=new Subject()
+    const terminal={profile:{type:'local'},hasFocus:false,focused$:new Subject(),sessionChanged$:new Subject(),
+        session:{getWorkingDirectory:async()=>cwd,oscProcessor:{cwdReported$:reports},destroyed$:new Subject()}}
+    const registry=new (load().WorkspaceRegistry)({activeTabChange$:new Subject()},{run:fn=>fn()})
+    const settle=()=>new Promise(resolve=>setTimeout(resolve,20))
+    try{
+        registry.register(terminal);await settle()
+        cwd=root;reports.next(cwd);await settle()
+        assert.equal(registry.get(terminal).workspace.kind,'local')
+        assert.equal(registry.get(terminal).workspace.root,root)
+        assert.equal(registry.get(terminal).remote,undefined)
+        await writeFile(join(root,'.awm','workspace.json'),'invalid JSON')
+        reports.next(cwd);await settle()
+        assert.equal(registry.get(terminal).workspace.kind,'local')
+        cwd=directory;reports.next(cwd);await settle()
+        assert.equal(registry.get(terminal).workspace.root,directory)
+    }finally{registry.unregister(terminal);await rm(directory,{recursive:true,force:true})}
+})
