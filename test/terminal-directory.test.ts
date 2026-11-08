@@ -1,57 +1,57 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { Subject } from 'rxjs'
-import { changeTerminalDirectory, DirectoryEchoFilter } from '../src/shared/terminal-directory'
+import { changeTerminalDirectory } from '../src/shared/terminal-directory'
 import { shellQuote } from '../src/shared/shell-quote'
 
-test('directory filter removes the echoed cd and returns the shell exit status',()=>{
-    const marker=Buffer.from('\x1eARW_CD_test:'),echo=Buffer.from('ARW_CD_test')
-    const statuses:number[]=[]
-    let visible=''
-    const filter=new DirectoryEchoFilter(marker,echo,status=>statuses.push(status??-1))
-    filter.outputToTerminal$.subscribe(data=>visible+=data.toString())
-    filter.feedFromSession(Buffer.from("user$  cd -- /missing; arw_status=$?; printf 'ARW_CD_test:%s'\r\ncd: /missing: No such file\r\n\x1eARW_CD_test:"))
-    filter.feedFromSession(Buffer.from('1\x1f'))
-    assert.deepEqual(statuses,[1])
-    assert.ok(!visible.includes('ARW_CD_test'),visible)
-    assert.ok(!visible.includes('cd -- /missing'),visible)
-    assert.match(visible,/cd: \/missing: No such file/)
-    filter.close()
+for(const [command,root,expected] of [
+    ['bash',"/project's path",`cd -- ${shellQuote("/project's path")}\r`],
+    ['C:\\Program Files\\PowerShell\\7\\pwsh.exe',"C:\\Users\\O'Brien", "cd -LiteralPath 'C:\\Users\\O''Brien'\r"],
+    ['powershell.exe','C:\\Users\\juyan',"cd -LiteralPath 'C:\\Users\\juyan'\r"],
+    ['cmd.exe','D:\\some path','cd /d "D:\\some path"\r'],
+]){
+    test(`directory switching sends only cd for ${command}`,async()=>{
+        const sent:string[]=[]
+        const tab:any={profile:{type:'local',options:{command}},session:{open:true},sendInput:(text:string)=>sent.push(text)}
+        await changeTerminalDirectory(tab,root)
+        assert.deepEqual(sent,[expected])
+    })
+}
+
+test('directory switching rejects disconnected sessions and multiline paths',async()=>{
+    await assert.rejects(changeTerminalDirectory({session:{open:false}} as any,'/project'))
+    await assert.rejects(changeTerminalDirectory({session:{open:true},sendInput:()=>assert.fail('must not send')} as any,'/project\npwd'))
 })
 
-test('workspace switching sends cd despite task or input state and checks its result',async()=>{
-    let filter:DirectoryEchoFilter|undefined
+test('directory commands honor shell hints and remote PowerShell profiles',async()=>{
+    for(const type of ['local','ssh']){
+        const sent:string[]=[]
+        const tab:any={profile:{type,options:{shellType:'powershell'}},session:{open:true},sendInput:(text:string)=>sent.push(text)}
+        await changeTerminalDirectory(tab,"C:\\project's [data]")
+        assert.deepEqual(sent,["cd -LiteralPath 'C:\\project''s [data]'\r"])
+    }
+})
+
+test('CMD uses pushd for UNC and rejects variable expansion in directory names',async()=>{
     const sent:string[]=[]
-    const tab:any={alternateScreenActive:true,sessionChanged$:new Subject(),session:{open:true,closed$:new Subject(),middleware:{
-        push:(value:DirectoryEchoFilter)=>{filter=value},remove:()=>{filter=undefined},
-    }},sendInput:(text:string)=>{
-        sent.push(text)
-        const nonce=/ARW_CD_([a-f0-9]+):/.exec(text)?.[1]
-        assert.ok(nonce)
-        filter!.feedFromSession(Buffer.from(`\x1eARW_CD_${nonce}:0\x1f`))
-    }}
-    await changeTerminalDirectory(tab,"/project's path")
+    const tab:any={profile:{type:'local',options:{command:'cmd.exe'}},session:{open:true},sendInput:(text:string)=>sent.push(text)}
+    await changeTerminalDirectory(tab,'\\\\server\\share\\project')
+    assert.deepEqual(sent,['pushd "\\\\server\\share\\project"\r'])
+    for(const path of ['C:\\%TEMP%','C:\\!name!'])await assert.rejects(changeTerminalDirectory(tab,path),/CMD cannot safely/)
     assert.equal(sent.length,1)
-    assert.ok(sent[0].includes(`cd -- ${shellQuote("/project's path")}`),sent[0])
-    assert.match(sent[0],/arw_status=\$\?; printf/)
 })
 
-test('a real shell failure is returned as a failed directory change',async t=>{
-    const parent=await mkdtemp(join(tmpdir(),'arw-cd-missing-'))
-    t.after(()=>rm(parent,{recursive:true,force:true}))
-    const shell=spawn('python3',['-c',"import pty; pty.spawn(['/bin/bash','--noprofile','--norc','-i'])"],{env:{...process.env,PS1:'ARW_TEST> ',TERM:'dumb'}})
-    t.after(()=>{shell.kill();shell.stdin.destroy();shell.stdout.destroy();shell.stderr.destroy()})
-    const closed$=new Subject<void>()
-    shell.on('close',()=>closed$.next())
-    const session:any={open:true,closed$,middleware:{push:(filter:DirectoryEchoFilter)=>{
-        shell.stdout.on('data',(chunk:Buffer)=>filter.feedFromSession(chunk))
-        shell.stderr.on('data',(chunk:Buffer)=>filter.feedFromSession(chunk))
-    },remove(){}}}
-    const tab:any={session,sessionChanged$:new Subject(),alternateScreenActive:false,sendInput:(text:string)=>shell.stdin.write(text)}
-    await assert.rejects(changeTerminalDirectory(tab,join(parent,'missing')),/终端路径未同步，仍有未执行输入与任务|Terminal path is not synced/)
+test('Fish escapes literal backslashes and apostrophes in directory paths',async()=>{
+    const sent:string[]=[]
+    const tab:any={profile:{type:'ssh',options:{command:'/usr/bin/fish'}},session:{open:true},sendInput:(text:string)=>sent.push(text)}
+    await changeTerminalDirectory(tab,"/srv/a\\b's")
+    assert.equal(sent[0],"cd -- '/srv/a\\\\b\\'s'\r")
 })
 
+test('WSL and Git Bash convert Windows paths in their respective runtimes',async()=>{
+    for(const [command,converter] of [['wsl.exe','wslpath'],['C:\\Git\\bin\\bash.exe','cygpath']]){
+        const sent:string[]=[]
+        const tab:any={profile:{type:'local',options:{command}},session:{open:true},sendInput:(text:string)=>sent.push(text)}
+        await changeTerminalDirectory(tab,'D:\\some path')
+        assert.equal(sent[0],`cd -- "$(${converter} -u 'D:\\some path')"\r`)
+    }
+})

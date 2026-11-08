@@ -460,13 +460,8 @@ test('workspace tree saves the browsed root and opens files and AI against the s
     const store=provider.useFactory(config)
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
     const {Subject}=await import('rxjs')
-    let echoFilter
     const notices=[]
-    const terminal={session:{open:true,closed$:new Subject(),middleware:{push(filter){echoFilter=filter},remove(){echoFilter=undefined}}},sessionChanged$:new Subject(),sendInput(value){
-        this.lastInput=value
-        const nonce=/ARW_CD_([a-f0-9]+):/.exec(value)?.[1]
-        if(nonce)echoFilter.feedFromSession(Buffer.from(`\x1eARW_CD_${nonce}:0\x1f`))
-    }}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
+    const terminal={session:{open:true},sendInput(value){this.lastInput=value}}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
     let contextMenu
     const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(message){notices.push(message)}},{},{},{launchConfigured:async value=>launched.push(value)},{popupContextMenu(items){contextMenu=items}},store)
     try {
@@ -486,7 +481,7 @@ test('workspace tree saves the browsed root and opens files and AI against the s
         await tree.selectProject(project)
         assert.equal(tree.workspaceSwitchNotice,'','successful synchronization clears the inline notice')
         assert.equal(tree.breadcrumb,join(root,'src'))
-        assert.ok(terminal.lastInput.startsWith(` cd -- '${project.root}';`),'selecting a saved workspace also changes the source terminal directory')
+        assert.ok(terminal.lastInput===`cd -- '${project.root}'\r`,'selecting a saved workspace also changes the source terminal directory')
         assert.equal(tree.nodes[0].path,'main.ts')
         await tree.open(tree.nodes[0]);assert.equal(opened[0].inputs.workspace.root,project.root)
         await tree.launchProject(project)
@@ -1695,7 +1690,7 @@ test('terminal mode synchronizes its source once; refresh preserves the selected
     terminal.sshSession=remote
     terminal.session={open:true,getWorkingDirectory:async()=>{pwdReads++;return pwd}}
     const workspace={...localWorkspace(root),kind:'remote',host:'fixture'}
-    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null),async prepareCwdIntegration(){return {command:'pwd',async cleanup(){}}}},
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},
         {openNewTab(){}},{info(message){notices.push(message)}},{async disable(){}},{},{launchConfigured:async selection=>launched.push(selection)},{},store)
     tree.selection={terminal,remote,workspace,hint:''}
     tree.ensureGitScan=()=>{}
@@ -1736,7 +1731,7 @@ test('terminal mode synchronizes its source once; refresh preserves the selected
         assert.equal(tree.commitMessage(tree.repositories[0]??{}),'')
         pwd=null;await tree.followTerminal()
         assert.equal(tree.breadcrumb,root)
-        assert.equal(tree.cwdSetupPending,true)
+        assert.equal(tree.cwdSetupPending,false)
         const template=plugin.TreeComponent.component.template
         assert.match(template,/\|\| terminalMode.*addProject\(\)/s)
         assert.match(template,/followTerminal\(\)/)
@@ -1750,24 +1745,26 @@ test('terminal mode synchronizes its source once; refresh preserves the selected
     }finally{await store.ngOnDestroy?.();tree.ngOnDestroy();await rm(root,{recursive:true,force:true})}
 })
 
-test('connected SSH without cwd exposes one-click session setup and follows the first actual report',async()=>{
+test('following SSH without a native cwd preserves the browser and sends no setup commands',async()=>{
     const {BehaviorSubject}=await import('rxjs'),plugin=load(),terminal=new SSHTabComponent(),sent=[]
     terminal.sshSession={open:true,authUsername:'user',profile:{options:{host:'host'}}}
-    terminal.session={open:true};terminal.alternateScreenActive=true;terminal.sendInput=value=>sent.push(value)
+    let cwd=null
+    terminal.session={open:true,getWorkingDirectory:async()=>cwd};terminal.sendInput=value=>sent.push(value)
     const current=new BehaviorSubject({terminal,remote:terminal.sshSession,hint:'等待路径'})
-    const tree=new plugin.TreeComponent({current,async prepareCwdIntegration(){return {command:'. /tmp/arw-fixture.sh',cleanup:async()=>{}}}},{},{},{disable:async()=>{}},{},{},{setClipboard(){}})
+    const tree=new plugin.TreeComponent({current},{},{},{disable:async()=>{}},{},{},{})
+    tree.ensureGitScan=()=>{}
     try{
-        assert.equal(tree.isRemote,true);assert.match(tree.connectionLabel,/SSH 已连接/)
-        assert.equal(tree.workspaceLabel,'user@host');assert.equal(tree.canEnableCwd,true)
-        tree.enableCwd();assert.equal(sent.length,0);assert.match(tree.cwdSetupError,/退出全屏/)
-        terminal.alternateScreenActive=false;await tree.enableCwd()
-        assert.equal(sent.length,1);assert.equal(tree.cwdSetupPending,true)
-        assert.match(sent[0],/^ \. \/tmp\/arw-fixture\.sh\r$/)
-        current.next({terminal,remote:terminal.sshSession,hint:'',workspace:{id:'actual',kind:'remote',root:'/actual/path',host:'host',label:'user@host:/actual/path',list:async()=>[]}})
-        assert.equal(tree.cwdSetupPending,false);assert.equal(tree.selection.workspace.root,'/actual/path')
+        await tree.followTerminal()
+        assert.match(tree.error,/Tabby/)
+        assert.equal(tree.cwdSetupPending,false)
+        assert.equal(tree.terminalMode,false)
+        await tree.toggleTerminalMode()
+        assert.equal(tree.terminalMode,false)
+        assert.deepEqual(sent,[])
+        const template=plugin.TreeComponent.component.template
+        assert.doesNotMatch(template,/copyCwdHook|enableCwd\(\)|PROMPT_COMMAND/)
     }finally{tree.ngOnDestroy()}
 })
-
 
 test('sidebar omits the SFTP notice and manual locate controls',()=>{
     const template=load().TreeComponent.component.template
@@ -1893,30 +1890,7 @@ test('AI activity is a sibling tab with stable expandable entries and category/s
     }finally{tree.ngOnDestroy()}
 })
 
-test('shell integration stages privately through SFTP and sends only a short source command',async()=>{
-    const {Subject}=await import('rxjs'),{spawn}=await import('node:child_process')
-    const fs=await import('node:fs/promises'),plugin=load(),terminal=new SSHTabComponent()
-    const remote={open:true,ssh:{async openSessionChannel(){return 1},async activateChannel(){
-        const data$=new Subject(),extendedData$=new Subject(),closed$=new Subject();let child
-        return {data$,extendedData$,closed$,async requestExec(command){
-            child=spawn('/bin/sh',['-c',command]);child.stdout.on('data',data=>data$.next(data));child.stderr.on('data',data=>extendedData$.next([1,data]));child.on('close',()=>closed$.next())
-        },async eof(){child.stdin.end()},async close(){child?.kill()}}
-    }},async openSFTP(){return {open:async path=>{
-        const file=await fs.open(path,'w');return {write:bytes=>file.write(bytes),close:()=>file.close()}
-    },chmod:(path,mode)=>fs.chmod(path,mode)}}}
-    terminal.sshSession=remote
-    const registry=new plugin.WorkspaceRegistry({activeTabChange$:new Subject()},{run:fn=>fn()})
-    const prepared=await registry.prepareCwdIntegration(terminal,'bash')
-    const script=prepared.command.slice(2).replace(/^'|'$/g,'')
-    try{
-        assert.ok(prepared.command.length<120);assert.ok(!prepared.command.includes('PROMPT_COMMAND'))
-        assert.match(await fs.readFile(script,'utf8'),/PROMPT_COMMAND/)
-        assert.equal((await fs.stat(script)).mode&0o777,0o600)
-    }finally{await prepared.cleanup()}
-    await assert.rejects(fs.access(script))
-})
-
-test('SSH without SFTP initializes the directory tree, saves editor changes and stages cwd integration',async()=>{
+test('SSH without SFTP initializes the directory tree and saves editor changes',async()=>{
     const {Subject}=await import('rxjs'),{spawn}=await import('node:child_process')
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const root=await fs.mkdtemp(join(tmpdir(),'arw-plugin-no-sftp-'))
@@ -1946,12 +1920,7 @@ test('SSH without SFTP initializes the directory tree, saves editor changes and 
         assert.equal(editor.error,'');assert.equal(editor.content,'before');assert.equal(editor.readonly,false)
         editor.content='after';await editor.save()
         assert.equal(editor.error,'');assert.equal(await fs.readFile(join(root,'file'),'utf8'),'after')
-        prepared=await registry.prepareCwdIntegration(terminal,'bash')
-        const script=prepared.command.slice(2).replace(/^'|'$/g,'')
-        assert.match(await fs.readFile(script,'utf8'),/PROMPT_COMMAND/)
-        assert.equal((await fs.stat(script)).mode&0o777,0o600)
         assert.equal(probes,1)
-        await prepared.cleanup();prepared=undefined;await assert.rejects(fs.access(script))
     }finally{registry.unregister(terminal);await prepared?.cleanup();await fs.rm(root,{recursive:true,force:true})}
 })
 
@@ -2619,7 +2588,7 @@ test('sidebar errors can be dismissed without restoring cached errors or clearin
         assert.equal(tree.gitNoticeByRoot.get('/fixture').error,'')
         tree.error='new failure';assert.equal(tree.error,'new failure','new failures are not permanently hidden')
         const template=plugin.TreeComponent.component.template
-        assert.equal((template.match(/class="icon-button dismiss-error"/g)||[]).length,5)
+        assert.equal((template.match(/class="icon-button dismiss-error"/g)||[]).length,4)
         assert.match(template,/\[attr\.aria-label\]="'关闭错误提示' \| arwTranslate"/)
     }finally{tree.ngOnDestroy()}
 })
@@ -3353,7 +3322,7 @@ test('restored workspace bindings preserve remote identity in editor and preview
     }
 })
 
-test('following a WSL terminal requests a real shell report instead of using the Windows PTY guess',async()=>{
+test('following WSL without native cwd preserves browsing without injecting detection',async()=>{
     const {BehaviorSubject}=await import('rxjs')
     const windowsProcess=Object.create(process)
     Object.defineProperty(windowsProcess,'platform',{value:'win32'})
@@ -3371,7 +3340,8 @@ test('following a WSL terminal requests a real shell report instead of using the
         assert.equal(tree.canForward,false)
         assert.equal(tree.canEnableCwd,true)
         await tree.followTerminal()
-        assert.equal(enabled,1)
+        assert.equal(enabled,0)
+        assert.match(tree.error,/Tabby/)
         assert.equal(shown,0)
     }finally{tree.ngOnDestroy()}
 })
@@ -3444,12 +3414,14 @@ test('restored WSL file trees load before cwd reporting and explicit follow swit
         assert.equal(registry.current.value.pathSource,'restored')
         assert.match(registry.current.value.hint,/恢复|restor/i)
         await tree.followTerminal()
-        assert.equal(tree.cwdSetupPending,true)
+        assert.equal(tree.cwdSetupPending,false)
         registry.current.next({...registry.current.value})
-        assert.equal(tree.cwdSetupPending,true,'saved-directory refresh must not acknowledge a pending shell report')
+        assert.equal(tree.cwdSetupPending,false,'following must not install a pending shell detector')
         reported=process.platform==='win32'
             ?(await (await import('node:util')).promisify((await import('node:child_process')).execFile)('wsl.exe',['--exec','wslpath','-u',actual])).stdout.trim():actual
         cwd.next(reported)
+        await wait(()=>registry.current.value?.pathSource==='terminal')
+        await tree.followTerminal()
         await wait(()=>!tree.loading&&tree.breadcrumb===actual&&tree.nodes.some(node=>node.name==='actual.txt'))
         assert.equal(tree.cwdSetupPending,false)
         assert.equal(registry.current.value.pathSource,'terminal')

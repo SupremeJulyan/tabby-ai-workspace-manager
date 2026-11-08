@@ -21,7 +21,7 @@ import { readBackgroundGit } from './git/background-git'
 import { workspaceGit } from './git/workspace-git'
 import { workspacePath, parentWorkspacePath } from '../shared/workspace-path'
 import { discoverGitRepositories } from './git/git-discovery'
-import { cwdIntegrationCommand, RemoteShell } from '../shared/shell-integration'
+import { RemoteShell } from '../shared/shell-integration'
 import { WorkspaceRegistry, WorkspaceSelection } from '../services/workspace-registry.service'
 import { ForwardingService } from '../arw-cli/forwarding.service'
 import { GitTasksService } from '../services/git-tasks.service'
@@ -428,7 +428,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private cwdSetupCleanup?:()=>Promise<void>
     private cwdSetupVersion=0
     private cwdFollowVersion?:number
-    private clearCwdSetup():void{
+    private cwdSetupWaiter?:(success:boolean)=>void
+    private terminalModeSwitching=false
+    private clearCwdSetup(success=false):void{
+        const waiter=this.cwdSetupWaiter;this.cwdSetupWaiter=undefined;waiter?.(success)
         this.cwdSetupVersion++;this.cwdFollowVersion=undefined;clearTimeout(this.cwdSetupTimer)
         const cleanup=this.cwdSetupCleanup;this.cwdSetupCleanup=undefined;void cleanup?.()
     }
@@ -659,7 +662,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.subscription = registry.current.subscribe(next => {
             const followReport=this.cwdSetupPending&&this.cwdFollowVersion===this.version&&next?.workspace&&next.pathSource==='terminal'&&next.terminal===this.selection?.terminal
             if(next?.terminal!==this.selection?.terminal||(next?.workspace&&next.pathSource!=='sftp'&&next.pathSource!=='restored')){
-                this.cwdSetupPending=false;this.cwdSetupError='';this.clearCwdSetup()
+                this.cwdSetupPending=false;this.cwdSetupError='';this.clearCwdSetup(Boolean(followReport))
             }
             const nextTab=this.browsingKey(next),tabChanged=nextTab!==this.activeTab
             if(tabChanged||!next?.workspace)this.saveActiveState()
@@ -851,20 +854,27 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     get changeCount (): number { return this.gitGroups.reduce((sum,group)=>sum+group.changes.length,0) }
     filteredChanges(changes:GitChange[]):GitChange[]{const query=this.filterText.trim().toLocaleLowerCase();return query?changes.filter(change=>change.path.toLocaleLowerCase().includes(query)):changes}
     async toggleTerminalMode (): Promise<void> {
-        if (!this.isRemote) return
+        if (!this.isRemote||this.terminalModeSwitching) return
         const terminal=this.source
         if(!terminal)return
-        if(!this.terminalMode){
-            if(!terminal.session?.open||terminal.alternateScreenActive){this.error=t('请回到 shell 命令提示符后重试。');this.render();return}
-            this.cwdSetupError=''
-            await this.followTerminal()
-            if(this.source!==terminal||this.error||this.cwdSetupError||this.cwdSetupPending)return
-        }
-        this.terminalMode=!this.terminalMode
-        setTerminalCommandMode(terminal,this.terminalMode)
-        this.projectsExpanded=true
-        this.loadProjects(this.selection?.workspace)
-        this.rememberBrowsing();this.render()
+        this.terminalModeSwitching=true
+        try{
+            if(!this.terminalMode){
+                if(!terminal.session?.open||terminal.alternateScreenActive){this.error=t('请回到 shell 命令提示符后重试。');this.render();return}
+                this.cwdSetupError=''
+                await this.followTerminal()
+                if(this.cwdSetupPending){
+                    const success=await new Promise<boolean>(resolve=>{this.cwdSetupWaiter=resolve})
+                    if(!success)return
+                }
+                if(this.source!==terminal||this.error||this.cwdSetupError||this.cwdSetupPending)return
+            }
+            this.terminalMode=!this.terminalMode
+            setTerminalCommandMode(terminal,this.terminalMode,this.cwdShell)
+            this.projectsExpanded=true
+            this.loadProjects(this.selection?.workspace)
+            this.rememberBrowsing();this.render()
+        }finally{this.terminalModeSwitching=false}
     }
     private rememberIfTabbed ():void{
         this.saveActiveState(false)
@@ -879,8 +889,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             const root=await terminalWorkspaceDirectory(terminal)
             if(this.source!==terminal||version!==this.version||this.browsingKey(this.selection)!==key)return
             if(!root){
-                if(this.canEnableCwd)await this.enableCwd()
-                else {this.error=t('尚未收到终端 pwd，请在 shell 中启用路径检测后重试。');this.render()}
+                this.error=t('Tabby 尚未提供终端当前目录，请启用 Tabby 的路径检测后重试。');this.render()
                 return
             }
             const remote=isSshTab(terminal)?terminal.sshSession??undefined:undefined
@@ -1643,30 +1652,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     get canEnableCwd():boolean{return Boolean(!this.selection?.sourceTerminal&&this.source&&((isSshTab(this.source)&&this.source.sshSession?.open)||isWslTerminal(this.source)||isMsysTerminal(this.source))&&this.source.session?.open)}
     async enableCwd():Promise<void>{
-        if(!this.canEnableCwd||this.cwdSetupPending)return
-        const terminal=this.source!
-        if(terminal.alternateScreenActive){this.cwdSetupError=t('请先退出全屏程序，回到 shell 命令提示符。');return}
-        this.clearCwdSetup();const version=this.cwdSetupVersion
-        this.cwdFollowVersion=this.version
-        this.cwdSetupError='';this.cwdSetupPending=true;this.render()
-        try{
-            const prepared=await this.registry.prepareCwdIntegration(terminal,this.cwdShell)
-            if(version!==this.cwdSetupVersion||this.source!==terminal||!this.cwdSetupPending){await prepared.cleanup();return}
-            this.cwdSetupCleanup=prepared.cleanup
-            if(terminal.alternateScreenActive)throw new Error(t('请回到 shell 命令提示符后重试。'))
-            this.cwdSetupTimer=setTimeout(()=>{
-                this.cwdSetupPending=false;this.clearCwdSetup()
-                if(!this.selection?.workspace||this.selection.pathSource==='sftp'||this.selection.pathSource==='restored')this.cwdSetupError=t('未收到目录，请确认所选 shell 正确，并在命令提示符下重试。也可以复制命令手动执行。');this.render()
-            },8000)
-            terminal.sendInput(` ${prepared.command}\r`)
-        }catch(error){
-            if(version!==this.cwdSetupVersion)return
-            this.cwdSetupPending=false;this.cwdSetupError=String(error);this.clearCwdSetup();this.render()
-        }
-    }
-    copyCwdHook():void{
-        this.platform.setClipboard({text:cwdIntegrationCommand(this.cwdShell)})
-        this.notifications.info(t`已复制 ${this.cwdShell} 会话级路径检测命令，不修改远端配置文件。`)
+        await this.followTerminal()
     }
     private watchController?:AbortController
     private snapshotController?:AbortController

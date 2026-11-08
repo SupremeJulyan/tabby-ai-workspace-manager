@@ -195,7 +195,7 @@ export class ForwardingServer {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('arguments must be an object');
     const values = args as Record<string, unknown>;
     if (values.workspaceId !== workspace.id) throw new Error('Workspace is unavailable; run arw workspaces again');
-    if(this.backend.terminalOnly?.()&&!['run_remote_command','remote_output'].includes(String(input.name)))throw new CommandPolicyError('Terminal mode only supports arw exec; file, search, transfer and batch operations are disabled');
+    if(this.backend.terminalOnly?.()&&!['run_remote_command','remote_output'].includes(String(input.name)))throw new CommandPolicyError("Terminal mode uses arw exec and arw output.");
     const spec = Object.values(commands).find(command => command.tool === input.name);
     if (!spec) throw new Error('Unsupported CLI operation');
     const fields = ['remote_upload','remote_download'].includes(String(input.name)) ? ['action', 'path', 'transferId', 'data'] : spec.fields;

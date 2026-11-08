@@ -37,7 +37,7 @@ test('CLI uses its exact directory binding, not inherited environment or parent 
   assert.equal((await cli(['exec','pwd'])).stdout,'one');
   terminalMode=true;
   assert.equal((await cli(['exec','pwd'])).stdout,'one');
-  await assert.rejects(cli(['read','file']),/Terminal mode only supports arw exec/);
+  await assert.rejects(cli(['read','file']),/Terminal mode uses arw exec/);
   terminalMode=false;
   assert.equal(JSON.parse((await cli(['workspaces'])).stdout).workspaces.length,2);
   assert.equal(JSON.parse((await cli(['read','file','--id','two'])).stdout).content,'two');

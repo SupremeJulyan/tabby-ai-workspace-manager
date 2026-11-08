@@ -51,13 +51,17 @@ Use dedicated arw file commands for project contents: list/read/search/find to i
 
 export const terminalCliGuidance = `# ARW terminal mode
 
-Use the arw-cli skill. This local directory is a placeholder, not project files. Use arw exec only for shell tasks such as builds, tests, Git and process diagnostics, and arw output to continue stored output. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, redirection, heredocs or scripts. Use native file tools when available; if they cannot access the bound workspace, ask the user to open the regular remote workspace mode. The terminal must be at a shell prompt.
+Use the arw-cli skill. This local directory is a placeholder, not project files. The terminal must be at a shell prompt.
 
 Omit --id for this bound terminal. If unavailable, reopen the AI terminal in terminal mode; never substitute another session. Read applicable remote project instructions before changes. Use known commands directly; consult arw COMMAND --help only for unfamiliar syntax or usage errors. Do not bypass POLICY_DENIED.
 `;
 
+const previousTerminalCliGuidance=terminalCliGuidance.replace("Use the arw-cli skill. This local directory is a placeholder, not project files. The terminal must be at a shell prompt.","Use the arw-cli skill. This local directory is a placeholder, not project files. Use arw exec only for shell tasks such as builds, tests, Git and process diagnostics, and arw output to continue stored output. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, redirection, heredocs or scripts. Use native file tools when available; if they cannot access the bound workspace, ask the user to open the regular remote workspace mode. The terminal must be at a shell prompt.")
+
+const previousExplicitTerminalCliGuidance=terminalCliGuidance.replace("Use the arw-cli skill. This local directory is a placeholder, not project files. The terminal must be at a shell prompt.","Use arw exec for all project operations in the existing terminal, including reading, creating, editing, moving and deleting files. For example, create an empty test file with arw exec -- 'touch test'. Use arw output to continue stored output. This local directory is a placeholder, not project files. The terminal must be at a shell prompt.")
+
 export function isGeneratedCliGuidance(content:string):boolean {
-    if([cliGuidance,terminalCliGuidance,boundCliGuidance,boundTerminalCliGuidance,legacyCliGuidance(false),legacyCliGuidance(true)].includes(content))return true
+    if([cliGuidance,terminalCliGuidance,previousTerminalCliGuidance,previousExplicitTerminalCliGuidance,boundCliGuidance,boundTerminalCliGuidance,legacyCliGuidance(false),legacyCliGuidance(true)].includes(content))return true
     // Exact original templates from f2b267b^, including their trailing newline.
     return ['2f54fe7663982bb6db613e1ff56dafba4f910613a07d52a411dcd45576c28795',
         '0b82b1f8025aa064934fc27dc24092da8eb5c68bdf66e7af0670f11d54112bf1']
@@ -137,7 +141,6 @@ export function placeholderGuidance(remoteRoot:string):string {
         'arw git-push --path subproject',
         '```','',
         'Remote relative paths start at the workspace root; local transfer paths start at the local workdir. Read applicable remote project instructions before changes. Keep mutations inside the remote root.',
-        'Use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. Reserve arw exec for shell tasks such as builds, tests, Git and process diagnostics. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, shell redirection, heredocs or scripts.',
         'Use known commands directly. Only consult arw COMMAND --help for unfamiliar syntax or usage errors; do not routinely query the help index or enumerate workspaces first.',
         'Reads/searches return JSON; exec prints output and propagates exit status. Honor truncation and continuation fields. Continue stored output with arw output OUTPUT_ID stdout --offset OFFSET instead of rerunning a mutation. Inspect state before retrying interrupted mutations. Do not bypass POLICY_DENIED.',
         'Terminal-mode bindings support only arw exec and arw output, running in the existing terminal at a shell prompt.','',
@@ -152,7 +155,7 @@ export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):
         const file=join(placeholder,'AGENTS.md')
         if(lstatSync(file).isFile()){
             const content=readFileSync(file,'utf8')
-            if([previousPlaceholderGuidance(remoteRoot),skillPlaceholderGuidance(remoteRoot),previousCurrentPlaceholderGuidance(remoteRoot)].includes(content))writeFileSync(file,placeholderGuidance(remoteRoot),{mode:0o600})
+            if([previousPlaceholderGuidance(remoteRoot),skillPlaceholderGuidance(remoteRoot),previousCurrentPlaceholderGuidance(remoteRoot),placeholderGuidance(remoteRoot).replace("Use known commands directly.","Use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. Reserve arw exec for shell tasks such as builds, tests, Git and process diagnostics. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, shell redirection, heredocs or scripts.\nUse known commands directly."),placeholderGuidance(remoteRoot).replace("Use known commands directly.","For regular workspace bindings, use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. For terminal-mode bindings (terminalOnly in .awm/workspace.json), use arw exec for all project operations, including reading, creating, editing, moving and deleting files. For example: arw exec -- 'touch test'.\nUse known commands directly.")].includes(content))writeFileSync(file,placeholderGuidance(remoteRoot),{mode:0o600})
         }
     }
 }

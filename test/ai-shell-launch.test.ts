@@ -89,3 +89,11 @@ test('WSL AI launch replaces the original terminal command and retains distro an
     const launch=shellCommand({command:'wsl.exe',args:['--distribution','Ubuntu','--user','developer','--exec','bash','-lc','old command'],shellType:'unix'},['codex'])
     assert.deepEqual(launch.args,['--distribution','Ubuntu','--user','developer','--exec',...wslShellArguments("exec 'codex'",true)])
 })
+
+test('Fish AI launch and recovery preserve apostrophes and literal backslashes',()=>{
+    const shell={command:'/usr/bin/fish',args:[],env:{},shellType:'unix' as const}
+    const tokens=['codex',"a\\b's"]
+    const expected="exec 'codex' 'a\\\\b\\'s'"
+    assert.equal(shellCommand(shell,tokens).args.at(-1),expected)
+    assert.equal(replaceShellArguments({...shell,args:['-c','old']},tokens).args.at(-1),expected)
+})

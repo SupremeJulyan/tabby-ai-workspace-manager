@@ -86,3 +86,10 @@ test('WSL recovery explicitly restores the last shell cwd without changing the b
     assert.deepEqual(restoredWorkspaceProfile(restored).options.args,['--cd','/root'])
     assert.deepEqual(profile.options.args,[])
 })
+
+test('SSH recovery uses the configured remote shell instead of host syntax',()=>{
+    const profile={type:'ssh',options:{shellType:'powershell',arwWorkspace:{root:"C:\\project's files",mode:'files'}}}
+    const restored=restoredWorkspaceProfile(profile)
+    assert.equal(restored.options.scripts[0].send," cd -LiteralPath 'C:\\\\project''s files'")
+    assert.equal((profile.options as any).scripts,undefined)
+})

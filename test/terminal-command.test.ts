@@ -1,42 +1,48 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Subject } from 'rxjs'
-import { spawn } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runTerminalCommand, setTerminalCommandMode } from '../src/shared/terminal-command'
 import { ForwardingServer } from '../src/arw-cli/forwarding-server'
 
-test('terminal commands use the existing shell environment and cwd, capture split markers and keep the parent shell alive',async t=>{
-    const root=await mkdtemp(join(tmpdir(),'arw-terminal-'));t.after(()=>rm(root,{recursive:true,force:true}))
-    const shell=spawn('python3',['-c',"import pty; pty.spawn(['/bin/sh','-i'])"],{cwd:root,env:{...process.env,ARW_TERMINAL_TEST:'inherited'}})
-    t.after(()=>{shell.stdin.write('exit\r');shell.kill();shell.stdin.destroy();shell.stdout.destroy();shell.stderr.destroy()})
-    const output$=new Subject<string>(),closed$=new Subject<void>(),sessionChanged$=new Subject<void>();let visible=''
-    const feed=(chunk:Buffer)=>{visible+=chunk.toString();for(let index=0;index<chunk.length;index+=5)output$.next(chunk.subarray(index,index+5).toString())}
-    shell.stdout.on('data',feed);shell.stderr.on('data',feed);shell.on('close',()=>closed$.next())
-    const tab:any={session:{open:true,output$,closed$,getWorkingDirectory:async()=>root},sessionChanged$,sendInput:(text:string)=>shell.stdin.write(text)}
+function terminal(){
+    const output$=new Subject<string>(),input$=new Subject<Buffer>(),closed$=new Subject<void>()
+    const sent:string[]=[]
+    const tab:any={session:{open:true,output$,closed$,getWorkingDirectory:async()=>'/project'},input$,sessionChanged$:new Subject(),sendInput:(text:string)=>{sent.push(text);input$.next(Buffer.from(text))}}
     setTerminalCommandMode(tab,true)
-    const result=await runTerminalCommand(tab,root,'printf "%s:%s" "$ARW_TERMINAL_TEST" "$PWD"; exit 7',new AbortController().signal)
-    assert.equal(result.exitCode,7);assert.equal(result.stdout,`inherited:${root}`);assert.equal(result.stderr,'')
-    const second=await runTerminalCommand(tab,root,'printf second',new AbortController().signal)
-    assert.equal(second.stdout,'second');assert.ok(visible.includes('inherited:'))
-    await assert.rejects(runTerminalCommand(tab,'/wrong','echo no',new AbortController().signal),/directory changed/)
-    await assert.rejects(runTerminalCommand(tab,root,'printf 123456789',new AbortController().signal,4),/capture limit/)
-    setTerminalCommandMode(tab,false)
+    const run=(command:string,maxBytes?:number)=>runTerminalCommand(tab,'/project',command,new AbortController().signal,maxBytes)
+    return {tab,sent,output$,input$,closed$,run}
+}
+
+test('native Tabby streams capture output without setup commands or fabricated exit codes',async()=>{
+    const {sent,output$,run}=terminal()
+    const pending=run('touch test')
+    await new Promise(resolve=>setTimeout(resolve,0))
+    output$.next('touch test\r\nuser$ ')
+    const result=await pending
+    assert.deepEqual(sent,['touch test\r'])
+    assert.deepEqual(result,{stdout:'touch test\nuser$ ',stderr:'',exitCode:null})
+    assert.equal(output$.observers.length,0)
 })
 
-test('terminal mode prevents concurrent commands and interrupts capture when disabled',async()=>{
-    const output$=new Subject<string>(),closed$=new Subject<void>(),sessionChanged$=new Subject<void>(),sent:string[]=[]
-    const tab:any={session:{open:true,output$,closed$,getWorkingDirectory:async()=>'/project'},sessionChanged$,sendInput:(text:string)=>sent.push(text)}
+test('native stream capture stops on disable, disconnect, and output limits',async()=>{
+    const {tab,run,sent,output$,closed$}=terminal()
+    let pending=run('sleep 10')
+    await new Promise(resolve=>setTimeout(resolve,0))
+    await assert.rejects(run('echo other'),/already running/)
+    const disabled=assert.rejects(pending,/Terminal mode stopped/)
+    setTerminalCommandMode(tab,false);await disabled
+    assert.equal(sent.at(-1),'\x03')
+    assert.equal(output$.observers.length,0)
     setTerminalCommandMode(tab,true)
-    const pending=runTerminalCommand(tab,'/project','sleep 10',new AbortController().signal)
-    const rejected=assert.rejects(pending,/Terminal mode stopped/)
-    await new Promise(resolve=>setImmediate(resolve))
-    await assert.rejects(runTerminalCommand(tab,'/project','echo other',new AbortController().signal),/already running/)
-    setTerminalCommandMode(tab,false);await rejected
-    assert.equal(sent.at(-1),'\x03');assert.equal(output$.observed,false);assert.equal(closed$.observed,false)
-    await assert.rejects(runTerminalCommand(tab,'/project','echo no',new AbortController().signal),/not enabled/)
+    pending=run('exit')
+    await new Promise(resolve=>setTimeout(resolve,0))
+    const closed=assert.rejects(pending,/Terminal closed/);closed$.next();await closed
+    pending=run('printf large',4)
+    await new Promise(resolve=>setTimeout(resolve,0))
+    const limited=assert.rejects(pending,/capture limit/);output$.next('12345');await limited
 })
 
 test('terminal-only forwarding rejects structured tools before invoking file backends and restores them when disabled',async t=>{
@@ -44,12 +50,26 @@ test('terminal-only forwarding rejects structured tools before invoking file bac
     let enabled=true,reads=0,commands=0
     const server=new ForwardingServer({workspace:{id:'terminal',root,host:'fixture'},terminalOnly:()=>enabled,
         list:async()=>{reads++;return {entries:[]}},read:async()=>{reads++;return {}},write:async()=>{reads++;return {}},
-        run:async()=>{commands++;return {stdout:'ok',stderr:'',exitCode:0}}},join(root,'audit.jsonl'))
+        run:async(command)=>{assert.equal(command,'touch test');commands++;return {stdout:'ok',stderr:'',exitCode:0}}},join(root,'audit.jsonl'))
     const args={workspaceId:'terminal'}
-    await assert.rejects(server.invoke({name:'remote_list',arguments:{...args,path:'.'}}),/Terminal mode only supports/)
-    await assert.rejects(server.invoke({name:'arw_cli_batch',arguments:{...args,operations:[]}}),/Terminal mode only supports/)
+    await assert.rejects(server.invoke({name:'remote_list',arguments:{...args,path:'.'}}),/Terminal mode uses arw exec/)
+    await assert.rejects(server.invoke({name:'arw_cli_batch',arguments:{...args,operations:[]}}),/Terminal mode uses arw exec/)
     assert.equal(reads,0)
-    const result:any=await server.invoke({name:'run_remote_command',arguments:{...args,command:'echo ok'}})
+    const result:any=await server.invoke({name:'run_remote_command',arguments:{...args,command:'touch test'}})
     assert.equal(result.stdout,'ok');assert.equal(commands,1)
     enabled=false;await server.invoke({name:'remote_list',arguments:{...args,path:'.'}});assert.equal(reads,1)
+})
+
+
+test('multiline input uses native bracketed paste capability and normalizes Windows newlines',async()=>{
+    for(const supported of [true,false]){
+        const {tab,sent,run}=terminal()
+        tab.frontend={supportsBracketedPaste:()=>supported}
+        const pending=run('echo first\r\necho second')
+        await new Promise(resolve=>setTimeout(resolve,0))
+        const rejected=assert.rejects(pending,/Terminal mode stopped/)
+        setTerminalCommandMode(tab,false)
+        await rejected
+        assert.equal(sent[0],supported?'\x1b[200~echo first\necho second\x1b[201~\r':'echo first\recho second\r')
+    }
 })

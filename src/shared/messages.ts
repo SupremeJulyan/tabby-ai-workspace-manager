@@ -1,5 +1,8 @@
 /** English translations keyed by the original Chinese UI text. */
 export const englishMessages: Record<string,string> = {
+    "Tabby 尚未提供终端当前目录，请启用 Tabby 的路径检测后重试。": "Tabby has not reported the terminal directory. Enable Tabby path detection and retry.",
+    "使用 Tabby 提供的终端目录；尚无路径时，请启用 Tabby 的路径检测。": "Uses the directory provided by Tabby. Enable Tabby path detection if no path is available.",
+    "连接成功，等待终端目录": "Connected, waiting for terminal directory",
     "转发正在重建，请稍后重试": "Forwarding is restarting. Please retry shortly.",
     "重试转发": "Retry forwarding",
     "仍有请求正在执行，请稍后重试": "A request is still running. Retry after it finishes.",

@@ -2,6 +2,7 @@ import { wslShellArguments } from '../shared/wsl-shell'
 import { wslDirectoryArguments } from '../shared/wsl-launch-directory'
 import { wslBridgeSetup } from './wsl-bridge'
 import { shellQuote } from '../shared/shell-quote'
+import { fishQuote } from '../shared/terminal-directory-command'
 
 export type ShellType = 'unix' | 'powershell' | 'cmd'
 export type ShellFamily = ShellType | 'wsl' | 'msys2'
@@ -89,8 +90,8 @@ function withoutCommandArgument (args:string[]):string[] {
     return index<0?args.slice():args.slice(0,index)
 }
 
-function posixLine (tokens:string[]):string {
-    return tokens.map(shellQuote).join(' ')
+function posixLine (tokens:string[],fish=false):string {
+    return tokens.map(fish?fishQuote:shellQuote).join(' ')
 }
 
 function powershellQuote (value:string):string {
@@ -111,10 +112,10 @@ function cmdLine (tokens:string[]):string {
     return tokens.map(cmdQuote).join(' ')
 }
 
-function posixArguments (args:string[],tokens:string[]):string[] {
+function posixArguments (args:string[],tokens:string[],fish=false):string[] {
     const prefix=withoutCommandArgument(args)
     if (!interactiveArgument(prefix)) prefix.push('-i')
-    prefix.push('-c',`exec ${posixLine(tokens)}`)
+    prefix.push('-c',`exec ${posixLine(tokens,fish)}`)
     return prefix
 }
 
@@ -171,7 +172,7 @@ export function shellCommand (shell:ShellCommand,agentArgs:string[]):ShellComman
         case 'cmd': invocation=cmdArguments(args,tokens); break
         case 'wsl': invocation=wslArguments(args,tokens,shell.env); break
         case 'msys2': invocation=withoutCommandArgument(args).concat(['-c',`exec ${posixLine(tokens)}`]); break
-        default: invocation=posixArguments(args,tokens)
+        default: invocation=posixArguments(args,tokens,shellName(shell)==='fish')
     }
     return {command:shell.command,args:invocation,env:shell.env,shellType:shellTypeOf(family)}
 }
@@ -189,7 +190,7 @@ export function replaceShellArguments (shell:ShellCommand,agentArgs:string[]):Sh
         if (candidates.includes(shell.args[position].toLowerCase())) { index=position; break }
     }
     if (index<0) return shellCommand(shell,agentArgs)
-    const replacement=family==='powershell'?powershellLine(agentArgs):family==='cmd'?cmdLine(agentArgs):`exec ${posixLine(agentArgs)}`
+    const replacement=family==='powershell'?powershellLine(agentArgs):family==='cmd'?cmdLine(agentArgs):`exec ${posixLine(agentArgs,shellName(shell)==='fish')}`
     const command=replacement
     const prefix=shell.args.slice(0,index+1)
     return {command:shell.command,args:prefix.concat([command]),env:shell.env,shellType:shell.shellType}

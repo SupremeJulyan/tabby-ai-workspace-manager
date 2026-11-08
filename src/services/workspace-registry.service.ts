@@ -11,8 +11,6 @@ import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { BehaviorSubject, Subject, Subscription, auditTime } from 'rxjs'
 import { isAbsolute } from 'path'
 import { Workspace } from '../arw-tree/workspace'
-import { prepareCwdIntegration } from '../adapters/shell-integration'
-import { cwdIntegrationCommand, RemoteShell } from '../shared/shell-integration'
 import { TabbyRelayTransport } from '../adapters/transport'
 import { remoteWorkspace } from '../adapters/remote-workspace'
 import { isSshTab, SSHSession } from '../adapters/ssh-compat'
@@ -154,11 +152,6 @@ export class WorkspaceRegistry {
         entry.version++
         entry.selection = pinned
         this.emit(entry.selection)
-    }
-    prepareCwdIntegration (terminal:BaseTerminalTabComponent<any>, shell:RemoteShell) {
-        if((isWslTerminal(terminal)||isMsysTerminal(terminal))&&terminal.session?.open)return Promise.resolve({command:cwdIntegrationCommand(shell),cleanup:async()=>{}})
-        if(!isSshTab(terminal)||!terminal.sshSession?.open)throw new Error(t('SSH 会话尚未就绪'))
-        return prepareCwdIntegration(terminal.sshSession,shell)
     }
     private initialDirectory (remote: SSHSession): Promise<string> {
         let pending=this.initialDirectories.get(remote)

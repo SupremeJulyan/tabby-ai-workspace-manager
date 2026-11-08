@@ -168,12 +168,11 @@ read-only paths may access outside it subject to account permissions.
 
 Quote COMMAND as one argument; place all CLI options before --.
 Exec uses its separate command policy; do not bypass policy denials.
-Use exec only for shell tasks such as builds, tests, Git, and process diagnostics.
-Do not use exec for project file operations (including cat, head, tail, grep, find,
-sed, awk, tee, cp, mv, rm, touch, shell redirection, heredocs, or scripts). Use arw list/read/
-search/find for inspection and arw write/edit/create/delete/move/chmod for changes.
 Terminal mode injects into the existing shell and inherits its directory, user and
-exported environment; the terminal must be at a shell prompt. Streams are combined.
+environment and shell state; the terminal must be at a shell prompt. Streams are combined.
+Commands are sent unchanged; native Tabby streams capture output, including echo and prompts.
+Capture returns after 1 second of quiet output; completion and exit status are unknown.
+Changes to variables and directories persist, and exit closes the terminal shell.
   exec normally prints raw streams and returns the remote exit code; --verbose uses JSON.
   For truncated exec output, use nextOffsets.stdout/stderr with the same workspace ID:
     arw output OUTPUT_ID stdout --offset N --id ID

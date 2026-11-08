@@ -1,6 +1,6 @@
 import { wslDirectoryArguments } from './wsl-launch-directory'
 import { isWslTerminal, terminalWorkspaceDirectory } from './wsl-directory'
-import { shellQuote } from './shell-quote'
+import { terminalDirectoryCommand } from './terminal-directory-command'
 import { logOperation } from '../services/operation-log'
 
 export interface WorkspaceRecoveryState {root:string;mode:'files'|'git'|'activity';cwd?:string}
@@ -40,7 +40,7 @@ export function restoredWorkspaceProfile(profile:any):any {
     if(profile.type==='ssh'){
         const cwd=validPath(state.cwd)?state.cwd:state.root
         // Tabby's login script processor unescapes backslashes before sending.
-        const send=(` cd -- ${shellQuote(cwd)}`).replace(/\\/g,'\\\\')
+        const send=(` ${terminalDirectoryCommand({profile},cwd)}`).replace(/\\/g,'\\\\')
         const scripts=(options.scripts??[]).filter((script:any)=>!script.arwRestoreDirectory)
         const conditional=scripts.findIndex((script:any)=>Boolean(script.expect))
         scripts.splice(conditional<0?scripts.length:conditional,0,{expect:'',send,arwRestoreDirectory:true})

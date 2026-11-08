@@ -34,7 +34,7 @@ The `arw` command is available after installation. WSL AI terminals on Windows r
 
 - Manage local, SSH, and WSL workspaces. Each tab remembers its directory, expanded folders, and Git view.
 - Selecting a saved workspace synchronizes the terminal path. If synchronization fails, a message indicates pending input or unfinished work.
-- Click a folder arrow to expand it; double-click a folder to enter it. The path field supports completion, and the locate button follows the terminal's current directory.
+- Click a folder arrow to expand it; double-click a folder to enter it. The path field supports completion, and the locate button reads Tabby's native directory for a single follow operation. When no reliable path is available, browsing stays unchanged and no detection script is injected.
 - Resize the sidebar by dragging its edge. Fonts and colors follow Tabby settings.
 - Drag local files or folders to a remote directory to upload; right-click remote items to download. Existing targets are not silently overwritten. Transfers require SFTP.
 - The file tree refreshes automatically and supports manual refresh.
@@ -78,7 +78,7 @@ Automatic discovery checks up to two levels, 60 directories, 10 repositories, an
 - Each AI terminal stays associated with its workspace when you switch the sidebar.
 - **AI Activity** shows operations, status, and errors from ARW.
 - Use **Retry forwarding** after a remote workspace connection failure. Sent commands are not automatically replayed.
-- Remote terminal mode runs AI commands in the current interactive terminal with its user, directory, and environment. Enable it at a shell prompt. After changing directories, synchronize again and reopen the AI terminal. Use shell commands for file operations in this mode.
+- Remote terminal mode sends commands unchanged and captures native Tabby input/output events without markers or shell hooks. Capture returns after 1 second of quiet output, including command echo and prompts; this does not prove completion. Exit status is unknown. Commands retain the current shell environment. After changing directories, synchronize again and reopen the AI terminal. Use shell commands for file operations.
 
 ## ARW CLI
 
