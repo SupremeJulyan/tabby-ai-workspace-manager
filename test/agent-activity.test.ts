@@ -91,3 +91,14 @@ test('remote terminals isolate history and clearing even on the same host and wo
     assert.deepEqual(store.snapshot(a).map(event=>event.id),[running])
     assert.deepEqual(store.snapshot(b).map(event=>event.id),[two])
 })
+
+
+test('batch operations use the command filter and registered tools remain valid',()=>{
+    const store=new AgentActivityStore()
+    const batch=store.start(workspace,{name:'arw_cli_batch'})
+    assert.equal(store.snapshot()[0].category,'command')
+    assert.equal(store.snapshot()[0].operation,'arw_cli_batch')
+    store.finish(batch)
+    store.start(workspace,{name:'unknown_tool'})
+    assert.equal(store.snapshot()[0].operation,'invalid')
+})

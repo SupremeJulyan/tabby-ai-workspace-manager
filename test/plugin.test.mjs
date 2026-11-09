@@ -1882,6 +1882,17 @@ test('AI activity is a sibling tab with stable expandable entries and category/s
         assert.equal(tree.visibleActivities[0].id,2)
         assert.equal(tree.activityState(tree.visibleActivities[0]),'已拦截')
         assert.equal(tree.activityLabel(tree.activities[0]),'读取文件')
+        const {commands}=require('../.build/arw-cli/commands.js')
+        for(const {tool} of Object.values(commands)){
+            const label=tree.activityLabel({operation:tool})
+            assert.notEqual(label,'无效请求',tool)
+            assert.notEqual(label,tool,`missing label: ${tool}`)
+        }
+        assert.equal(tree.activityLabel({operation:'remote_read_many'}),'批量读取文件')
+        assert.equal(tree.activityLabel({operation:'remote_edit'}),'编辑文件')
+        assert.equal(tree.activityLabel({operation:'invalid'}),'无效请求')
+        assert.equal(tree.activityLabel({operation:'future_tool'}),'future_tool')
+        assert.equal(tree.activityLabel({operation:'constructor'}),'constructor')
         assert.equal(tree.trackActivity(0,tree.activities[1]),2)
         await tree.clearActivities()
         assert.equal(confirmations.length,1)
