@@ -32,7 +32,9 @@ Execute:   exec, batch
 
 Run arw COMMAND --help for arguments, limits and examples (no connection required).
 AI terminals use .awm/workspace.json in their local working directory; otherwise use --id.
-Use --id to target another workspace; --workspace aliases --id.
+With user authorization for the target and operations, use explicit --id ID on each
+command to access another workspace; --workspace aliases --id. This does not rebind
+the terminal. Never substitute another target automatically if the bound one is unavailable.
 Find IDs with arw workspaces. Remote paths start at workspaceRoot;
 local transfer paths start at the CLI directory. Terminal mode supports exec/output.
 Options: -h/--help, -V/--version, --compact; exec --verbose returns JSON.
@@ -42,7 +44,9 @@ const commandHelp: Record<string, string> = {
   'workspaces': `Usage: arw workspaces
 
 List IDs and identities of currently forwarded workspaces only. Does not accept --id.
-Match the target before operating; do not switch targets implicitly.`,
+Match host, port, user and workspaceRoot before operating. Ask the user to authorize
+the target and intended operations unless already authorized, then pass explicit
+--id ID on each command. Do not switch targets implicitly.`,
   'list': `Usage: arw list [PATH] --id ID [--limit N] [--cursor N]
 
 PATH defaults to workspaceRoot.

@@ -184,3 +184,32 @@ test('same remote target reuses its placeholder when the workspace ID changes',a
         await assert.rejects(ensureAgentCwdPlaceholder('/project',storage,identity,false,undefined,{...binding,host:'other'}),/another workspace/)
     }finally{await rm(storage,{recursive:true,force:true})}
 })
+
+
+test('placeholder guidance allows explicit cross-workspace access only within user authorization',()=>{
+    const guidance=placeholderGuidance('/project')
+    assert.match(guidance,/Cross-workspace operations are allowed after user authorization/)
+    assert.match(guidance,/existing instructions already authorize that target and scope/)
+    assert.match(guidance,/wait for approval before accessing it/)
+    assert.match(guidance,/host, port, user and workspaceRoot/)
+    assert.match(guidance,/explicit --id ID on every command/)
+    assert.match(guidance,/does not rebind this terminal/)
+    assert.match(guidance,/unavailable, do not substitute another automatically/)
+})
+
+test('cross-workspace guidance upgrades the previous generated placeholder and preserves user edits',async()=>{
+    const storage=await mkdtemp(join(tmpdir(),'arw-cross-workspace-guidance-'))
+    try{
+        const ensure=()=>ensureAgentCwdPlaceholder('/project',storage,{host:'fixture',user:'alice'})
+        const {localPath}=await ensure(),file=join(localPath,'AGENTS.md')
+        const previous=placeholderGuidance('/project').replace(
+            /^Omit --id[^\n]+/m,
+            'Omit --id for this bound workspace. If unavailable, reconnect it in Tabby; never switch targets automatically. In an unbound terminal, ask the user to identify the target, list forwarded choices with arw workspaces, and use --id ID. An explicit --id also overrides the binding.'
+        )
+        await writeFile(file,previous);await ensure()
+        assert.equal(await readFile(file,'utf8'),placeholderGuidance('/project'))
+        const customized=previous+'\nUser customization\n'
+        await writeFile(file,customized);await ensure()
+        assert.equal(await readFile(file,'utf8'),customized)
+    }finally{await rm(storage,{recursive:true,force:true,maxRetries:5})}
+})

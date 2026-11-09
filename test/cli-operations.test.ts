@@ -42,6 +42,9 @@ test('CLI uses its exact directory binding, not inherited environment or parent 
   assert.equal(JSON.parse((await cli(['workspaces'])).stdout).workspaces.length,2);
   assert.equal(JSON.parse((await cli(['read','file','--id','two'])).stdout).content,'two');
   assert.equal(JSON.parse((await cli(['read','file','--workspace','two'])).stdout).content,'two');
+  assert.equal(JSON.parse((await cli(['write','file','--id','two','--content','authorized change'])).stdout).content,'authorized change');
+  assert.equal(JSON.parse((await cli(['read','file'])).stdout).content,'one');
+  assert.deepEqual(JSON.parse(await readFile(join(root,'.awm','workspace.json'),'utf8')),binding);
   for(const change of [{host:'other'},{port:22},{user:'bob'},{remoteRoot:'/projects/two'}]){
     await writeFile(join(root,'.awm','workspace.json'),JSON.stringify({...binding,...change}));
     await assert.rejects(cli(['read','file']),/identity has changed/);
