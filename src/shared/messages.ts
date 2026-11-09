@@ -75,6 +75,8 @@ export const englishMessages: Record<string,string> = {
     "SSH 会话已变化": "SSH session changed",
     "SSH 会话已断开或重连，请刷新目录": "SSH session disconnected or reconnected. Refresh the directory",
     "文本文件上限为 500 MiB": "Text file size limit: 500 MiB",
+    "二进制文件（只读）": "Binary file (read-only)",
+    "十六进制内容": "Hexadecimal content",
     "暂不支持二进制文件": "Binary files are not supported yet",
     "当前 SSH 会话不支持 SFTP 二进制预览": "Current SSH session does not support SFTP binary preview",
     "只能预览普通文件": "Only regular files can be previewed",

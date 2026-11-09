@@ -3526,3 +3526,24 @@ test('manual cd into a remote placeholder keeps an ordinary terminal local',asyn
         assert.equal(registry.get(terminal).workspace.root,directory)
     }finally{registry.unregister(terminal);await rm(directory,{recursive:true,force:true})}
 })
+
+
+test('binary files open as paginated read-only hex and cannot overwrite the original',async()=>{
+    const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+    const root=await fs.mkdtemp(join(tmpdir(),'arw-binary-editor-'))
+    const plugin=load(),{localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const bytes=Buffer.alloc(4100,65);bytes[0]=0;bytes[1]=255
+    await fs.writeFile(join(root,'data.bin'),bytes)
+    const editor=new plugin.EditorComponent({get:()=>({})});editor.setTitle=()=>{}
+    editor.workspace=localWorkspace(root);editor.filePath='data.bin'
+    try{
+        await editor.ngOnInit()
+        assert.equal(editor.error,'');assert.equal(editor.readonly,true);assert.equal(editor.dirty,false)
+        assert.equal(editor.binaryPages,2);assert.match(editor.binaryContent,/00000000  00 ff 41/)
+        assert.doesNotMatch(editor.binaryContent,/00001000/)
+        editor.changeBinaryPage(1);assert.match(editor.binaryContent,/00001000  41 41 41 41/)
+        editor.changeBinaryPage(1);assert.equal(editor.binaryPage,1)
+        editor.content='overwrite';await editor.save()
+        assert.deepEqual(await fs.readFile(join(root,'data.bin')),bytes)
+    }finally{editor.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
+})

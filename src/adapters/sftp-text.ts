@@ -1,3 +1,4 @@
+import { BinaryFileError } from '../shared/binary-file'
 import { OPEN_READ, OPEN_WRITE, OPEN_CREATE, OPEN_TRUNCATE } from 'russh'
 import type { SFTPSession, SFTPFile } from 'tabby-ssh/typings/session/sftp'
 import { textFileLimit, WorkspaceText } from '../arw-tree/workspace'
@@ -30,7 +31,7 @@ export async function readSftpText(sftp:SFTPSession,target:string,signal?:AbortS
     const file=await sftp.open(target,OPEN_READ)
     try {
         const bytes=await readSftpBytes(file,info.size,signal)
-        if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
+        if(bytes.includes(0))throw new BinaryFileError(t('暂不支持二进制文件'))
         const content=decodeText(bytes)
         return {content,hash:version}
     }finally{await file.close()}

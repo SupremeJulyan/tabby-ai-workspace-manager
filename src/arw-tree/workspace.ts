@@ -1,3 +1,4 @@
+import { BinaryFileError } from '../shared/binary-file'
 import { withWslExecution } from '../adapters/wsl-execution'
 import { readLocalBytes } from '../shared/read-bytes';
 import { shellQuote } from '../shared/shell-quote';
@@ -79,7 +80,8 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     if(!info.isFile())throw new Error('Only regular files can be read');
     if(info.size > textFileLimit) throw new Error('Text files are limited to 500 MiB');
     const bytes = await readFile(target);
-    if (bytes.length > textFileLimit || bytes.includes(0)) throw new Error('File is too large or binary');
+    if (bytes.length > textFileLimit) throw new Error('Text files are limited to 500 MiB');
+    if (bytes.includes(0)) throw new BinaryFileError();
     const content = decodeText(bytes);
     return { content, hash: textHash(content) };
   };

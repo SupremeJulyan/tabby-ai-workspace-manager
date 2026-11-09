@@ -1,3 +1,4 @@
+import { BinaryFileError } from '../shared/binary-file'
 import { t } from '../shared/i18n'
 import { decodeText } from '../shared/decode-text'
 import { posix } from 'node:path'
@@ -57,7 +58,7 @@ test "$(stat -c '%s:%y' -- ${quoted})" = "$version" || { printf '%s\\n' '远端�
     const bytes=Buffer.from(encoded,'base64')
     if(bytes.toString('base64')!==encoded)throw new Error(t('SSH 文本结果不是完整的 Base64 数据'))
     if(bytes.length>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
-    if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
+    if(bytes.includes(0))throw new BinaryFileError(t('暂不支持二进制文件'))
     return {content:decodeText(bytes),hash:version}
 }
 

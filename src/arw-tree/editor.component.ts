@@ -1,3 +1,5 @@
+import { isBinaryFileError, binaryPageBytes, formatHexPage } from '../shared/binary-file'
+import { textFileLimit } from '../shared/text-file-limit'
 import type { PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { AfterViewInit, Component, Injector, ElementRef, HostListener, ViewChild } from '@angular/core'
@@ -39,6 +41,21 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     loading = true
     saving = false
     error = ''
+    binaryBytes?:Uint8Array
+    binaryPage=0
+    get binaryPages():number {return Math.max(1,Math.ceil((this.binaryBytes?.length??0)/binaryPageBytes))}
+    get binaryContent():string {return this.binaryBytes?formatHexPage(this.binaryBytes,this.binaryPage):''}
+    changeBinaryPage(delta:number):void {this.binaryPage=Math.max(0,Math.min(this.binaryPages-1,this.binaryPage+delta))}
+    private async readFile():Promise<void> {
+        try {
+            const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
+            this.content=file.content;this.hash=file.hash
+        }catch(error){
+            if(!isBinaryFileError(error)||!this.workspace.readBytes)throw error
+            this.binaryBytes=await this.workspace.readBytes(this.filePath,textFileLimit,this.recoveryController.signal)
+            this.binaryPage=0;this.readonly=true;this.content='';this.hash=undefined
+        }
+    }
     markdownPreview=false
     markdown=''
     markdownError=''
@@ -56,7 +73,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     readonly search=new TextSearch(()=>this.content,text=>{this.content=text},()=>this.textEditor?.nativeElement,
         ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.loading&&!this.saving&&!this.isDiff&&!this.saveIssue,
         ()=>{this.markdownPreview=false;this.markdownVersion++})
-    @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff)this.search.key(event)}
+    @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff&&!this.binaryBytes)this.search.key(event)}
     constructor (injector: Injector) {
         super(injector)
         this.platform = injector.get(PlatformService)
@@ -66,7 +83,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     get dirty (): boolean { return !this.readonly && this.content !== this.original }
     get saveIssue (): {message:string;busy:boolean}|undefined {return this.workspace?.saveIssue?.(this.filePath)}
     get isDiff (): boolean { return this.diffPatch !== undefined }
-    get isMarkdown():boolean {return !this.isDiff&&previewKind(this.filePath)==='markdown'}
+    get isMarkdown():boolean {return !this.isDiff&&!this.binaryBytes&&previewKind(this.filePath)==='markdown'}
     async toggleMarkdown():Promise<void> {
         if(!this.isMarkdown||this.loading||this.saving)return
         const version=++this.markdownVersion
@@ -119,7 +136,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }
             else {
                 logFileRecovery('editor-read-start',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace)})
-                const file = await this.workspace.read(this.filePath,this.recoveryController.signal); this.content = file.content; this.hash = file.hash
+                await this.readFile()
                 logFileRecovery('editor-read-ready',{filePath:this.filePath})
             }
             this.original = this.content

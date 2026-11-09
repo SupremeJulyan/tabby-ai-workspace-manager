@@ -5,7 +5,7 @@ import { TEXT_SEARCH_TEMPLATE, TEXT_SEARCH_STYLES } from './text-search.view'
 
 export const EDITOR_TEMPLATE = `
 <header><div class="file-heading"><strong>{{filePath}}</strong><small>{{workspace?.label}}</small></div>
-  <button *ngIf="!isDiff" class="file-icon-button" [title]="'查找' | arwTranslate" [attr.aria-label]="'查找' | arwTranslate" (click)="search.open()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0"/></svg></button>
+  <button *ngIf="!isDiff && !binaryBytes" class="file-icon-button" [title]="'查找' | arwTranslate" [attr.aria-label]="'查找' | arwTranslate" (click)="search.open()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0"/></svg></button>
   <button *ngIf="!isDiff && !readonly" class="file-icon-button" [title]="'替换' | arwTranslate" [attr.aria-label]="'替换' | arwTranslate" (click)="search.open(true)" [disabled]="!search.canReplace()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"/></svg></button>
   <button *ngIf="!isDiff" class="file-icon-button" [title]="(saving ? '保存中…' : '保存') | arwTranslate" [attr.aria-label]="(saving ? '保存中…' : '保存') | arwTranslate" [disabled]="readonly || loading || saving || !dirty || saveIssue" (click)="save()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h12l4 4v14H3V3h2Zm2 0v6h10V3M7 21v-8h10v8"/></svg></button>
   <button *ngIf="isMarkdown" class="file-icon-button" [title]="(markdownPreview ? '源码' : '预览') | arwTranslate" [attr.aria-label]="(markdownPreview ? '源码' : '预览') | arwTranslate" (click)="toggleMarkdown()" [disabled]="loading || saving"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18"/></svg></button>
@@ -49,11 +49,16 @@ ${TEXT_SEARCH_TEMPLATE}
 </ng-container>
 <div *ngIf="markdownPreview && markdownError" class="error" role="alert">{{markdownError}}</div>
 <article *ngIf="markdownPreview" class="markdown-preview" [innerHTML]="markdown" (click)="markdownClick($event)"></article>
-<textarea #textEditor *ngIf="!isDiff && !markdownPreview" [readOnly]="readonly || loading || saving" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
+<ng-container *ngIf="binaryBytes && !loading && !error">
+ <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span><span class="toolbar-spacer"></span><button (click)="changeBinaryPage(-1)" [disabled]="binaryPage===0">{{ '上一页' | arwTranslate }}</button><span>{{binaryPage+1}} / {{binaryPages}}</span><button (click)="changeBinaryPage(1)" [disabled]="binaryPage+1>=binaryPages">{{ '下一页' | arwTranslate }}</button></div>
+ <pre class="binary-content" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
+</ng-container>
+<textarea #textEditor *ngIf="!isDiff && !markdownPreview && !binaryBytes" [readOnly]="readonly || loading || saving" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
 `
 
 export const EDITOR_STYLES = scaleTypography(`
 ${TEXT_SEARCH_STYLES}
+.binary-content{flex:1;min-height:0;overflow:auto;white-space:pre;font:12px/1.65 monospace;color:inherit;padding:12px;border:1px solid var(--diff-border);border-radius:5px;margin:0}
 ${MARKDOWN_STYLES}
 :host{font-family:var(--arw-font-family,inherit);font-size:12px;line-height:1.45}
 :host ::ng-deep > .arw-ai-header{margin:-12px -12px 0}
