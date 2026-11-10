@@ -1,3 +1,8 @@
+import { optionalSftp } from '../adapters/optional-sftp'
+import { posix } from 'node:path'
+import { shellQuote } from '../shared/shell-quote'
+import { FileSessionPool } from '../services/file-session-pool'
+import { remoteWorkspace } from '../adapters/remote-workspace'
 import { isBinaryFileError, binaryPageBytes, formatHexPage } from '../shared/binary-file'
 import { textFileLimit } from '../shared/text-file-limit'
 import type { PaneLayout } from '../shared/pane-layout'
@@ -66,15 +71,18 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private removePaneHeader?:()=>void
     private unregisterFile?:()=>void
     private recoveryController=new AbortController()
+    private reconnectPool?:FileSessionPool
+    reconnecting=false
+    get canReconnect():boolean {return this.workspace?.kind==='remote'&&!this.isDiff&&this.initialContent===undefined}
     recoveredEdit?:{content:string;original:string;hash?:string}
     initialFind?:FindState
     @ViewChild('textEditor') textEditor?:ElementRef<HTMLTextAreaElement>
     @ViewChild('findInput') findInput?:ElementRef<HTMLInputElement>
     readonly search=new TextSearch(()=>this.content,text=>{this.content=text},()=>this.textEditor?.nativeElement,
-        ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.loading&&!this.saving&&!this.isDiff&&!this.saveIssue,
+        ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.loading&&!this.saving&&!this.reconnecting&&!this.isDiff&&!this.saveIssue,
         ()=>{this.markdownPreview=false;this.markdownVersion++})
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff&&!this.binaryBytes)this.search.key(event)}
-    constructor (injector: Injector) {
+    constructor (private injector: Injector) {
         super(injector)
         this.platform = injector.get(PlatformService)
         this.app = injector.get(AppService)
@@ -161,6 +169,53 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             if(this.markdownPreview){this.markdownPreview=false;await this.toggleMarkdown()}
         } catch(error) {this.error=String(error)}
     }
+    async reconnectFile():Promise<void> {
+        if(!this.canReconnect||this.reconnecting||this.loading||this.saving)return
+        const token=fileWorkspaceToken(this.workspace)
+        if(!token)return
+        this.reconnecting=true
+        const preserve=this.dirty||!!this.saveIssue
+        try{
+            this.reconnectPool??=new FileSessionPool(this.app,this.injector)
+            const session=await this.reconnectPool.get(token,true)
+            if(this.recoveryController.signal.aborted)return
+            if(!session)throw new Error(t('请先重新连接原 SSH 终端，再重试打开文件'))
+            const replacement=remoteWorkspace(session,token.root)
+            const target=posix.resolve(token.root,this.filePath)
+            const missing=(error:unknown)=>{
+                const value=error as {code?:unknown;message?:string}|null
+                return value?.code==='ENOENT'||value?.code===2||/no such file or directory/i.test(value?.message??String(error))
+            }
+            try{
+                const sftp=await optionalSftp(session)
+                if(sftp)await sftp.stat(target)
+                else {
+                    const result=await replacement.run(`LC_ALL=C stat -- ${shellQuote(target)}`,this.recoveryController.signal)
+                    if(result.exitCode!==0)throw new Error(result.stderr||t('无法读取远端文件的修改时间或大小'))
+                }
+            }catch(error){
+                if(!missing(error))throw error
+                if(!this.recoveryController.signal.aborted){
+                    if(this.app.tabs.includes(this))await this.app.closeTab(this,false)
+                    else this.destroy()
+                }
+                return
+            }
+            if(this.recoveryController.signal.aborted)return
+            this.workspace=replacement
+            if(!preserve){
+                this.binaryBytes=undefined;this.binaryPage=0
+                await this.readFile()
+                this.original=this.content
+                if(!this.binaryBytes)this.readonly=false
+                this.markdownPreview=false;this.markdownVersion++
+            }
+            this.unregisterFile?.()
+            this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:()=>this.reloadOpenFile()})
+            this.error=''
+        }catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+        finally{this.reconnecting=false}
+    }
     async getRecoveryToken(options?:GetRecoveryTokenOptions):Promise<RecoveryToken|null> {
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
         if(!workspace)return null
@@ -171,10 +226,10 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         return {type:'arw-editor',workspace,filePath:this.filePath,state}
     }
     ngAfterViewInit (): void { this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error))) }
-    ngOnDestroy (): void { this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.unregisterFile?.(); super.ngOnDestroy() }
+    ngOnDestroy (): void { this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.reconnectPool?.dispose();this.unregisterFile?.(); super.ngOnDestroy() }
     saveKey (event: Event): void { event.preventDefault(); void this.save() }
     async save (): Promise<void> {
-        if (this.readonly || this.saving || this.loading || !this.dirty || this.saveIssue) return
+        if (this.readonly || this.reconnecting || this.saving || this.loading || !this.dirty || this.saveIssue) return
         this.saving = true; this.error = ''
         const content = this.content
         try {

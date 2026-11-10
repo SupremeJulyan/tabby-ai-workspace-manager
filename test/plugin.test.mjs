@@ -3572,3 +3572,43 @@ test('binary files open as paginated read-only hex and cannot overwrite the orig
         assert.deepEqual(await fs.readFile(join(root,'data.bin')),bytes)
     }finally{editor.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
 })
+
+
+test('explicit file reconnect authenticates a closed terminal and preserves unsaved edits',async()=>{
+    const plugin=load(),terminal=new SSHTabComponent()
+    const profile={id:'reconnect-profile',options:{host:'example.test',port:2222,user:'alice'}}
+    let connections=0,references=0
+    let statError,checkedPath
+    const session={open:true,authUsername:'alice',profile,ref(){references++},unref(){references--},async openSFTP(){return {async stat(path){checkedPath=path;if(statError)throw statError;return {}}}}}
+    terminal.profile=profile;terminal.frontendIsReady=true
+    terminal.sshSession={open:false,profile}
+    terminal.setupOneSession=async()=>{connections++;return session}
+    const app={tabs:[terminal]},provider=new plugin.FileRecoveryProvider({get:()=>app})
+    const params=await provider.recover({type:'arw-editor',workspace:{kind:'remote',root:'/project',host:'example.test',port:2222,user:'alice',profileId:profile.id},filePath:'job.sh'})
+    const editor=new params.type({get:()=>app});editor.setTitle=()=>{};Object.assign(editor,params.inputs)
+    editor.loading=false;editor.content='edited script';editor.original='original script';editor.hash='old-version'
+    editor.error='UnexpectedBehavior("session closed")'
+    try{
+        assert.equal(editor.canReconnect,true)
+        assert.match(params.type.component.template,/reconnectFile\(\)/)
+        await editor.reconnectFile()
+        assert.equal(connections,1,'explicit reconnect works for an already initialized terminal')
+        assert.equal(editor.content,'edited script');assert.equal(editor.original,'original script')
+        assert.equal(editor.hash,'old-version','retain conflict detection against the original remote contents')
+        assert.equal(editor.dirty,true);assert.equal(editor.error,'');assert.equal(editor.reconnecting,false)
+        assert.equal(editor.workspace.root,'/project');assert.equal(references,1)
+        assert.equal(checkedPath,'/project/job.sh','even unsaved files are checked before reopening')
+        let closed=0;editor.destroy=()=>{closed++}
+        statError=Object.assign(new Error('Permission denied'),{code:3})
+        await editor.reconnectFile()
+        assert.equal(closed,0);assert.match(editor.error,/Permission denied/)
+        assert.equal(editor.content,'edited script')
+        statError=Object.assign(new Error('No such file or directory'),{code:2})
+        await editor.reconnectFile()
+        assert.equal(closed,1,'a missing file closes the split pane directly')
+        app.tabs.push(editor);app.closeTab=async(tab,check)=>{assert.equal(tab,editor);assert.equal(check,false);closed++}
+        await editor.reconnectFile()
+        assert.equal(closed,2,'a missing top-level file also closes directly')
+    }finally{editor.ngOnDestroy();provider.ngOnDestroy()}
+    assert.equal(references,0)
+})

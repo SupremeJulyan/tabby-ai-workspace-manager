@@ -10,7 +10,7 @@ export class FileSessionPool {
     private disposed=false
     constructor(private app:AppService,private injector:Injector){}
 
-    async get(token:FileWorkspaceToken):Promise<SSHSession|undefined>{
+    async get(token:FileWorkspaceToken,reconnect=false):Promise<SSHSession|undefined>{
         if(this.disposed)throw new Error('File connection pool is closed')
         const key=JSON.stringify([token.profileId,token.host,token.port??22,token.user])
         const cached=this.sessions.get(key)
@@ -27,7 +27,7 @@ export class FileSessionPool {
                 const user=tab.sshSession?.authUsername??profile.options.user
                 if(user!==token.user)continue
                 if(tab.sshSession?.open)return this.retain(key,tab.sshSession)
-                if(tab.frontendIsReady||typeof tab.setupOneSession!=='function')continue
+                if((tab.frontendIsReady&&!reconnect)||typeof tab.setupOneSession!=='function')continue
                 const started=Date.now()
                 logFileRecovery('pool-connect-start',{token})
                 const operation=Promise.resolve().then(()=>tab.setupOneSession(this.injector,profile)).then(session=>{
