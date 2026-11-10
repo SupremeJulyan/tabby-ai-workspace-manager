@@ -771,10 +771,26 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         // Remote forwarding is acquired by AI terminals, not by browsing a workspace.
     }
     get currentFolder (): string { return this.breadcrumb }
-    async addProject (root = this.currentFolder): Promise<void> {
+    async addProject (root?: string): Promise<void> {
         const workspace = this.selection?.workspace
         if (!workspace || !this.projectStore || this.terminalMode) return
-        const tab=this.activeTab
+        const tab=this.activeTab,version=this.version
+        if(root===undefined){
+            if(this.directoryDraft===null)root=this.currentFolder
+            else {
+                const input=this.directoryInput.trim(),browser=this.browserWorkspace??workspace
+                if(!input)return
+                try{
+                    root=await this.directoryTargetPath(input,browser)
+                    const target=browser.kind==='remote'&&this.selection?.remote
+                        ?remoteWorkspace(this.selection.remote,root)
+                        :browser.kind==='local'?terminalLocalWorkspace(root,this.source??undefined):undefined
+                    if(!target)return
+                    await target.list('.')
+                }catch(error){if(tab===this.activeTab&&version===this.version){this.error=String(error);this.render()}return}
+                if(tab!==this.activeTab||version!==this.version)return
+            }
+        }
         const project = await this.projectStore.add(this.projectContext(workspace), root)
         if(tab!==this.activeTab)return
         this.loadProjects(workspace)

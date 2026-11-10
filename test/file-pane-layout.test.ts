@@ -92,3 +92,38 @@ test('invalid proportions fall back to usable complementary defaults',()=>{
     }
     assert.deepEqual(paneProportions({workspaceWidth:1,fileHeight:99}),{workspaceWidth:1,aiWidth:99,fileHeight:99,terminalHeight:1})
 })
+
+
+test('opening and reopening remote files selects their temporary workspace without saving it',async()=>{
+    const {selectPaneWorkspace,workspaceHiddenPanes}=await import('../src/shared/workspace-pane-visibility')
+    const oldWorkspace={kind:'remote' as const,root:'/saved',host:'server',port:2222,user:'alice'}
+    const temporary={...oldWorkspace,root:'/unsaved/subdirectory'}
+    class FilePane {
+        arwFilePane=true;arwPaneLayout='stacked';filePath='note.txt'
+        constructor(public workspace:any){}
+    }
+    const terminal={},oldFile=new FilePane(oldWorkspace)
+    let focused:any=terminal,created=0
+    const split:any={root:new Container(),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>focused,
+        focus(pane:any){focused=pane},maximize(){},layout(){},async add(pane:any){this.root.children.push(pane)}}
+    split.root.children=[terminal,oldFile]
+    const app:any={tabs:[split],activeTab:split,getParentTab:()=>split,selectTab(){},emitTabsChanged(){}}
+    const tabs={create(){created++;return new FilePane(temporary) as any}}
+    selectPaneWorkspace(split,oldWorkspace)
+    const params:any={type:FilePane,inputs:{workspace:temporary,filePath:'note.txt'}}
+    const file=await openFilePane(app,params,terminal,'stacked',tabs)
+    assert.equal(workspaceHiddenPanes.has(file),false)
+    assert.equal(workspaceHiddenPanes.has(oldFile),true)
+    assert.equal(focused,file)
+    assert.equal(file.workspace.root,'/unsaved/subdirectory')
+    assert.equal(oldWorkspace.root,'/saved','the original workspace remains unchanged')
+    selectPaneWorkspace(split,oldWorkspace)
+    tileWorkspacePanes(app,split,true)
+    assert.equal(workspaceHiddenPanes.has(file),true)
+    const reopened=await openFilePane(app,params,terminal,'stacked',tabs)
+    assert.equal(reopened,file)
+    assert.equal(created,1,'reopening reuses the same file pane')
+    assert.equal(workspaceHiddenPanes.has(file),false)
+    assert.equal(workspaceHiddenPanes.has(oldFile),true)
+    assert.equal(focused,file)
+})

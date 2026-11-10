@@ -1,6 +1,7 @@
+import { selectPaneWorkspace } from '../shared/workspace-pane-visibility'
 import { paneLayout, selectStackedPane } from '../shared/pane-layout'
 import { orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
-import { isFilePane } from '../shared/pane-kind'
+import { isFilePane, type WorkspacePaneIdentity } from '../shared/pane-kind'
 import { isAbsolute, posix, resolve } from 'node:path'
 import type { Workspace } from './workspace'
 import { collapsedAiPanes } from '../arw-ai-cli/collapsed-panes'
@@ -53,6 +54,12 @@ function sameFile(pane:any,inputs:any,type:any):boolean {
     return absolutePath(left,pane.filePath)===absolutePath(right,inputs.filePath)
 }
 
+function selectFileWorkspace(split:SplitTabComponent,pane:BaseTabComponent):void {
+    const file=pane as BaseTabComponent&{arwWorkspaceIdentity?:WorkspacePaneIdentity;workspace?:WorkspacePaneIdentity}
+    const identity=file.arwWorkspaceIdentity??file.workspace
+    if(identity)selectPaneWorkspace(split,identity)
+}
+
 /** Open a file inside the current split instead of creating another top-level tab. */
 export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='stacked',tabs?:Pick<TabsService,'create'>):Promise<T> {
     const anchor=topLevelFor(app,source??app.activeTab)
@@ -61,6 +68,7 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
     if(anchor!==split&&app.tabs.includes(anchor))app.removeTab(anchor)
     const existing=split.getAllTabs().find(pane=>sameFile(pane,params.inputs,params.type)) as T|undefined
     if(existing){
+        selectFileWorkspace(split,existing)
         collapsedAiPanes.delete(existing)
         app.selectTab(split)
         selectStackedPane(split,'file',existing,orderedFilePanes(split,split.getAllTabs().filter(isFilePane)))
@@ -77,6 +85,7 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
         file.destroy()
         throw error
     }
+    selectFileWorkspace(split,file)
     app.selectTab(split)
     selectStackedPane(split,'file',file,orderedFilePanes(split,split.getAllTabs().filter(isFilePane)))
     split.focus(file)

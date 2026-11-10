@@ -472,6 +472,20 @@ test('workspace tree saves the browsed root and opens files and AI against the s
         const addDirectory=contextMenu.find(item=>item.label==='添加到工作区')
         assert.equal(addDirectory.enabled,true);await addDirectory.click()
         assert.equal(tree.breadcrumb,before,'adding a directory does not navigate the explorer')
+        await mkdir(join(root,'typed'));await writeFile(join(root,'plain-file'),'text')
+        tree.directoryDraft='typed'
+        await tree.addProject()
+        assert.equal(tree.projects.find(project=>project.root===join(root,'typed'))?.root,join(root,'typed'))
+        assert.equal(tree.breadcrumb,before,'saving the typed path does not navigate')
+        assert.equal(tree.directoryInput,'typed','saving preserves the directory input')
+        tree.directoryDraft='plain-file'
+        await tree.addProject()
+        assert.equal(tree.projects.length,2,'a file cannot be added as a workspace')
+        assert.ok(tree.error)
+        tree.error='';tree.directoryDraft=''
+        await tree.addProject();assert.equal(tree.projects.length,2,'empty input does not save the browsed root')
+        await tree.removeProject(tree.projects.find(project=>project.root===join(root,'typed')))
+        tree.directoryDraft=null
         await tree.open(directory);await tree.addProject()
         assert.equal(tree.projects.length,1)
         const project=tree.projects[0]
