@@ -48,7 +48,7 @@ ${TEXT_SEARCH_TEMPLATE}
   </div>
 </ng-container>
 <div *ngIf="markdownPreview && markdownError" class="error" role="alert">{{markdownError}}</div>
-<article *ngIf="markdownPreview" class="markdown-preview" [innerHTML]="markdown" (click)="markdownClick($event)"></article>
+<article *ngIf="markdownPreview" class="markdown-preview" tabindex="0" [innerHTML]="markdown" (click)="markdownClick($event)"></article>
 <ng-container *ngIf="binaryBytes && !loading && !error">
  <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span><span class="toolbar-spacer"></span><button (click)="changeBinaryPage(-1)" [disabled]="binaryPage===0">{{ '上一页' | arwTranslate }}</button><span>{{binaryPage+1}} / {{binaryPages}}</span><button (click)="changeBinaryPage(1)" [disabled]="binaryPage+1>=binaryPages">{{ '下一页' | arwTranslate }}</button></div>
  <pre class="binary-content" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>

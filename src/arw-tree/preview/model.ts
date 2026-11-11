@@ -26,7 +26,12 @@ export function decodePreviewText(bytes:Uint8Array):{text:string;encoding:string
 export const escapeHTML=(text:string)=>text.replace(/[&<>"']/g,value=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[value]!));
 export function markdownImages(source:string):string[] {
   const parser=new Marked(),paths=new Set<string>();
-  parser.walkTokens(parser.lexer(source),token=>{if(token.type==='image'&&paths.size<16)paths.add(token.href)});
+  parser.walkTokens(parser.lexer(source),token=>{
+    if(token.type==='image'&&paths.size<16)paths.add(token.href);
+    if(token.type==='html')for(const match of token.text.matchAll(/<img\b[^>]*>/gi)){
+      const href=htmlAttribute(match[0],'src');if(href&&paths.size<16)paths.add(href);
+    }
+  });
   return [...paths];
 }
 export function relativePreviewAsset(path:string,href:string,kind:'local'|'remote'='remote',platform:NodeJS.Platform=process.platform):string|undefined {
@@ -38,14 +43,49 @@ export function relativePreviewAsset(path:string,href:string,kind:'local'|'remot
     return paths.isAbsolute(target)?target:paths.join(paths.dirname(path),target);
   }catch{return undefined}
 }
+function htmlAttribute(tag:string,name:string):string {
+  const attributes=tag.replace(/^<\/?[a-z][a-z0-9]*/i,'');
+  const pattern=/([^\s=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+  for(const match of attributes.matchAll(pattern))if(match[1].toLowerCase()===name){
+    return (match[2]??match[3]??match[4]??'').replace(/&(?:amp|quot|apos|lt|gt|#\d+|#x[\da-f]+);/gi,entity=>{
+      const named:Record<string,string>={'&amp;':'&','&quot;':'"','&apos;':"'",'&lt;':'<','&gt;':'>'};
+      if(entity[1]!=='#')return named[entity.toLowerCase()]??entity;
+      const hex=entity[2].toLowerCase()==='x',code=parseInt(entity.slice(hex?3:2,-1),hex?16:10);
+      return code>0&&code<=0x10ffff?String.fromCodePoint(code):'\uFFFD';
+    });
+  }
+  return '';
+}
+function renderImage(href:string,text:string,assets:ReadonlyMap<string,string>):string {
+  const data=assets.get(href);
+  return data&&/^data:image\/(?:png|jpeg|gif|webp|bmp|svg\+xml|x-icon|avif);base64,/.test(data)
+    ? `<img src="${escapeHTML(data)}" alt="${escapeHTML(text)}" />` : t`<span class="markdown-image">[图片：${escapeHTML(text||href)}]</span>`;
+}
+// Rebuild only passive formatting tags; never forward arbitrary HTML attributes.
+export function renderMarkdownHtml(source:string,assets:ReadonlyMap<string,string>=new Map()):string {
+  const allowed=new Set(['table','thead','tbody','tfoot','tr','th','td','caption','colgroup','col','p','br','hr','div','span','strong','b','em','i','u','s','del','sub','sup','pre','code','blockquote','ul','ol','li','details','summary']);
+  return source.replace(/<[^>]*>/g,tag=>{
+    const match=/^<(\/?)([a-z][a-z0-9]*)\b([^<>]*?)(\/?)>$/i.exec(tag);
+    if(!match)return escapeHTML(tag);
+    const [,closing,name,attributes]=match,lower=name.toLowerCase();
+    if(lower==='img'&&!closing)return renderImage(htmlAttribute(tag,'src'),htmlAttribute(tag,'alt'),assets);
+    if(!allowed.has(lower))return escapeHTML(tag);
+    if(closing)return `</${lower}>`;
+    let safe='';
+    if(lower==='td'||lower==='th'||lower==='col'||lower==='colgroup'){
+      for(const attribute of ['colspan','rowspan','span']){
+        const value=new RegExp(`(?:^|\\s)${attribute}\\s*=\\s*(?:"([0-9]+)"|'([0-9]+)'|([0-9]+)(?=\\s|$))`,'i').exec(attributes);
+        const count=value&&Number(value[1]??value[2]??value[3]);
+        if(count&&count<=1000)safe+=` ${attribute}="${count}"`;
+      }
+    }
+    return `<${lower}${safe}>`;
+  });
+}
 export function renderMarkdown(source:string,assets:ReadonlyMap<string,string>=new Map()):string {
   const renderer=new Renderer();
-  renderer.html=({text})=>escapeHTML(text);
-  renderer.image=({href,text})=>{
-    const data=assets.get(href);
-    return data&&/^data:image\/(?:png|jpeg|gif|webp|bmp|svg\+xml|x-icon|avif);base64,/.test(data)
-      ? `<img src="${escapeHTML(data)}" alt="${escapeHTML(text)}" />` : t`<span class="markdown-image">[图片：${escapeHTML(text||href)}]</span>`;
-  };
+  renderer.html=({text})=>renderMarkdownHtml(text,assets);
+  renderer.image=({href,text})=>renderImage(href,text,assets);
   renderer.link=function({href,tokens}){
     const label=this.parser.parseInline(tokens);
     return /^(?:https?:|mailto:|#)/i.test(href)?`<a href="${escapeHTML(href)}" rel="noopener noreferrer">${label}</a>`:`<span>${label}</span>`;

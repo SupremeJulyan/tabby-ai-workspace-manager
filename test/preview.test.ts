@@ -65,3 +65,26 @@ test('PDF Promise compatibility supports the older Promise constructor used by T
     const method=constructor.withResolvers;ensurePdfPromiseSupport(ZoneLikePromise)
     assert.equal(constructor.withResolvers,method)
 })
+
+test('Markdown renders converted document HTML tables with safe spans and line breaks',()=>{
+  const html=renderMarkdown('# DL_POLY\n\n<table border="1"><tr><td colspan="2" rowspan="3"><p style="white-space:pre-wrap">用例编号</p></td></tr><tr><td>第一行<br>第二行</td></tr></table>');
+  assert.match(html,/<table><tr><td colspan="2" rowspan="3"><p>用例编号<\/p>/);
+  assert.match(html,/第一行<br>第二行/);
+  assert.doesNotMatch(html,/&lt;table|style=|border=/);
+  const unsafe=renderMarkdown('<table onclick="alert(1)"><tr><td colspan="2" onmouseover="alert(2)"><img src="https://example.test/track" onerror="alert(3)"><script>alert(4)</script><iframe src="file:///etc/passwd"></iframe></td></tr></table>');
+  assert.match(unsafe,/<td colspan="2">/);
+  assert.doesNotMatch(unsafe,/<(?:img|script|iframe)\b|<[^>]+\son\w+=/i);
+  assert.match(renderMarkdown('```html\n<table><tr><td>源码</td></tr></table>\n```'),/&lt;table&gt;/);
+});
+
+test('HTML images use workspace assets without forwarding URLs or event handlers',()=>{
+  const source='<table><tr><td><img src="images/image89.png" alt="截图" onerror="alert(1)"></td></tr></table>\n\n<img alt="second" src=images/image90.png>\n\n<img src="images/a&amp;b.png">';
+  assert.deepEqual(markdownImages(source),['images/image89.png','images/image90.png','images/a&b.png']);
+  const html=renderMarkdown(source,new Map([['images/image89.png','data:image/png;base64,AA==']]));
+  assert.match(html,/<img src="data:image\/png;base64,AA==" alt="截图"/);
+  assert.doesNotMatch(html,/onerror|&lt;img|<img[^>]+src="images/);
+  assert.match(html,/图片：second/);
+  assert.deepEqual(markdownImages('```html\n<img src="ignored.png">\n```'),[]);
+  assert.deepEqual(markdownImages(`<img alt='src="fake.png"' src="real.png">`),['real.png']);
+  assert.doesNotMatch(renderMarkdown('<img src="https://example.test/track.png"><img src="javascript:alert(1)">'),/<img/);
+});
