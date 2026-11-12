@@ -37,6 +37,7 @@ export interface Workspace {
   read(path: string, signal?:AbortSignal): Promise<WorkspaceText>;
   readBytes?(path:string,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>;
   write(path: string, content: string, expectedHash?: string): Promise<WorkspaceText>;
+  writeCli?(path:string,content:string,expectedHash?:string,signal?:AbortSignal):Promise<WorkspaceText>;
   run(command: string, signal?: AbortSignal, options?: {maxBytes?: number}): Promise<GitResult>;
   runGit?(args:string[],signal?:AbortSignal,options?:{maxBytes?:number}):Promise<GitResult>;
 }
@@ -61,6 +62,7 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
         retrySave:workspace.retrySave ? (path,content)=>workspace.retrySave!(childRoot(root,path),content) : undefined,
         readBytes: workspace.readBytes ? (path,maxBytes,signal)=>workspace.readBytes!(childRoot(root,path),maxBytes,signal) : undefined,
         write: (path, content, expectedHash) => workspace.write(childRoot(root, path), content, expectedHash),
+        writeCli: workspace.writeCli ? (path,content,expectedHash,signal)=>workspace.writeCli!(childRoot(root,path),content,expectedHash,signal) : undefined,
         run: (command, signal) => workspace.run(workspace.kind === 'remote' ? `cd -- ${shellQuote(absolute)} && ${command}` : command, signal),
         runGit:workspace.runGit?(args,signal,options)=>workspace.runGit!(['-C',root,...args],signal,options):undefined,
     }

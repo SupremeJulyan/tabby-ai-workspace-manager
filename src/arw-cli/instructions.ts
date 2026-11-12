@@ -148,11 +148,18 @@ function previousAuthorizationPlaceholderGuidance(remoteRoot:string):string {
 }
 
 /** Cross-workspace access requires user authorization and an explicit target on every command. */
-export function placeholderGuidance(remoteRoot:string):string {
+function previousWritePlaceholderGuidance(remoteRoot:string):string {
     return previousAuthorizationPlaceholderGuidance(remoteRoot).replace(
         'Omit --id for this bound workspace. If unavailable, reconnect it in Tabby; never switch targets automatically. In an unbound terminal, ask the user to identify the target, list forwarded choices with arw workspaces, and use --id ID. An explicit --id also overrides the binding.',
         'Omit --id for this bound workspace. Sidebar switches do not change the binding. Cross-workspace operations are allowed after user authorization: explain the target workspace and intended operations, ask the user for permission unless their existing instructions already authorize that target and scope, and wait for approval before accessing it. Use arw workspaces to identify the exact target by host, port, user and workspaceRoot; ask if ambiguous. After approval, pass an explicit --id ID on every command for that workspace. This overrides only that command and does not rebind this terminal. Stay within the approved scope and read the target project instructions before changes. If the bound workspace is unavailable, do not substitute another automatically: reconnect it in Tabby or request authorization for another target. In an unbound terminal, ask the user to identify and authorize the target, then use its explicit --id ID.'
     )
+}
+
+export function placeholderGuidance(remoteRoot:string):string {
+    return previousWritePlaceholderGuidance(remoteRoot)
+        .replace("arw write notes.txt --content 'text'","arw write REMOTE_PATH --file LOCAL_COMPLETE_FILE --expected-hash HASH_FROM_READ")
+        .replace('arw write notes.txt --file ./local-text.txt','arw edit REMOTE_PATH --input JSON_WITH_EXPECTED_HASH_AND_EDITS')
+        .replace('Use known commands directly.', 'For partial changes use arw edit with exact oldText/newText. arw write replaces the ENTIRE file: --content is the complete literal content, --file reads a complete LOCAL file, and --file - reads stdin. Never use empty text, a single test character, sample values or placeholders to probe write on an existing project file. Read first and pass the actual returned expectedHash; verify content after writing. Blank writes require explicit --allow-empty.\nUse known commands directly.')
 }
 
 export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):void {
@@ -163,7 +170,7 @@ export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):
         const file=join(placeholder,'AGENTS.md')
         if(lstatSync(file).isFile()){
             const content=readFileSync(file,'utf8')
-            if([previousPlaceholderGuidance(remoteRoot),skillPlaceholderGuidance(remoteRoot),previousCurrentPlaceholderGuidance(remoteRoot),previousAuthorizationPlaceholderGuidance(remoteRoot),previousAuthorizationPlaceholderGuidance(remoteRoot).replace("Use known commands directly.","Use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. Reserve arw exec for shell tasks such as builds, tests, Git and process diagnostics. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, shell redirection, heredocs or scripts.\nUse known commands directly."),previousAuthorizationPlaceholderGuidance(remoteRoot).replace("Use known commands directly.","For regular workspace bindings, use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. For terminal-mode bindings (terminalOnly in .awm/workspace.json), use arw exec for all project operations, including reading, creating, editing, moving and deleting files. For example: arw exec -- 'touch test'.\nUse known commands directly.")].includes(content))writeFileSync(file,placeholderGuidance(remoteRoot),{mode:0o600})
+            if([previousWritePlaceholderGuidance(remoteRoot),previousPlaceholderGuidance(remoteRoot),skillPlaceholderGuidance(remoteRoot),previousCurrentPlaceholderGuidance(remoteRoot),previousAuthorizationPlaceholderGuidance(remoteRoot),previousAuthorizationPlaceholderGuidance(remoteRoot).replace("Use known commands directly.","Use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. Reserve arw exec for shell tasks such as builds, tests, Git and process diagnostics. Never use exec for project file operations such as cat, grep, sed, tee, cp, mv, rm, touch, shell redirection, heredocs or scripts.\nUse known commands directly."),previousAuthorizationPlaceholderGuidance(remoteRoot).replace("Use known commands directly.","For regular workspace bindings, use arw list/read/search/find to inspect project files and arw write/edit/create/delete/move/chmod to change them. For terminal-mode bindings (terminalOnly in .awm/workspace.json), use arw exec for all project operations, including reading, creating, editing, moving and deleting files. For example: arw exec -- 'touch test'.\nUse known commands directly.")].includes(content))writeFileSync(file,placeholderGuidance(remoteRoot),{mode:0o600})
         }
     }
 }

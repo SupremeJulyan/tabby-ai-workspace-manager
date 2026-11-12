@@ -105,6 +105,20 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"git-push"}]}'), /Unsupported batch command/);
   assert.equal(gitCalls.length, 3);
   await writeFile(join(root, 'a.txt'), 'one\n你好\nthree\n');
+  const original=(await cli('read','a.txt'));
+  await assert.rejects(cli('write','a.txt','--content',''),/ENTIRE file.*allow-empty/);
+  await assert.rejects(cli('write','a.txt','--input',JSON.stringify({content:' \n\t'})),/allow-empty/);
+  const empty=join(root,'empty-local.txt');await writeFile(empty,'');
+  await assert.rejects(cli('write','a.txt','--file',empty),/allow-empty/);
+  await assert.rejects(cli('write','a.txt','--content','x','--content',''),/Duplicate option/);
+  await assert.rejects(cli('write','a.txt','--content','x','--file',empty),/Duplicate argument: content/);
+  assert.equal((await cli('read','a.txt')).content,original.content,'misused arguments never reach the writer');
+  await assert.rejects(cli('write','a.txt','--content','replacement','--expected-hash','wrong'),/changed/);
+  await cli('write','a.txt','--content',original.content,'--expected-hash',original.hash);
+  await cli('write','intentional-empty','--content','','--allow-empty');
+  assert.equal(await readFile(join(root,'intentional-empty'),'utf8'),'');
+  await rm(empty);await rm(join(root,'intentional-empty'));
+
   assert.equal((await cli('read', 'a.txt', '--head', '2')).content, 'one\n你好\n');
   assert.equal((await cli('read', '--path', 'a.txt', '--tail', '1')).content, 'three\n');
   assert.equal((await cli('read', 'a.txt', '--start-line', '2', '--line-count', '1')).content, '你好\n');

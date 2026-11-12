@@ -70,6 +70,8 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
     }
     case 'remote_write': {
       const input = path(), content = text(args.content, 'content');
+      if(args.allowEmpty!==undefined&&typeof args.allowEmpty!=='boolean')throw new Error('allowEmpty must be a boolean');
+      if(!content.trim()&&args.allowEmpty!==true)throw new Error('write replaces the ENTIRE file. Empty or whitespace-only content requires --allow-empty (JSON: allowEmpty: true). Use edit for partial changes.');
       return backend.write(input, content, signal, args.expectedHash === undefined ? undefined : text(args.expectedHash, 'expectedHash'));
     }
     case 'remote_edit': {

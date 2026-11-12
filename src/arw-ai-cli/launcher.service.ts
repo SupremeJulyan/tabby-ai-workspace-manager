@@ -169,7 +169,7 @@ export class AiLauncherService {
                         copy: remote?sftpCopy(() => remote.openSFTP(), new RemotePathGuard(workspace.root, (command, signal) => workspace.run(command, signal))):undefined,
                         list: async path => ({ entries: await cliFiles.list(path) }),
                         read: async path => ({ path, ...await cliFiles.read(path) }),
-                        write: async (path, content, _signal, expectedHash) => ({ path, ...await cliFiles.write(path, content, expectedHash) }),
+                        write: async (path, content, _signal, expectedHash) => ({ path, ...await cliFiles.write(path, content, expectedHash, _signal) }),
                         run: (value, signal, options) => isTerminalCommandMode(source)?runTerminalCommand(source,workspace.root,value,signal,options?.maxBytes):workspace.run(value, signal, options),
                         validateCommand: workspace.validateCommand?.bind(workspace),
                     }, this.auditFile)

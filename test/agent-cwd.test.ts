@@ -202,7 +202,10 @@ test('cross-workspace guidance upgrades the previous generated placeholder and p
     try{
         const ensure=()=>ensureAgentCwdPlaceholder('/project',storage,{host:'fixture',user:'alice'})
         const {localPath}=await ensure(),file=join(localPath,'AGENTS.md')
-        const previous=placeholderGuidance('/project').replace(
+        const previous=placeholderGuidance('/project')
+            .replace(/^For partial changes[^\n]+\n/m,'')
+            .replace('arw write REMOTE_PATH --file LOCAL_COMPLETE_FILE --expected-hash HASH_FROM_READ',"arw write notes.txt --content 'text'")
+            .replace('arw edit REMOTE_PATH --input JSON_WITH_EXPECTED_HASH_AND_EDITS','arw write notes.txt --file ./local-text.txt').replace(
             /^Omit --id[^\n]+/m,
             'Omit --id for this bound workspace. If unavailable, reconnect it in Tabby; never switch targets automatically. In an unbound terminal, ask the user to identify the target, list forwarded choices with arw workspaces, and use --id ID. An explicit --id also overrides the binding.'
         )

@@ -11,12 +11,18 @@ import { readWorkspaceBinding } from './workspace-binding';
 declare const ARW_CLI_VERSION: string;
 
 async function main(): Promise<void> {
-  const stringOptions = ['id', 'workspace', 'input', 'file', 'content', 'path', 'query', 'name', 'output-id', 'stream', 'command', 'type', 'mode', 'limit', 'cursor', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count'];
-  const { values: parsedValues, positionals } = parseArgs({ allowPositionals: true, options: {
+  const stringOptions = ['id', 'workspace', 'input', 'file', 'content', 'path', 'query', 'name', 'output-id', 'stream', 'command', 'type', 'mode', 'limit', 'cursor', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count', 'expected-hash'];
+  const { values: parsedValues, positionals, tokens } = parseArgs({ allowPositionals: true, tokens:true, options: {
     ...Object.fromEntries(stringOptions.map(key => [key, { type: 'string' as const }])),
     version: { type: 'boolean', short: 'V' }, compact: { type: 'boolean' }, verbose: { type: 'boolean' },
-    recursive: { type: 'boolean', short: 'r' }, help: { type: 'boolean', short: 'h' },
+    'allow-empty': {type:'boolean'}, recursive: { type: 'boolean', short: 'r' }, help: { type: 'boolean', short: 'h' },
   } });
+  const seenOptions=new Set<string>();
+  for(const token of tokens){
+    if(token.kind!=='option'||!['content','file','input','expected-hash','allow-empty'].includes(token.name))continue;
+    if(seenOptions.has(token.name))throw new Error(`Duplicate option: --${token.name}`);
+    seenOptions.add(token.name);
+  }
   const values: Record<string, string | boolean | undefined> = parsedValues;
   if (values.version) { console.log(`arw ${ARW_CLI_VERSION}`); return; }
   if (values.help || !positionals.length) {
@@ -63,6 +69,7 @@ async function main(): Promise<void> {
   if (verb === 'find') args.mode = 'names';
   if (verb !== 'workspaces') args.workspaceId = values.id;
   if (values.recursive) assign('recursive', true);
+  if (values['allow-empty']!==undefined) assign('allowEmpty', values['allow-empty']);
   const catalog=await readWorkspaceCatalog(binding?.catalogPath);
   if(verb==='workspaces'){
     const workspaces=catalog.workspaces.filter(entry=>entry.status==='forwarded'&&entry.configPath)

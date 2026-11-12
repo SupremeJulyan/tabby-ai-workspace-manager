@@ -694,7 +694,11 @@ test('saved workspace forwarding routes CLI by ID, survives other entries, and c
         await writeFile(join(directory,'one/file'),'first');await writeFile(join(directory,'two/file'),'second')
         const base={...localWorkspace(directory),kind:'remote',host:'fixture'},first=await store.add(base,join(directory,'one')),second=await store.add(base,join(directory,'two'))
         const fixtureRemote={open:true,willDestroy$:new Subject(),ref(){},unref(){}}
-        await Promise.all([store.open(first,{...localWorkspace(first.root),kind:'remote'},fixtureRemote),store.open(second,{...localWorkspace(second.root),kind:'remote'},fixtureRemote)])
+        const cliBackend=root=>{
+            const backend=localWorkspace(root)
+            return {...backend,kind:'remote',writeCli:backend.write,write(){throw Error('CLI must not invoke editor write')}}
+        }
+        await Promise.all([store.open(first,cliBackend(first.root),fixtureRemote),store.open(second,cliBackend(second.root),fixtureRemote)])
         const firstConfig=store.connection(first.id),firstConnection=JSON.parse(await readFile(firstConfig,'utf8'))
         let profile
         const aiClosed=new Subject()

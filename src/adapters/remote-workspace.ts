@@ -213,6 +213,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             }finally{await file.close()}
         },
         write,
+        writeCli,
         retrySave:(input,content)=>write(input,content,undefined,true),
         run: (command, signal, options) => transport.run(command, signal, options),
         async validateCommand(command, signal) {
@@ -221,6 +222,41 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
                 await guard.resolve(target.target, target.kind === 'write-target', signal)
             }
         },
+    }
+    // CLI requests never enter SaveConfirmation: no editor state or manual unlock.
+    async function writeCli(input:string,content:string,expectedHash?:string,requestSignal?:AbortSignal) {
+        if(Buffer.byteLength(content)>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
+        const signal=AbortSignal.any([AbortSignal.timeout(30000),...(requestSignal?[requestSignal]:[])])
+        const connection=session.ssh
+        const check=()=>{
+            signal.throwIfAborted()
+            if(!session.open||session.ssh!==connection)throw new Error(t('SSH 会话已断开或重连，请刷新目录'))
+        }
+        let started=false
+        priority.active++
+        try{
+            check()
+            await guard.resolve(input,true,signal)
+            const sftp=await optionalSftp(session)
+            check()
+            const version=sftp
+                ?await saveSftpText(sftp,posix.resolve(root,input),content,expectedHash,signal,()=>{},()=>{started=true})
+                :await saveRemoteText(transport,root,input,content,expectedHash,signal,()=>{},()=>{started=true})
+            check()
+            notifyWorkspaceChange(workspace)
+            return {content,hash:version}
+        }catch(error){
+            if(!started)throw error
+            // Lost acknowledgements can follow a successful write. Inspect once;
+            // never repeat the mutation or leave a persistent editor save lock.
+            if(!requestSignal?.aborted&&session.open&&session.ssh===connection){
+                try{
+                    const current=await workspace.read(input,AbortSignal.timeout(5000))
+                    if(current.content===content){notifyWorkspaceChange(workspace);return current}
+                }catch{/* Return the original write failure with recovery guidance. */}
+            }
+            throw new Error(`CLI_WRITE_UNCONFIRMED: Remote contents may be incomplete. Read the file and retry with its current expectedHash; no editor unlock is required. ${String(error)}`,{cause:error})
+        }finally{finishForegroundWrite(priority)}
     }
     async function write(input:string, content:string, expectedHash?:string,confirmedRetry=false) {
             if (Buffer.byteLength(content) > textFileLimit) throw new Error(t('文本文件上限为 500 MiB'))

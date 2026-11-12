@@ -156,7 +156,7 @@ export class ForwardingService {
                 },
                 write: async (input, content, signal, expectedHash) => {
                     signal.throwIfAborted()
-                    return { path: input, ...await cliFiles.write(input, content, expectedHash) }
+                    return { path: input, ...await cliFiles.write(input, content, expectedHash, signal) }
                 },
                 run: (command, signal, options) => isTerminalCommandMode(tab)?runTerminalCommand(tab,root,command,signal,options?.maxBytes):workspace.run(command, signal, options),
                 validateCommand: workspace.validateCommand?.bind(workspace),

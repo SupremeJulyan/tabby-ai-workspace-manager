@@ -11,7 +11,7 @@ export const commands: Record<string, { tool: string; positional?: string[]; fie
   'read-many': { tool: 'remote_read_many', fields: ['requests', 'maxBytes'] },
   search: { tool: 'remote_search', positional: ['query', 'path'], fields: ['query', 'path', 'mode', 'fixedStrings', 'ignoreCase', 'limit', 'include', 'excludeDirs'] },
   find: { tool: 'remote_search', positional: ['query', 'path'], fields: ['query', 'path', 'mode', 'limit', 'excludeDirs'] },
-  write: { tool: 'remote_write', positional: ['path'], fields: ['path', 'content', 'expectedHash'] },
+  write: { tool: 'remote_write', positional: ['path'], fields: ['path', 'content', 'expectedHash', 'allowEmpty'] },
   edit: { tool: 'remote_edit', positional: ['path'], fields: ['path', 'edits', 'expectedHash'] },
   create: { tool: 'remote_create', positional: ['path', 'type'], fields: ['path', 'type', 'content'] },
   delete: { tool: 'remote_delete', positional: ['path'], fields: ['path', 'recursive'] },
@@ -109,23 +109,33 @@ Stops after 10000 visited entries; inspect truncated. Override exclusions with
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'write': `Usage: arw write PATH --id ID (--content TEXT | --file FILE | --file -)
+  'write': `Usage: arw write PATH --id ID (--content FULL_TEXT | --file LOCAL_FILE | --file -) [--expected-hash HASH] [--allow-empty]
 
-  write writes the complete supplied content, replacing existing content.
---file reads local UTF-8 text; local relative paths start at the CLI directory.
---file - reads stdin. Read first and pass its hash to prevent stale writes:
-  arw write file.txt --file ./replacement.txt --id ID --input '{"expectedHash":"HASH"}'
---workspace aliases --id. --input JSON|- supplies structured fields (camelCase);
---input - reads stdin. --compact omits successful/empty status metadata.
-Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
-read-only paths may access outside it subject to account permissions.
+FULL-FILE REPLACEMENT: existing file contents are completely replaced, not patched or appended.
+Use arw edit for partial changes. Never send sample/placeholder text to test write on a project file.
+--content FULL_TEXT is the literal ENTIRE new file content, not a filename, patch, or search/replacement.
+--file LOCAL_FILE reads the ENTIRE UTF-8 file from the LOCAL machine, not the remote workspace.
+--file - reads the ENTIRE new content from stdin. Provide exactly one content source.
+Empty or whitespace-only content is rejected unless --allow-empty explicitly permits it.
+Read the target first; pass its actual returned hash using --expected-hash HASH to reject stale writes.
+A hash detects concurrent changes; it does not validate whether your new content is complete.
+For multiline contents prefer --file LOCAL_FILE or --file -; verify shell quoting and interpolation.
+After writing, read back the target and check the intended contents.
+--input JSON|- accepts path, content, expectedHash and allowEmpty (camelCase).
+--workspace aliases --id. --compact omits successful/empty status metadata.
+Remote relative paths start at workspaceRoot; local --file paths start at the CLI directory.
+Mutations stay inside workspaceRoot.
 `,
-  'edit': `Usage: arw edit PATH --id ID --input JSON|-
+  'edit': `Usage: arw edit PATH --id ID --input JSON|- [--expected-hash HASH]
 
-  Each edit oldText must be nonempty and match exactly once; edits apply in array order.
-  Read first and pass the returned hash as expectedHash to guard against stale writes:
-    arw write file.txt --file ./replacement.txt --id ID --input '{"expectedHash":"HASH"}'
-    arw edit file.txt --id ID --input '{"expectedHash":"HASH","edits":[{"oldText":"old","newText":"new"}]}'
+Use edit for partial changes; it preserves all text outside the specified replacements.
+Each edit oldText must be nonempty and match exactly once; edits apply in array order.
+Read first and use exact oldText from that file, then supply the intended newText.
+newText is literal replacement text; an empty newText deletes the matched text.
+JSON shape: {"path":"REMOTE_PATH","expectedHash":"ACTUAL_HASH_FROM_READ","edits":[{"oldText":"EXACT_EXISTING_TEXT","newText":"INTENDED_REPLACEMENT"}]}
+Replace all illustrative values with real values; never write placeholders into project files.
+Pass the actual returned hash as expectedHash or --expected-hash to reject stale writes.
+Do not use arw write for a partial edit: write replaces the entire file.
 --workspace aliases --id. --input JSON|- supplies structured fields (camelCase);
 --input - reads stdin. --compact omits successful/empty status metadata.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;

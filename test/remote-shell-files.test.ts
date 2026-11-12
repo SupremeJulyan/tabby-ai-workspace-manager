@@ -751,3 +751,59 @@ test('a failed destination open never requests file contents but retains an unco
     assert.equal(await readFile(join(root,'file'),'utf8'),'before')
     assert.ok(workspace.saveIssue?.('file'),'the pre-mutation acknowledgement still protects ambiguous failures')
 })
+
+
+test('CLI writes recover independently of editor save issues and verify lost acknowledgements', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-cli-write-independent-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const fixture=sessionFixture(root),sftp=sftpFixture()
+    const open=sftp.open.bind(sftp)
+    let failure:'partial'|'ack'|undefined,writes=0
+    sftp.open=async(path,mode)=>{
+        const file=await open(path,mode),write=file.write.bind(file)
+        file.write=async bytes=>{
+            writes++
+            const fail=failure;failure=undefined
+            await write(fail==='partial'?bytes.subarray(0,1):bytes)
+            if(fail)throw new Error('simulated lost connection')
+        }
+        return file
+    }
+    fixture.session.openSFTP=async()=>sftp
+    const workspace=remoteWorkspace(fixture.session as any,root),cli=cliWorkspaceFiles(workspace)
+    await writeFile(join(root,'editor'),'original')
+    failure='partial'
+    await assert.rejects(workspace.write('editor','manual edit'),/保存未确认/)
+    assert.ok(workspace.saveIssue!('editor'))
+    const savedIssue=workspace.saveIssue!('editor')
+    assert.equal((await cli.write('editor','agent fix')).content,'agent fix')
+    assert.equal(await readFile(join(root,'editor'),'utf8'),'agent fix')
+    assert.deepEqual(workspace.saveIssue!('editor'),savedIssue,'CLI does not mutate editor recovery state')
+    failure='partial'
+    await assert.rejects(cli.write('agent','first attempt'),/CLI_WRITE_UNCONFIRMED.*Read the file/)
+    assert.equal(workspace.saveIssue!('agent'),undefined,'CLI failure never locks the editor or future CLI requests')
+    const current=await cli.read('agent')
+    assert.equal((await cli.write('agent','retry',current.hash)).content,'retry')
+    const before=writes
+    failure='ack'
+    assert.equal((await cli.write('agent','confirmed after lost acknowledgement')).content,'confirmed after lost acknowledgement')
+    assert.equal(writes,before+1,'verification does not repeat the mutation')
+    await assert.rejects(cli.write('agent','stale overwrite',current.hash),/远端文件已变化/)
+    assert.equal(workspace.saveIssue!('agent'),undefined)
+    const abort=new AbortController();abort.abort()
+    await assert.rejects(cli.write('cancelled','no write',undefined,abort.signal))
+    await assert.rejects(stat(join(root,'cancelled')),/ENOENT/)
+})
+
+test('CLI shell writes remain usable after an interrupted request without editor recovery', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-cli-shell-retry-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    const fixture=sessionFixture(root),workspace=remoteWorkspace(fixture.session as any,root),cli=cliWorkspaceFiles(workspace)
+    fixture.hooks.rewrite=command=>command.replace('cat >&3 || exit 1','head -c 1 >&3; exit 1')
+    await assert.rejects(cli.write('file','interrupted body'),/CLI_WRITE_UNCONFIRMED/)
+    assert.equal(workspace.saveIssue!('file'),undefined)
+    fixture.hooks.rewrite=undefined
+    const current=await cli.read('file')
+    assert.equal((await cli.write('file','recovered body',current.hash)).content,'recovered body')
+    assert.equal(await readFile(join(root,'file'),'utf8'),'recovered body')
+})

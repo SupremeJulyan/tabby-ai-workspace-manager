@@ -29,3 +29,15 @@ test('command help keeps operation-specific rules out of the index', async () =>
   assert.match((await cli('output', '--help')).stdout, /nextOffset/)
   assert.match((await cli('download', '--help')).stdout, /do not overwrite/)
 })
+
+
+test('write and edit help distinguish full replacement from partial edits',async()=>{
+  const write=(await cli('write','--help')).stdout,edit=(await cli('edit','--help')).stdout
+  assert.match(write,/FULL-FILE REPLACEMENT/)
+  assert.match(write,/ENTIRE new file content/)
+  assert.match(write,/LOCAL machine/)
+  assert.match(write,/allow-empty/)
+  assert.match(write,/expected-hash/)
+  assert.match(edit,/preserves all text outside/)
+  assert.doesNotMatch(edit,/^\s+arw write /m)
+})
