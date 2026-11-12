@@ -807,3 +807,20 @@ test('CLI shell writes remain usable after an interrupted request without editor
     assert.equal((await cli.write('file','recovered body',current.hash)).content,'recovered body')
     assert.equal(await readFile(join(root,'file'),'utf8'),'recovered body')
 })
+
+
+test('deleted remote files return a missing-path error instead of an overwrite conflict', {skip:process.platform==='win32'},async context=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-save-deleted-'))
+    context.after(()=>rm(root,{recursive:true,force:true}))
+    for(const useSftp of [true,false]){
+        const fixture=sessionFixture(root)
+        if(useSftp)fixture.session.openSFTP=async()=>sftpFixture()
+        const workspace=remoteWorkspace(fixture.session as any,root)
+        await writeFile(join(root,'file'),'before')
+        const original=await workspace.read('file')
+        await rm(join(root,'file'))
+        await assert.rejects(workspace.write('file','edited',original.hash),error=>(error as {code?:string}).code==='FILE_NOT_FOUND')
+        await assert.rejects(stat(join(root,'file')),/ENOENT/)
+        assert.equal(workspace.saveIssue!('file'),undefined)
+    }
+})

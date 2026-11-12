@@ -4,7 +4,7 @@ import type { SFTPSession, SFTPFile } from 'tabby-ssh/typings/session/sftp'
 import { textFileLimit, WorkspaceText } from '../arw-tree/workspace'
 import { t } from '../shared/i18n'
 import { decodeText } from '../shared/decode-text'
-import { FileConflictError } from '../shared/file-conflict'
+import { FileConflictError, FileMissingError } from '../shared/file-conflict'
 import { readSftpBytes } from './sftp-read'
 
 // SFTP v3 SSH_FXF_EXCL; russh exports the other OPEN flags only.
@@ -50,7 +50,8 @@ export async function saveSftpText(
     signal.throwIfAborted()
     if(before?.isDirectory)throw new Error(t('只能保存普通文件'))
     if(expectedVersion!==undefined){
-        if(!before||sftpTextVersion(before)!==expectedVersion)
+        if(!before)throw new FileMissingError(t('远端文件路径不存在'))
+        if(sftpTextVersion(before)!==expectedVersion)
             throw new FileConflictError(t('远端文件已变化'))
     }
     const mode=before?sftpPermissions(before):'600'

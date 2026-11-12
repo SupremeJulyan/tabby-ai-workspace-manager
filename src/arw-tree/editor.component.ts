@@ -17,7 +17,7 @@ import { fileWorkspaceToken, resolveFileWorkspace } from './file-recovery'
 import { TextSearch, type FindState } from './text-search'
 import { logFileRecovery } from '../services/file-recovery-log'
 import { addFileCloseButton } from '../arw-ai-cli/close-button'
-import { isFileConflict } from '../shared/file-conflict'
+import { isFileConflict, isFileMissing } from '../shared/file-conflict'
 import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime } from './preview/model'
 
 @Component({
@@ -169,6 +169,12 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             if(this.markdownPreview){this.markdownPreview=false;await this.toggleMarkdown()}
         } catch(error) {this.error=String(error)}
     }
+    private async closeMissingFile():Promise<void> {
+        if(this.recoveryController.signal.aborted)return
+        this.notifications.info(t('远端文件路径不存在'),this.filePath)
+        if(this.app.tabs.includes(this))await this.app.closeTab(this,false)
+        else this.destroy()
+    }
     async reconnectFile():Promise<void> {
         if(!this.canReconnect||this.reconnecting||this.loading||this.saving)return
         const token=fileWorkspaceToken(this.workspace)
@@ -195,10 +201,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 }
             }catch(error){
                 if(!missing(error))throw error
-                if(!this.recoveryController.signal.aborted){
-                    if(this.app.tabs.includes(this))await this.app.closeTab(this,false)
-                    else this.destroy()
-                }
+                await this.closeMissingFile()
                 return
             }
             if(this.recoveryController.signal.aborted)return
@@ -236,6 +239,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             let file
             try { file=await this.workspace.write(this.filePath,content,this.hash) }
             catch(error){
+                if(this.workspace.kind==='remote'&&isFileMissing(error)){await this.closeMissingFile();return}
                 if(!isFileConflict(error)||this.saveIssue)throw error
                 if(this.recoveryController.signal.aborted)return
                 const choice=await this.platform.showMessageBox({type:'warning',

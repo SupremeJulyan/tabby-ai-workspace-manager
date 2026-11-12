@@ -3587,7 +3587,7 @@ test('explicit file reconnect authenticates a closed terminal and preserves unsa
     terminal.profile=profile;terminal.frontendIsReady=true
     terminal.sshSession={open:false,profile}
     terminal.setupOneSession=async()=>{connections++;return session}
-    const app={tabs:[terminal]},provider=new plugin.FileRecoveryProvider({get:()=>app})
+    const app={tabs:[terminal],info(){}},provider=new plugin.FileRecoveryProvider({get:()=>app})
     const params=await provider.recover({type:'arw-editor',workspace:{kind:'remote',root:'/project',host:'example.test',port:2222,user:'alice',profileId:profile.id},filePath:'job.sh'})
     const editor=new params.type({get:()=>app});editor.setTitle=()=>{};Object.assign(editor,params.inputs)
     editor.loading=false;editor.content='edited script';editor.original='original script';editor.hash='old-version'
@@ -3615,4 +3615,22 @@ test('explicit file reconnect authenticates a closed terminal and preserves unsa
         assert.equal(closed,2,'a missing top-level file also closes directly')
     }finally{editor.ngOnDestroy();provider.ngOnDestroy()}
     assert.equal(references,0)
+})
+
+
+test('saving a deleted remote file notifies and closes without offering overwrite',async()=>{
+    const plugin=load(),notices=[],prompts=[],closed=[]
+    const app={tabs:[],async closeTab(tab,check){assert.equal(check,false);closed.push(tab)}}
+    const platform={async showMessageBox(options){prompts.push(options);return {response:1}}}
+    const notifications={info(...args){notices.push(args)}}
+    const editor=new plugin.EditorComponent({get(type){return type===core.AppService?app:type===core.PlatformService?platform:notifications}})
+    editor.setTitle=()=>{};editor.workspace={kind:'remote',write:async()=>{throw Object.assign(new Error('missing'),{code:'FILE_NOT_FOUND'})}}
+    editor.filePath='deleted.sh';editor.loading=false;editor.content='edited';editor.original='before';editor.hash='old-version'
+    app.tabs.push(editor)
+    await editor.save()
+    assert.equal(prompts.length,0)
+    assert.deepEqual(closed,[editor])
+    assert.deepEqual(notices,[['远端文件路径不存在','deleted.sh']])
+    assert.equal(editor.saving,false)
+    editor.ngOnDestroy()
 })

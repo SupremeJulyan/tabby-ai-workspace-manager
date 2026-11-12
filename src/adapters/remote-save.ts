@@ -3,7 +3,7 @@ import { posix } from 'node:path'
 import { shellQuote } from '../shared/shell-quote'
 import { isRemotePathInsideRoot, RemotePathError } from '../security/remote-path'
 import type { TabbyRelayTransport } from './transport'
-import { FileConflictError } from '../shared/file-conflict'
+import { FileConflictError, FileMissingError } from '../shared/file-conflict'
 
 export async function saveRemoteText(
     transport:TabbyRelayTransport,root:string,input:string,content:string,expectedVersion:string|undefined,
@@ -31,7 +31,7 @@ ARW_METADATA
     ${expectedVersion===undefined?'':`test "$(stat -c '%s:%y' -- ${quoted})" = ${shellQuote(expectedVersion.slice('shell:'.length))} || { printf '%s\\n' 'Remote file has changed (远端文件已变化)' >&2; exit 1; }`}
     test "$(_arw_stat)" = "$_arw_before" || { printf '%s\\n' 'Remote file changed before saving (远端文件在保存前发生了变化)' >&2; exit 1; }
 else
-    ${expectedVersion===undefined?':':`printf '%s\\n' 'Remote file has changed (远端文件已变化)' >&2; exit 1`}
+    ${expectedVersion===undefined?':':`printf '%s\\n' 'ARW_FILE_MISSING: Remote file path does not exist' >&2; exit 1`}
 fi
 printf '\\000${marker}:PERMISSIONS:%s\\000' "$_arw_mode:\${_arw_uid-}:\${_arw_gid-}"
 printf '\\000${marker}:STARTED\\000'
@@ -71,6 +71,7 @@ printf '\\000${marker}:VERSION:%s\\000' "$_arw_version"`,signal,{
     signal.throwIfAborted()
     if(result.exitCode!==0){
         const message=result.stderr.trim()||'Remote in-place save failed'
+        if(!acknowledged&&message.includes('ARW_FILE_MISSING:'))throw new FileMissingError(message)
         if(!acknowledged&&/Remote file (?:has changed|changed before saving)/.test(message))throw new FileConflictError(message)
         throw new RemotePathError(message)
     }

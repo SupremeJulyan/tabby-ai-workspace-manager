@@ -385,6 +385,7 @@ export const englishMessages: Record<string,string> = {
     "正在重新连接…": "Reconnecting…",
     "重新连接并打开": "Reconnect and open",
     "未保存的修改将保留，重连后请再次保存。": "Unsaved changes will be preserved. Save again after reconnecting.",
+    "远端文件路径不存在": "Remote file path does not exist",
     "无效请求": "Invalid request",
     "执行中": "Running",
     "成功": "Success",
