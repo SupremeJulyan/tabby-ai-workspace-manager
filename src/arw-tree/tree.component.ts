@@ -911,11 +911,26 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     async followTerminal (): Promise<void> {
         const terminal=this.source,version=this.version,key=this.browsingKey(this.selection)
-        if(!terminal)return
+        if(!terminal||this.cwdSetupPending)return
         try{
             const root=await terminalWorkspaceDirectory(terminal)
             if(this.source!==terminal||version!==this.version||this.browsingKey(this.selection)!==key)return
             if(!root){
+                if(isWslTerminal(terminal)){
+                    if(!terminal.session?.open||terminal.alternateScreenActive){this.error=t('请回到 shell 命令提示符后重试。');this.render();return}
+                    this.error='';this.cwdSetupError='';this.cwdSetupPending=true
+                    this.cwdFollowVersion=this.version
+                    const request=++this.cwdSetupVersion
+                    this.cwdSetupTimer=setTimeout(()=>{
+                        if(request!==this.cwdSetupVersion)return
+                        this.cwdSetupPending=false
+                        this.cwdSetupError=t('未收到终端目录，请确认已回到 shell 命令提示符后重试。')
+                        this.clearCwdSetup();this.render()
+                    },8000)
+                    // Ask the existing shell once; a separate WSL process cannot know its cwd.
+                    terminal.sendInput("printf '\\033]1337;CurrentDir=%s\\007' \"$PWD\"\r")
+                    this.render();return
+                }
                 this.error=t('Tabby 尚未提供终端当前目录，请启用 Tabby 的路径检测后重试。');this.render()
                 return
             }
@@ -923,7 +938,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             const workspace=remote?remoteWorkspace(remote,root):terminalLocalWorkspace(root,this.source??undefined)
             this.selection={terminal,remote,workspace,pathSource:'terminal',hint:''}
             await this.showWorkspace(workspace)
-        }catch(error){if(version===this.version&&this.browsingKey(this.selection)===key){this.error=String(error);this.render()}}
+        }catch(error){if(version===this.version&&this.browsingKey(this.selection)===key){this.cwdSetupPending=false;this.clearCwdSetup();this.error=String(error);this.render()}}
     }
     commitMessage (repository:GitRepositoryView): string { return this.commitMessages.get(repository.root) ?? '' }
     setCommitMessage (repository:GitRepositoryView, value:string): void {

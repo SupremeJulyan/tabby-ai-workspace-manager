@@ -2619,7 +2619,7 @@ test('sidebar errors can be dismissed without restoring cached errors or clearin
         assert.equal(tree.gitNoticeByRoot.get('/fixture').error,'')
         tree.error='new failure';assert.equal(tree.error,'new failure','new failures are not permanently hidden')
         const template=plugin.TreeComponent.component.template
-        assert.equal((template.match(/class="icon-button dismiss-error"/g)||[]).length,4)
+        assert.equal((template.match(/class="icon-button dismiss-error"/g)||[]).length,5)
         assert.match(template,/\[attr\.aria-label\]="'关闭错误提示' \| arwTranslate"/)
     }finally{tree.ngOnDestroy()}
 })
@@ -3353,14 +3353,16 @@ test('restored workspace bindings preserve remote identity in editor and preview
     }
 })
 
-test('following WSL without native cwd preserves browsing without injecting detection',async()=>{
+test('following WSL without native cwd requests a report from the current shell once',async()=>{
     const {BehaviorSubject}=await import('rxjs')
     const windowsProcess=Object.create(process)
     Object.defineProperty(windowsProcess,'platform',{value:'win32'})
     const plugin=load(undefined,{process:windowsProcess})
     const terminal={profile:{type:'local',options:{command:'C:\\Windows\\System32\\wsl.exe'}},
         session:{open:true,getWorkingDirectory:async()=> 'C:\\Users\\user\\Pictures'},alternateScreenActive:false}
-    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{},{})
+    const current=new BehaviorSubject(null),sent=[]
+    terminal.sendInput=value=>sent.push(value)
+    const tree=new plugin.TreeComponent({current},{},{},{},{},{},{})
     let enabled=0,shown=0
     tree.selection={terminal,hint:'',workspace:{kind:'local',root:'C:\\Users\\user\\Pictures'}}
     tree.enableCwd=async()=>{enabled++}
@@ -3372,9 +3374,35 @@ test('following WSL without native cwd preserves browsing without injecting dete
         assert.equal(tree.canEnableCwd,true)
         await tree.followTerminal()
         assert.equal(enabled,0)
-        assert.match(tree.error,/Tabby/)
+        assert.equal(tree.cwdSetupPending,true)
+        assert.equal(tree.error,'')
+        assert.deepEqual(sent,["printf '\\033]1337;CurrentDir=%s\\007' \"$PWD\"\r"])
+        await tree.followTerminal()
+        assert.equal(sent.length,1)
         assert.equal(shown,0)
+        current.next({terminal,workspace:{kind:'local',root:'C:\\project'},pathSource:'terminal',hint:''})
+        assert.equal(tree.cwdSetupPending,false)
     }finally{tree.ngOnDestroy()}
+})
+
+test('WSL directory request times out visibly and can retry',async context=>{
+    context.mock.timers.enable({apis:['setTimeout']})
+    const {BehaviorSubject}=require('rxjs'),plugin=load()
+    let sent=0
+    const terminal={profile:{type:'local',options:{command:'wsl.exe'}},session:{open:true,getWorkingDirectory:async()=>null},sendInput(){sent++}}
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{},{})
+    tree.selection={terminal,hint:''}
+    try{
+        await tree.followTerminal()
+        assert.equal(tree.cwdSetupPending,true)
+        context.mock.timers.tick(8000)
+        assert.equal(tree.cwdSetupPending,false)
+        assert.match(tree.cwdSetupError,/shell/)
+        await tree.followTerminal()
+        assert.equal(sent,2)
+        assert.equal(tree.cwdSetupPending,true)
+        assert.equal(tree.cwdSetupError,'')
+    }finally{tree.ngOnDestroy();context.mock.timers.reset()}
 })
 
 test('WSL directory input and copy use native paths while the workspace keeps its UNC root',async()=>{
@@ -3445,9 +3473,9 @@ test('restored WSL file trees load before cwd reporting and explicit follow swit
         assert.equal(registry.current.value.pathSource,'restored')
         assert.match(registry.current.value.hint,/恢复|restor/i)
         await tree.followTerminal()
-        assert.equal(tree.cwdSetupPending,false)
+        assert.equal(tree.cwdSetupPending,true)
         registry.current.next({...registry.current.value})
-        assert.equal(tree.cwdSetupPending,false,'following must not install a pending shell detector')
+        assert.equal(tree.cwdSetupPending,true,'restored paths must not finish the pending directory request')
         reported=process.platform==='win32'
             ?(await (await import('node:util')).promisify((await import('node:child_process')).execFile)('wsl.exe',['--exec','wslpath','-u',actual])).stdout.trim():actual
         cwd.next(reported)

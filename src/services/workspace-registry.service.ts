@@ -227,7 +227,7 @@ export class WorkspaceRegistry {
                     pathSource='sftp'
                 }
                 if(!root){
-                    entry.selection={terminal,hint:t('正在检测本地终端目录…')}
+                    entry.selection={terminal,hint:isWslTerminal(terminal)?t('终端尚未上报目录，请点击“跟随终端当前目录”。'):t('正在检测本地终端目录…')}
                     if(this.current.value?.terminal===terminal)this.emit(entry.selection)
                     return
                 }
