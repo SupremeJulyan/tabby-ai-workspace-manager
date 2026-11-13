@@ -1,3 +1,4 @@
+import { rememberRemoteFiles, enforceRemoteFileLimit } from './remote-file-limit'
 import { selectPaneWorkspace } from '../shared/workspace-pane-visibility'
 import { paneLayout, selectStackedPane } from '../shared/pane-layout'
 import { orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
@@ -63,7 +64,8 @@ function selectFileWorkspace(split:SplitTabComponent,pane:BaseTabComponent):void
 /** Open a file inside the current split instead of creating another top-level tab. */
 export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='stacked',tabs?:Pick<TabsService,'create'>):Promise<T> {
     const anchor=topLevelFor(app,source??app.activeTab)
-    if(!anchor||app.tabs.length===0)return app.openNewTab(params)
+    rememberRemoteFiles(app)
+    if(!anchor||app.tabs.length===0){const file=await app.openNewTab(params);await enforceRemoteFileLimit(app);return file}
     const split=('getAllTabs' in anchor?anchor:app.getParentTab(anchor)??app.wrapAndAddTab(anchor)) as SplitTabComponent
     if(anchor!==split&&app.tabs.includes(anchor))app.removeTab(anchor)
     const existing=split.getAllTabs().find(pane=>sameFile(pane,params.inputs,params.type)) as T|undefined
@@ -90,5 +92,6 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
     selectStackedPane(split,'file',file,orderedFilePanes(split,split.getAllTabs().filter(isFilePane)))
     split.focus(file)
     tileWorkspacePanes(app,split,true)
+    await enforceRemoteFileLimit(app)
     return file
 }

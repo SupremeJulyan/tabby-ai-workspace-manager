@@ -89,7 +89,7 @@ test('SFTP saves support private new files, BOM text and metadata versions and b
     assert.ok(sizes.length>1&&sizes.every(size=>size<=256*1024))
     assert.ok(backingSizes.every(size=>size<=256*1024),'small chunks must not retain an entire encoded file buffer')
     assert.equal((await stat(join(root,'large'))).mode&0o777,0o600)
-    await assert.rejects(workspace.write('missing','unsafe','sftp:3:0'),/远端文件已变化/)
+    await assert.rejects(workspace.write('missing','unsafe','sftp:3:0'),{code:'FILE_NOT_FOUND'})
     await assert.rejects(stat(join(root,'missing')),/ENOENT/)
     assert.equal(fixture.commands.length,0)
 })

@@ -99,7 +99,7 @@ export const TREE_TEMPLATE = `
           <div *ngIf="!repository.loading && !repository.error && !repository.count" class="repository-clean"><i class="far fa-check-circle"></i> {{ '没有变更' | arwTranslate }}</div>
         </ng-container>
       </section>
-      <div *ngIf="!gitLoading && !error && !gitNotice && !repositories.length" class="empty-state compact"><i class="fas fa-code-branch"></i><span>{{gitEmptyMessage}}</span>
+      <div *ngIf="!gitLoading && !error && !repositories.length" class="empty-state compact"><i class="fas fa-code-branch"></i><span>{{gitEmptyMessage}}</span>
         <div class="git-setup-actions" *ngIf="canSetupGit && !gitSetupMode"><button (click)="openGitSetup('init')" [disabled]="gitSetupBusy">{{ '初始化 Git' | arwTranslate }}</button><button (click)="openGitSetup('clone')" [disabled]="gitSetupBusy">{{ '克隆 Git 项目' | arwTranslate }}</button></div>
       </div>
       <form class="git-setup-form" *ngIf="canSetupGit && gitSetupMode" (ngSubmit)="submitGitSetup()">

@@ -493,6 +493,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private gitAbort?:AbortController
     private gitScan?:Promise<void>
     private gitScanCache=new Map<string,GitScanCache>()
+    private readonly automaticGitScans=new Set<string>()
     private gitNeedsScan=false
     error = ''
     dismissError(field:'error'|'gitSetupError'|'cwdSetupError'='error'):void{
@@ -1123,7 +1124,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     gitSetupProgress=''
     private gitSetupController?:AbortController
     get canSetupGit ():boolean {
-        return this.gitScanCompleted&&this.gitScope===this.currentGitScope()&&!this.gitLoading&&!this.error&&!this.gitNotice&&!this.repositories.length&&(this.currentDirectoryWorkspace()?.kind==='local'||this.canForward)
+        return this.gitScanCompleted&&this.gitScope===this.currentGitScope()&&!this.gitLoading&&!this.error&&!this.repositories.length&&(this.currentDirectoryWorkspace()?.kind==='local'||this.canForward)
     }
     openGitSetup (mode:'init'|'clone'):void {
         if(!this.canSetupGit||this.gitSetupBusy)return
@@ -1498,7 +1499,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     private ensureGitScan():void{
         if(!this.browserWorkspace||this.gitLoading)return
-        if((this.gitNeedsScan||this.gitScope!==this.currentGitScope())&&!this.reuseGitScan())void this.gitStatus(true)
+        const scope=this.currentGitScope()
+        if((this.gitNeedsScan||this.gitScope!==scope)&&!this.reuseGitScan()&&!this.automaticGitScans.has(scope)){
+            this.automaticGitScans.add(scope)
+            void this.gitStatus(true)
+        }
     }
     gitStatus (background=false):Promise<void>{
         if(this.gitLoading)return this.gitScan??Promise.resolve()
@@ -1757,6 +1762,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     get watchUnavailable():string{return this.watchNotice}
     get snapshotUnavailable():string{return this.snapshotNotice}
     private async refreshWatchedGit():Promise<void>{
+        if(!this.repositories.length){this.gitChangedByWatch=false;return}
         const version=this.version,tab=this.activeTab,scope=this.gitScope
         const active=()=>version===this.version&&tab===this.activeTab&&scope===this.gitScope&&!this.gitLoading
         if(Date.now()-this.gitWatchLastRefresh<5000){this.workspaceChangePending=true;return}

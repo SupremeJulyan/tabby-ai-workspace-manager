@@ -1051,7 +1051,7 @@ test('Git discovery keeps cancellation controls without displaying a scanning an
     const template=load().TreeComponent.component.template
     assert.doesNotMatch(template,/正在扫描其余目录并读取状态|正在查找 Git 项目/)
     assert.match(template,/\(click\)="cancelGitScan\(\)"/)
-    assert.match(template,/\*ngIf="!gitLoading && !error && !gitNotice && !repositories.length"/)
+    assert.match(template,/\*ngIf="!gitLoading && !error && !repositories.length"/)
 })
 
 test('only manual refresh enables foreground indicators and stale requests cannot clear a newer refresh',async()=>{
@@ -2333,7 +2333,9 @@ test('deleting local Git metadata offers initialization and cloning without an S
         await tree.refresh();await tree.showGit();await tree.autoFetch;await tree.gitStatus()
         assert.equal(tree.canSetupGit,false)
         await fs.rm(join(root,'.git'),{recursive:true,force:true})
+        await fs.mkdir(join(root,'nested','deeper','unscanned'),{recursive:true})
         await tree.gitStatus()
+        assert.match(tree.gitNotice,/已限制扫描范围/)
         assert.equal(tree.repositories.length,0);assert.equal(tree.canSetupGit,true)
         tree.openGitSetup('clone');assert.equal(tree.gitSetupMode,'clone');tree.closeGitSetup()
         tree.openGitSetup('init')
@@ -2817,7 +2819,7 @@ test('entering a child reuses completed Git discovery and filters out ancestor r
         await tree.gitStatus();assert.equal(scans,2)
         assert.deepEqual(Array.from(tree.repositories,repository=>repository.root),[nested])
         await tree.up();await tree.gitScan
-        assert.equal(scans,3,'refreshing a child invalidates stale overlapping ancestor cache')
+        assert.equal(scans,2,'returning to a previously scanned directory does not rediscover automatically')
     }finally{tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
 })
 
@@ -3633,4 +3635,20 @@ test('saving a deleted remote file notifies and closes without offering overwrit
     assert.deepEqual(notices,[['远端文件路径不存在','deleted.sh']])
     assert.equal(editor.saving,false)
     editor.ngOnDestroy()
+})
+
+test('automatic Git discovery attempts each scope once, with manual retry available',async()=>{
+    const Tree=load().TreeComponent
+    let scans=0,scope='first'
+    const tree=Object.assign(Object.create(Tree.prototype),{
+        browserWorkspace:{},gitLoading:false,gitNeedsScan:true,automaticGitScans:new Set(),
+        currentGitScope:()=>scope,reuseGitScan:()=>false,gitStatus:async()=>{scans++}
+    })
+    tree.ensureGitScan()
+    tree.ensureGitScan()
+    assert.equal(scans,1,'failed automatic discovery must not loop on tree changes')
+    scope='second';tree.ensureGitScan()
+    assert.equal(scans,2,'a new directory gets its initial discovery')
+    await tree.gitStatus()
+    assert.equal(scans,3,'manual refresh can retry discovery')
 })

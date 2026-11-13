@@ -1,3 +1,4 @@
+import { registerRemoteFileLimit } from '../arw-tree/remote-file-limit'
 import { prepareWorkspaceRecovery } from '../shared/workspace-recovery'
 import { logOperation } from '../services/operation-log'
 import { registerPaneProportions } from '../shared/pane-proportions'
@@ -17,6 +18,7 @@ interface RestoredAiForwarding {id:string;release:()=>void}
 
 @Injectable()
 export class WorkspaceTerminalDecorator extends TerminalDecorator {
+    private unregisterRemoteFileLimit?:()=>void
     private unregisterPaneProportions?:()=>void
     private automaticTiling?:AutomaticAiTiling
     private closeButtons=new Map<BaseTerminalTabComponent<any>,()=>void>()
@@ -26,10 +28,11 @@ export class WorkspaceTerminalDecorator extends TerminalDecorator {
     constructor (private registry: WorkspaceRegistry, private platform?:PlatformService, private notifications?:NotificationsService, private app?:AppService, private config?:ConfigService, private recovery?:TabRecoveryService, private projects?:ProjectStore) {
         super()
         this.selectionSubscription=registry.selectionChanged.subscribe(({terminal,selection})=>this.restoreAiForwarding(terminal,selection))
+        if(app)this.unregisterRemoteFileLimit=registerRemoteFileLimit(app,()=>this.config?.store.omw?.remoteFileLimit)
         if(app)this.unregisterPaneProportions=registerPaneProportions(app,()=>this.config?.store.omw?.paneProportions)
         if(app?.tabsChanged$)this.automaticTiling=new AutomaticAiTiling(app,error=>logOperation('AI 终端自动平铺',{error:String(error)}))
     }
-    ngOnDestroy():void {this.selectionSubscription.unsubscribe();this.automaticTiling?.dispose();this.unregisterPaneProportions?.()}
+    ngOnDestroy():void {this.selectionSubscription.unsubscribe();this.automaticTiling?.dispose();this.unregisterPaneProportions?.();this.unregisterRemoteFileLimit?.()}
     private releaseAiForwarding(terminal:BaseTerminalTabComponent<any>):void {
         this.aiForwarding.get(terminal)?.release()
         this.aiForwarding.delete(terminal)

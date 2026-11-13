@@ -137,6 +137,8 @@ export const englishMessages: Record<string,string> = {
     "AI 终端布局": "AI terminal layout",
     "平铺": "Tiled",
     "叠放": "Stacked",
+    "最多打开的远程文件数": "Maximum open remote files",
+    "默认 10 个，超过后关闭最早打开的远程文件；未保存的修改会先确认。取消关闭时暂时保留超限文件。保存后在下次打开文件时生效。": "Defaults to 10. Opening more closes the oldest remote files, with confirmation for unsaved changes. Cancelling temporarily keeps files above the limit. Saved changes apply the next time a file is opened.",
     "标签页": "Tabs",
     "上一个窗格": "Previous pane",
     "下一个窗格": "Next pane",
