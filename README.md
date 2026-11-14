@@ -4,19 +4,20 @@
 
 在 Tabby 中管理本地、SSH 与 WSL 工作区，支持文件浏览与编辑、上传下载、内容预览、Git 操作和 AI 终端协作。
 
-插件：`tabby-ai-workspace-manager` · 版本：`0.2.0`
+插件：`tabby-ai-workspace-manager` · 版本：`0.2.1`
 
 ![界面预览](docs/images/demo.png)
+![界面预览 2](docs/images/demo2.png)
 
 ## 安装
 
 验证环境：Tabby 1.0.238、Node.js 22+、npm、Git。AI CLI 需另行安装并登录。
 
-1. 从 [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.2.0) 下载 `tabby-ai-workspace-manager-0.2.0.tgz`。
+1. 从 [GitHub Releases](https://github.com/SupremeJulyan/tabby-ai-workspace-manager/releases/tag/v0.2.1) 下载 `tabby-ai-workspace-manager-0.2.1.tgz`。
 2. 在 Tabby 中打开 **Settings → Plugins → Open Plugins Directory**，进入该目录执行：
 
    ```sh
-   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.2.0.tgz
+   npm install --omit=dev --legacy-peer-deps /absolute/path/to/tabby-ai-workspace-manager-0.2.1.tgz
    ```
 
 3. 完全退出并重新启动 Tabby。
