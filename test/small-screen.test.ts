@@ -38,7 +38,7 @@ test('three full-size layers switch without replacing sessions, follow new files
             assert.equal(area(split.root,file),1)
             assert.equal(source.hostView.rootNodes[0].classList.contains('arw-layer-hidden'),true)
         }
-        click(1);await tick()
+        click(0);await tick()
         assert.equal(area(split.root,source),1);assert.equal(area(split.root,file),0)
         assert.equal(file.hostView.rootNodes[0].classList.contains('arw-layer-hidden'),true)
         click(2);await tick()

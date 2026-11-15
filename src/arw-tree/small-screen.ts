@@ -3,7 +3,7 @@ import { tileWorkspacePanes } from '../arw-ai-cli/tiling'
 import { collapsedAiPanes } from '../arw-ai-cli/collapsed-panes'
 import { stackedHiddenPanes } from '../shared/pane-layout'
 import { workspaceHiddenPanes } from '../shared/workspace-pane-visibility'
-import { paneScreenLayer, registerSmallScreen, screenLayers, selectedScreenLayer, selectScreenLayer, type ScreenLayer } from '../shared/small-screen'
+import { paneScreenLayer, registerSmallScreen, selectedScreenLayer, selectScreenLayer, type ScreenLayer } from '../shared/small-screen'
 import { observeArwLocale, t } from '../shared/i18n'
 
 function paneHost(tab: BaseTabComponent): HTMLElement | undefined {
@@ -97,9 +97,10 @@ export class SmallScreenController {
         this.nav.hidden=!this.active
         this.empty.hidden=true
         if(!this.active)return
-        const labels=[t('文件与侧栏'),t('主终端'),t('AI 终端')]
+        const navLayers:ScreenLayer[]=['terminal','files','ai']
+        const labels=[t('主终端'),t('文件与侧栏'),t('AI 终端')]
         this.nav.setAttribute('aria-label',t('小屏模式'))
-        this.nav.replaceChildren(...screenLayers.map((layer,index)=>{
+        this.nav.replaceChildren(...navLayers.map((layer,index)=>{
             const button=document.createElement('button')
             button.type='button';button.textContent=labels[index]
             button.setAttribute('aria-pressed',String(this.layer===layer))
@@ -134,7 +135,7 @@ export class SmallScreenController {
 
 export const SMALL_SCREEN_STYLES=`
 .arw-layer-nav[hidden],.arw-layer-empty[hidden],.arw-layer-hidden{display:none!important}
-.arw-layer-nav{position:absolute;top:0;left:0;right:0;height:32px;display:flex;justify-content:center;gap:4px;z-index:25;background:var(--theme-bg,#23262d);border-bottom:1px solid #8883}
+.arw-layer-nav{position:absolute;top:0;left:0;right:0;height:32px;display:flex;justify-content:center;gap:4px;z-index:25;background:transparent;border-bottom:1px solid #8883}
 .arw-layer-nav button{font:inherit;font-size:12px;color:inherit;background:transparent;border:0;border-bottom:2px solid transparent;padding:3px 16px;cursor:pointer}
 .arw-layer-nav button[aria-pressed=true]{border-bottom-color:#73a9ed;background:#73a9ed18}
 .arw-layer-nav button:focus-visible{outline:2px solid #73a9ed;outline-offset:-2px}
