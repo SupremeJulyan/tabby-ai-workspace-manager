@@ -863,7 +863,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             catch (error) { if(tab===this.activeTab){this.error=t`工作区转发开启失败：${String(error)}`;this.render()}return }
             if (!this.projectStore.connection(project.id)) return
         }
-        if(tab!==this.activeTab||request!==this.projectSelectionRequest||this.switchingWorkspace||this.activeProject!==project.id)return
+        if(tab!==this.activeTab||request!==this.projectSelectionRequest||this.switchingWorkspace)return
         await this.ai.launchConfigured({ ...selection, workspace,terminalMode:this.terminalMode })
     }
     get visibleNodes (): TreeNode[] {
