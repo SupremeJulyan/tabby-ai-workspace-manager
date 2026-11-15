@@ -55,7 +55,7 @@ export class SidebarService {
             }
             Object.assign(host.style,{position:'absolute',left:'0',top:'0',bottom:'0',width:'var(--arw-sidebar-width,300px)',zIndex:'20'})
             const style=document.createElement('style')
-            style.textContent='.arw-tree-layout > .content-tab-active{margin-left:var(--arw-sidebar-width,300px)!important;width:calc(100% - var(--arw-sidebar-width,300px))!important}.arw-tree-resizer:hover,.arw-tree-resizer:focus{background:#73a9ed55!important}'+SPLIT_DIVIDER_STYLES+SCROLLBAR_STYLES+SMALL_SCREEN_STYLES
+            style.textContent='.arw-tree-layout,.arw-tree-layout > .content-tab-active{background:color-mix(in srgb,var(--theme-bg,#23262d) 70%,transparent)!important}.arw-tree-layout > .content-tab-active{margin-left:var(--arw-sidebar-width,300px)!important;width:calc(100% - var(--arw-sidebar-width,300px))!important}.arw-tree-resizer:hover,.arw-tree-resizer:focus{background:#73a9ed55!important}'+SPLIT_DIVIDER_STYLES+SCROLLBAR_STYLES+SMALL_SCREEN_STYLES
             host.append(style)
             content.classList.add('arw-tree-layout');content.prepend(host)
             this.container=content

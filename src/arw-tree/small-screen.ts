@@ -135,7 +135,9 @@ export class SmallScreenController {
 
 export const SMALL_SCREEN_STYLES=`
 .arw-layer-nav[hidden],.arw-layer-empty[hidden],.arw-layer-hidden{display:none!important}
-.arw-layer-nav{position:absolute;top:0;left:0;right:0;height:32px;display:flex;justify-content:center;gap:4px;z-index:25;background:transparent;border-bottom:1px solid #8883}
+.arw-layer-nav{position:absolute;top:0;left:0;right:0;height:32px;display:flex;justify-content:center;gap:4px;z-index:25;background:color-mix(in srgb,var(--theme-bg,#23262d) 70%,transparent);border-bottom:1px solid #8883}
+.arw-small-screen{background:color-mix(in srgb,var(--theme-bg,#23262d) 70%,transparent)!important}
+.arw-small-screen>.arw-tree-host,.arw-small-screen>.content-tab-active{background:color-mix(in srgb,var(--theme-bg,#23262d) 70%,transparent)!important}
 .arw-layer-nav button{font:inherit;font-size:12px;color:inherit;background:transparent;border:0;border-bottom:2px solid transparent;padding:3px 16px;cursor:pointer}
 .arw-layer-nav button[aria-pressed=true]{border-bottom-color:#73a9ed;background:#73a9ed18}
 .arw-layer-nav button:focus-visible{outline:2px solid #73a9ed;outline-offset:-2px}
