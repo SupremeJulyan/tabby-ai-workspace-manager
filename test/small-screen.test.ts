@@ -29,11 +29,23 @@ test('three full-size layers switch without replacing sessions, follow new files
     try{
         await tick()
         assert.equal(area(split.root,file),1);assert.equal(area(split.root,source),0)
+        // Native delete confirmations and context menus restore main-terminal focus.
+        // Keep the explorer visible, including when a confirmation is cancelled.
+        for(let i=0;i<2;i++){
+            split.focus(source);await tick()
+            assert.equal(selectedScreenLayer(split),'files')
+            assert.equal(controller.layer,'files')
+            assert.equal(area(split.root,file),1)
+            assert.equal(source.hostView.rootNodes[0].classList.contains('arw-layer-hidden'),true)
+        }
         click(1);await tick()
         assert.equal(area(split.root,source),1);assert.equal(area(split.root,file),0)
         assert.equal(file.hostView.rootNodes[0].classList.contains('arw-layer-hidden'),true)
         click(2);await tick()
         assert.equal(area(split.root,ai),1);assert.equal(focused,ai)
+        split.focus(source);await tick()
+        assert.equal(selectedScreenLayer(split),'ai')
+        assert.equal(area(split.root,ai),1)
         // Opening a file focuses its layer automatically.
         const next=make({arwFilePane:true});split.root.children.push(next);split.root.ratios.push(0)
         split.focus(next);changes.next();await tick()

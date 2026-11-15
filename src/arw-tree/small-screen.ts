@@ -49,7 +49,11 @@ export class SmallScreenController {
         if(this.current&&'focusChanged$' in this.current){
             this.focusSubscription=(this.current as SplitTabComponent).focusChanged$.subscribe(pane=>{
                 if(!this.active||this.arranging||!pane)return
-                selectScreenLayer(this.current!,paneScreenLayer(pane))
+                const layer=paneScreenLayer(pane)
+                // Tabby restores terminal focus after native menus and dialogs close.
+                // A hidden main terminal must not replace the user's selected view.
+                if(layer==='terminal'&&selectedScreenLayer(this.current!)!=='terminal')return
+                selectScreenLayer(this.current!,layer)
                 this.schedule()
             })
         }
