@@ -135,10 +135,17 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const title=`${this.dirty||this.saveIssue?'● ':''}${this.isDiff?'Diff':this.readonly?'Read-only':this.waitingForConnection?'Waiting':'Edit'} · ${this.filePath}`
         if(this.title!==title)this.setTitle(title)
     }
+    updateDiff(patch:string):void {
+        const changed=this.diffPatch!==patch
+        this.diffPatch=patch;this.readonly=true;this.error=''
+        if(changed)this.activeHunk=-1
+        try{this.diff=parseDiff(patch)}
+        catch(error){this.diff=undefined;this.error=String(error)}
+    }
     async ngOnInit (): Promise<void> {
         this.setTitle(`${this.isDiff?'Diff':this.readonly?'Read-only':'Edit'} · ${this.filePath}`)
         try {
-            if (this.isDiff) { this.readonly=true; this.diff=parseDiff(this.diffPatch!); return }
+            if (this.isDiff) { this.updateDiff(this.diffPatch!); return }
             this.workspace=await resolveFileWorkspace(this.workspace,this.recoveryController.signal)
             if(this.recoveredEdit){Object.assign(this,this.recoveredEdit);return}
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }

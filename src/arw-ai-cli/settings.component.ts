@@ -18,6 +18,7 @@ import type { AgentShell } from './shell'
     template: `<div class="settings-page"><header><h3>AI Workspace Manager</h3>
       <p>{{ '配置工作区使用的本机 AI CLI、会话参数与代理。' | arwTranslate }}</p></header>
       <section class="settings-section"><h4>{{ '布局' | arwTranslate }}</h4>
+        <div class="form-group"><label class="small-screen-toggle" for="arw-small-screen"><input id="arw-small-screen" type="checkbox" [(ngModel)]="smallScreen"> {{ '小屏模式' | arwTranslate }}</label><small>{{ '左侧栏与文件、主终端、AI 终端分为三层，每层占满内容区。点击顶部三个按钮切换，保存后立即生效。' | arwTranslate }}</small></div>
         <div class="form-group"><label for="arw-file-layout">{{ '打开文件' | arwTranslate }}</label>
           <select id="arw-file-layout" class="form-control" [(ngModel)]="fileLayout"><option value="tiled">{{ '平铺' | arwTranslate }}</option><option value="stacked">{{ '叠放' | arwTranslate }}</option></select></div>
         <div class="form-group"><label for="arw-ai-layout">{{ 'AI 终端布局' | arwTranslate }}</label>
@@ -47,6 +48,7 @@ import type { AgentShell } from './shell'
       <span *ngIf="saved" role="status">{{ '已保存' | arwTranslate }}</span></div></div>`,
     styles: [`
       :host{display:block;color:inherit}
+      .small-screen-toggle{display:flex;align-items:center;gap:8px}
       .settings-page{max-width:920px;padding:8px 0 28px}
       header{margin-bottom:26px}h3{font-size:24px;font-weight:500;margin:0 0 10px}header p{font-size:13px;line-height:1.7;opacity:.65;margin:0}
       .settings-section{padding:20px;margin-bottom:18px;border:1px solid #8883;border-radius:10px;background:#88888806;min-width:0}
@@ -75,6 +77,7 @@ export class ArwSettingsComponent {
     set fileHeight(value:number) {const height=panePercentage(value,this.fileHeight);this.proportions.fileHeight=height;this.proportions.terminalHeight=100-height}
     get terminalHeight():number {return this.proportions.terminalHeight}
     set terminalHeight(value:number) {const height=panePercentage(value,this.terminalHeight);this.proportions.terminalHeight=height;this.proportions.fileHeight=100-height}
+    smallScreen=false
     remoteFileLimit=10
     fileLayout: PaneLayout
     aiLayout: PaneLayout
@@ -88,6 +91,7 @@ export class ArwSettingsComponent {
     saved = false
     error = ''
     constructor (private config: ConfigService, private profiles: ProfilesService) {
+        this.smallScreen=config.store.omw?.smallScreen===true
         this.proportions=paneProportions(config.store.omw?.paneProportions)
         const agent = config.store.omw?.agent
         this.shellId=typeof agent?.shell?.id==='string'?agent.shell.id:''
@@ -120,6 +124,7 @@ export class ArwSettingsComponent {
             this.config.store.omw ??= {}
             this.config.store.omw.paneProportions ??= {}
             Object.assign(this.config.store.omw.paneProportions,this.proportions)
+            this.config.store.omw.smallScreen=this.smallScreen
             this.config.store.omw.remoteFileLimit=remoteFileLimit(this.remoteFileLimit)
             this.config.store.omw.fileLayout=this.fileLayout
             this.config.store.omw.aiLayout=this.aiLayout

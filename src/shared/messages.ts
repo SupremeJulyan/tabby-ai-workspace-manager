@@ -1,5 +1,13 @@
 /** English translations keyed by the original Chinese UI text. */
 export const englishMessages: Record<string,string> = {
+    "暂无 AI 终端": "No AI terminals yet",
+    "暂无主终端": "No terminals yet",
+    "小屏模式": "Small screen mode",
+    "文件与侧栏": "Files & sidebar",
+    "主终端": "Terminal",
+    "AI 终端": "AI terminals",
+    "左侧栏与文件、主终端、AI 终端分为三层，每层占满内容区。点击顶部三个按钮切换，保存后立即生效。": "Files and sidebar, terminal, and AI terminals occupy three full-size layers. Use the three top buttons to switch. Applies immediately after saving.",
+
     "Tabby 尚未提供终端当前目录，请启用 Tabby 的路径检测后重试。": "Tabby has not reported the terminal directory. Enable Tabby path detection and retry.",
     "使用 Tabby 提供的终端目录；尚无路径时，请启用 Tabby 的路径检测。": "Uses the directory provided by Tabby. Enable Tabby path detection if no path is available.",
     "连接成功，等待终端目录": "Connected, waiting for terminal directory",

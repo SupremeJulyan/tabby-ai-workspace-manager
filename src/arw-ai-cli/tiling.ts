@@ -1,3 +1,4 @@
+import { smallScreenEnabled, selectedScreenLayer } from '../shared/small-screen'
 import { updateWorkspaceVisibility, workspaceHiddenPanes } from '../shared/workspace-pane-visibility'
 import { workspacePaneProportions } from '../shared/pane-proportions'
 import { stackedGroup, stackedHiddenPanes, selectedStackedPane, selectStackedPane } from '../shared/pane-layout'
@@ -18,7 +19,7 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     const hidden=tabs.filter(tab=>workspaceHiddenPanes.has(tab))
     const ai=orderedAiPanes(split,tabs.filter(tab=>isAiPane(tab)&&!workspaceHiddenPanes.has(tab)))
     const files=orderedFilePanes(split,tabs.filter(tab=>isFilePane(tab)&&!workspaceHiddenPanes.has(tab)))
-    if(!hidden.length&&files.length===0&&ai.length<(allowSingle?1:2))return false
+    if(!smallScreenEnabled(app)&&!hidden.length&&files.length===0&&ai.length<(allowSingle?1:2))return false
     const Constructor=split.root.constructor as new()=>SplitContainer,managed=new Set<BaseTabComponent>([...ai,...files,...hidden])
     const container=(orientation:'h'|'v',children:(BaseTabComponent|SplitContainer)[],ratios=children.map(()=>1/children.length))=>{
         const result=new Constructor();result.orientation=orientation;result.children=children;result.ratios=ratios;return result
@@ -54,6 +55,13 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     const proportions=workspacePaneProportions(app)
     const workspace=fileGrid&&others?container('v',[fileGrid,others],[proportions.fileHeight/100,proportions.terminalHeight/100]):fileGrid??others
     let root=workspace&&aiGrid?container('h',[workspace,aiGrid],[proportions.workspaceWidth/100,proportions.aiWidth/100]):workspace??aiGrid
+    if(smallScreenEnabled(app)){
+        const layer=selectedScreenLayer(split)
+        const groups=[{node:fileGrid,layer:'files'},{node:others,layer:'terminal'},{node:aiGrid,layer:'ai'}].filter(item=>item.node)
+        // Keep a finite fallback ratio for empty layers; the controller hides their hosts.
+        const hasLayer=groups.some(item=>item.layer===layer)
+        root=container('h',groups.map(item=>item.node!),groups.map((item,index)=>item.layer===layer||(!hasLayer&&index===0)?1:0))
+    }
     if(root&&hidden.length)root=container('h',[root,...hidden],[1,...hidden.map(()=>0)])
     if(!root)return false
     const focused=split.getFocusedTab()

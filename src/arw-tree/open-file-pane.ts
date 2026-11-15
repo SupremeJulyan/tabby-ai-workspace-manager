@@ -34,7 +34,12 @@ function highlightPane(tab:BaseTabComponent):void {
 }
 
 function sameFile(pane:any,inputs:any,type:any):boolean {
-    if(!isFilePane(pane)||!(pane instanceof type)||!inputs?.workspace||typeof inputs.filePath!=='string'||pane.isDiff||pane.readonly||inputs.diffPatch!==undefined||inputs.readonly)return false
+    if(!isFilePane(pane)||!(pane instanceof type)||!inputs?.workspace||typeof inputs.filePath!=='string')return false
+    const diff=inputs.diffPatch!==undefined
+    if((pane.diffPatch!==undefined)!==diff)return false
+    if(diff){
+        if(Boolean(pane.diffStaged)!==Boolean(inputs.diffStaged)||pane.diffLabel!==inputs.diffLabel||pane.diffDescription!==inputs.diffDescription)return false
+    }else if(pane.readonly||inputs.readonly)return false
     const left=pane.workspace as Workspace,right=inputs.workspace as Workspace
     if(!left||typeof pane.filePath!=='string')return false
     if(left.kind!==right.kind)return false
@@ -70,6 +75,10 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
     if(anchor!==split&&app.tabs.includes(anchor))app.removeTab(anchor)
     const existing=split.getAllTabs().find(pane=>sameFile(pane,params.inputs,params.type)) as T|undefined
     if(existing){
+        if(params.inputs?.diffPatch!==undefined){
+            const diff=existing as T & {updateDiff(patch:string):void}
+            diff.updateDiff(params.inputs.diffPatch)
+        }
         selectFileWorkspace(split,existing)
         collapsedAiPanes.delete(existing)
         app.selectTab(split)

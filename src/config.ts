@@ -8,6 +8,7 @@ export class ArwConfigProvider extends ConfigProvider {
     defaults = {
         omw: {
             fileLayout: 'stacked',
+            smallScreen: false,
             remoteFileLimit: 10,
             aiLayout: 'tiled',
             paneProportions: {...DEFAULT_PANE_PROPORTIONS},

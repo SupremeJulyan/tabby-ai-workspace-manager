@@ -1,3 +1,4 @@
+import { SmallScreenController, SMALL_SCREEN_STYLES } from './small-screen'
 import { SCROLLBAR_STYLES } from '../shared/scrollbar-styles'
 import { SPLIT_DIVIDER_STYLES } from '../shared/split-divider-styles'
 import { t } from '../shared/i18n'
@@ -11,6 +12,7 @@ import { ArwPreviewComponent } from './preview.component'
 /** Owns the single host DOM insertion point; feature components use Angular. */
 @Injectable()
 export class SidebarService {
+    private smallScreen?:SmallScreenController
     private component?: ComponentRef<ArwTreeComponent>
     private host?: HTMLElement
     private container?: HTMLElement
@@ -53,7 +55,7 @@ export class SidebarService {
             }
             Object.assign(host.style,{position:'absolute',left:'0',top:'0',bottom:'0',width:'var(--arw-sidebar-width,300px)',zIndex:'20'})
             const style=document.createElement('style')
-            style.textContent='.arw-tree-layout > .content-tab-active{margin-left:var(--arw-sidebar-width,300px)!important;width:calc(100% - var(--arw-sidebar-width,300px))!important}.arw-tree-resizer:hover,.arw-tree-resizer:focus{background:#73a9ed55!important}'+SPLIT_DIVIDER_STYLES+SCROLLBAR_STYLES
+            style.textContent='.arw-tree-layout > .content-tab-active{margin-left:var(--arw-sidebar-width,300px)!important;width:calc(100% - var(--arw-sidebar-width,300px))!important}.arw-tree-resizer:hover,.arw-tree-resizer:focus{background:#73a9ed55!important}'+SPLIT_DIVIDER_STYLES+SCROLLBAR_STYLES+SMALL_SCREEN_STYLES
             host.append(style)
             content.classList.add('arw-tree-layout');content.prepend(host)
             this.container=content
@@ -89,6 +91,7 @@ export class SidebarService {
                 event.preventDefault();update(width+(event.key==='ArrowRight'?10:-10));save()
             }
             host.append(resize)
+            this.smallScreen=new SmallScreenController(this.app,this.config,content,()=>this.updateVisibility())
             this.updateVisibility()
         })
     }
@@ -96,6 +99,11 @@ export class SidebarService {
         const terminal=this.config?.store?.terminal
         applyArwFont(this.host,terminal)
         applyArwFont(document.documentElement,terminal)
+    }
+    ngOnDestroy():void {
+        this.smallScreen?.dispose()
+        this.focusSubscription?.unsubscribe()
+        this.subscriptions.forEach(subscription=>subscription.unsubscribe())
     }
     toggle ():void {
         this.visible=!this.visible
@@ -109,8 +117,11 @@ export class SidebarService {
         const hasSource=panes.some((pane:any)=>pane?.profile && !pane.profile.options?.env?.ARW_WORKSPACE_ROOT)
         const fileOnly=panes.every((pane:any)=>pane instanceof ArwEditorComponent||pane instanceof ArwPreviewComponent)
         const aiOnly=panes.every((pane:any)=>Boolean(pane?.profile?.options?.env?.ARW_WORKSPACE_ROOT))
-        const visible=this.visible&&(hasSource||(!fileOnly&&!aiOnly))
-        if(this.host)this.host.style.display=visible?'':'none'
+        const visible=this.smallScreen?.active?this.smallScreen.layer==='files':this.visible&&(hasSource||(!fileOnly&&!aiOnly))
+        if(this.host){
+            this.host.style.display=visible?'':'none'
+            this.host.style.width=this.smallScreen?.active&&fileOnly===false&&!panes.some((pane:any)=>pane?.arwFilePane)?'100%':'var(--arw-sidebar-width,300px)'
+        }
         this.container?.classList.toggle('arw-tree-layout',visible)
     }
     private watchActiveTab():void {
