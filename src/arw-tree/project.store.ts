@@ -19,7 +19,7 @@ import { localWorkspace } from './workspace'
 import type { SSHSession } from '../adapters/ssh-compat'
 import { leafName, workspaceNames } from '../shared/workspace-name'
 
-export interface ArwProject { id:string; name:string; root:string }
+export interface ArwProject { id:string; name:string; root:string; agentId?:string }
 
 export interface ProjectForwardingState {phase:'saved'|'starting'|'forwarding'|'error';logs:readonly string[]}
 
@@ -256,6 +256,15 @@ export class ProjectStore {
         await this.config.save()
         await this.syncCatalog()
         return project
+    }
+    async setAgent (workspace:Workspace,projectId:string,agentId:string):Promise<void> {
+        const projects=this.store.projects
+        if(!projects)throw new Error(t('工作区不存在'))
+        const key=this.key(workspace),current=projects[key]??[]
+        if(!current.some(project=>project.id===projectId))throw new Error(t('工作区不存在'))
+        this.store.projects={...projects,[key]:current.map(project=>project.id===projectId?{...project,agentId}:project)}
+        await this.config.save()
+        this.changed.next()
     }
     async remove (workspace: Workspace, project: ArwProject): Promise<void> {
         const projects = this.store.projects

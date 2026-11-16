@@ -38,6 +38,7 @@ import { workspaceNames } from '../shared/workspace-name'
 import { activateWorkspacePanes } from '../shared/activate-workspace-panes'
 import { fileWorkspaceToken } from './file-recovery'
 import { ArwProject, ProjectStore } from './project.store'
+import { aiName, configuredAiCommands } from '../arw-ai-cli/ai-command'
 
 import { TREE_TEMPLATE, TREE_STYLES } from './tree.view'
 import { addedFilePatch, commitFileDiffs, CommitFileDiff } from './git/diff-model'
@@ -761,7 +762,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private loadProjects (workspace?: Workspace): void {
         const root=this.browserWorkspace?this.breadcrumb:workspace?.root
         this.projects = this.terminalMode
-            ? root ? [{id:'terminal',name:root,root}] : []
+            ? root ? [{id:'terminal',name:root,root,agentId:configuredAiCommands(this.config?.store.omw)[0]?.id}] : []
             : workspace && this.projectStore ? this.projectStore.list(this.projectContext(workspace)) : []
         const names=workspaceNames(this.projects.map(project=>({kind:workspace?.kind??'local',root:project.root})),false)
         this.projects=this.projects.map((project,index)=>({...project,name:names[index]}))
@@ -770,6 +771,31 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     private restoreProjectForwarding():void {
         // Remote forwarding is acquired by AI terminals, not by browsing a workspace.
+    }
+    get aiAgents (): ReturnType<typeof configuredAiCommands> {
+        return configuredAiCommands(this.config?.store.omw)
+    }
+    projectAgentId (project:ArwProject):string {
+        const agents=this.aiAgents
+        return project.agentId&&agents.some(agent=>agent.id===project.agentId)
+            ?project.agentId
+            :agents[0]?.id??''
+    }
+    aiAgentName (command:string):string {
+        try{return aiName(command)}catch{return ''}
+    }
+    hasProjectAgent (project:ArwProject):boolean {
+        return Boolean(this.projectAgentId(project))
+    }
+    async selectProjectAgent (project:ArwProject,agentId:string):Promise<void> {
+        if(this.switchingWorkspace||this.terminalMode||!this.projectStore||!this.selection?.workspace)return
+        try{
+            await this.projectStore.setAgent(this.projectContext(this.selection.workspace),project.id,agentId)
+            project.agentId=agentId
+            this.projects=this.projects.map(candidate=>candidate.id===project.id?{...candidate,agentId}:candidate)
+            this.error=''
+        }catch(error){this.error=String(error)}
+        this.render()
     }
     get currentFolder (): string { return this.breadcrumb }
     async addProject (root?: string): Promise<void> {
@@ -854,6 +880,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     async launchProject (project: ArwProject, event?: Event): Promise<void> {
         event?.stopPropagation()
         if(this.switchingWorkspace||this.activeProject!==project.id)return
+        const selectedAgentId=this.projectAgentId(project)||undefined
+        if(!selectedAgentId||!this.aiAgents.some(agent=>agent.id===selectedAgentId)){
+            this.error=t('请先为此工作区选择 AI');this.render();return
+        }
         const workspace = this.savedWorkspace(project)
         if (!workspace) return
         const tab=this.activeTab,request=this.projectSelectionRequest,selection=this.selection
@@ -864,7 +894,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if (!this.projectStore.connection(project.id)) return
         }
         if(tab!==this.activeTab||request!==this.projectSelectionRequest||this.switchingWorkspace)return
-        await this.ai.launchConfigured({ ...selection, workspace,terminalMode:this.terminalMode })
+        await this.ai.launchConfigured({ ...selection, workspace,terminalMode:this.terminalMode },selectedAgentId)
     }
     get visibleNodes (): TreeNode[] {
         const query=this.filterText.trim().toLocaleLowerCase()

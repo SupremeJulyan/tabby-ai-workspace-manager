@@ -434,6 +434,9 @@ test('built CommonJS plugin exposes a default NgModule and DI metadata', () => {
     assert.match(template, /aria-controls="arw-saved-workspaces"/)
     assert.match(template, /class="brand-title">.*AI Remote Workspace/)
     assert.match(template, /class="workspace-icon"/)
+    assert.match(template, /button \*ngIf="activeProject===project.id" class="project-ai"/)
+    assert.match(template, /class="project-agent" \[value\]="projectAgentId\(project\)"/)
+    assert.match(template, /\[selected\]="projectAgentId\(project\)===agent\.id"/)
     assert.doesNotMatch(template, /tileAi\(\)|fa-th-large/)
     assert.doesNotMatch(template, /workspace-parent|ARW <small>/)
     new plugin.default({ error() {} },{install(){}},{getLocale:()=> 'zh-CN',localeChanged$:{subscribe:()=>({unsubscribe(){}})}})
@@ -441,7 +444,7 @@ test('built CommonJS plugin exposes a default NgModule and DI metadata', () => {
     assert.equal(plugin.WorkspacesService['design:paramtypes'].length, 3)
     assert.equal(plugin.ArwContextMenuProvider['design:paramtypes'][0], plugin.WorkspacesService)
     const configProvider=plugin.default.ngModule.providers.find(entry=>entry.provide===ConfigProvider)
-    assert.equal(new configProvider.useClass().defaults.omw.agent.command,'codex')
+    assert.equal('agents' in new configProvider.useClass().defaults.omw,false)
 })
 
 test('workspace tree saves the browsed root and opens files and AI against the saved directory', async()=>{
@@ -450,7 +453,7 @@ test('workspace tree saves the browsed root and opens files and AI against the s
     const {tmpdir}=await import('node:os')
     const {join}=await import('node:path')
     const root=await mkdtemp(join(tmpdir(),'arw-project-tree-'))
-    const plugin=load(), config={store:{omw:{}},async save(){}},opened=[],launched=[]
+    const plugin=load(), config={store:{omw:{agents:[{id:'codex',command:'codex --no-daemon',resumeCommand:'',proxyUrl:''}]}},async save(){}},opened=[],launched=[]
     let persistedProjects={}
     Object.defineProperty(config.store.omw,'projects',{
         get:()=>JSON.parse(JSON.stringify(persistedProjects)),
@@ -463,7 +466,7 @@ test('workspace tree saves the browsed root and opens files and AI against the s
     const notices=[]
     const terminal={session:{open:true},sendInput(value){this.lastInput=value}}, current=new BehaviorSubject({terminal,workspace:localWorkspace(root),hint:''})
     let contextMenu
-    const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(message){notices.push(message)}},{},{},{launchConfigured:async value=>launched.push(value)},{popupContextMenu(items){contextMenu=items}},store)
+    const tree=new plugin.TreeComponent({current},{openNewTab:value=>opened.push(value)},{info(message){notices.push(message)}},{},{},{launchConfigured:async value=>launched.push(value)},{popupContextMenu(items){contextMenu=items}},store,undefined,config)
     try {
         await mkdir(join(root,'src'));await writeFile(join(root,'src/main.ts'),'main')
         await tree.refresh()
@@ -491,6 +494,9 @@ test('workspace tree saves the browsed root and opens files and AI against the s
         const project=tree.projects[0]
         assert.equal(store.connection(project.id),undefined)
         assert.equal(project.root,join(root,'src'))
+        await tree.selectProjectAgent(project,'codex')
+        assert.equal(project.agentId,'codex')
+        assert.equal(store.list(localWorkspace(root))[0].agentId,'codex')
         await tree.addProject();assert.equal(tree.projects.length,1)
         await tree.selectProject(project)
         assert.equal(tree.workspaceSwitchNotice,'','successful synchronization clears the inline notice')
@@ -510,27 +516,22 @@ test('workspace tree saves the browsed root and opens files and AI against the s
     } finally {tree.ngOnDestroy();await rm(root,{recursive:true,force:true})}
 })
 
-test('ARW settings tab persists the executable and separate CLI arguments',async()=>{
-    const plugin=load(),config={store:{omw:{agent:{command:'codex',args:[]}}},saves:0,async save(){this.saves++}}
-    const agent=config.store.omw.agent
-    Object.defineProperty(config.store.omw,'agent',{get:()=>agent})
+test('ARW settings persist multiple startup, recovery, and proxy commands',async()=>{
+    const plugin=load(),config={store:{omw:{agents:[{id:'codex',command:'codex --no-daemon',resumeCommand:'codex resume --last',proxyUrl:''}]}},saves:0,async save(){this.saves++}}
     const proportions={workspaceWidth:50,aiWidth:50,fileHeight:60,terminalHeight:40}
     Object.defineProperty(config.store.omw,'paneProportions',{enumerable:true,get:()=>proportions})
     const provider=plugin.default.ngModule.providers.find(entry=>entry.provide===SettingsTabProvider)
-    const shell={id:'local:default',name:'Bash',type:'local',isBuiltin:true,options:{command:'/bin/bash',args:['--login'],env:{LANG:'C.UTF-8'},shellType:'unix'}}
-    const profiles={async getProfiles(){return [shell]}}
-    const settings=new (new provider.useClass().getComponentType())(config,profiles)
+    const settings=new (new provider.useClass().getComponentType())(config)
     const defaultConfig={store:{omw:{}},async save(){}}
-    const defaultSettings=new (new provider.useClass().getComponentType())(defaultConfig,profiles)
-    await new Promise(resolve=>setImmediate(resolve))
-    assert.equal(defaultSettings.shellId,'local:default')
+    const defaultSettings=new (new provider.useClass().getComponentType())(defaultConfig)
+    assert.equal(defaultSettings.agents.length,2)
+    assert.equal(defaultSettings.agents[0].command,'codex --sandbox danger-full-access --ask-for-approval on-request')
+    assert.equal(defaultSettings.agents[0].resumeCommand,'codex resume --last --sandbox danger-full-access --ask-for-approval on-request')
+    assert.equal(defaultSettings.agents[1].command,'claude --dangerously-skip-permissions')
+    assert.equal(defaultSettings.agents[1].resumeCommand,'claude --continue --dangerously-skip-permissions')
     await defaultSettings.save()
-    assert.equal(defaultConfig.store.omw.agent.shell.command,'/bin/bash')
-    settings.shellId='local:default'
-    assert.equal(defaultSettings.command,'codex')
-    assert.equal(defaultSettings.argumentsText,'--sandbox\ndanger-full-access\n--ask-for-approval\non-request')
-    assert.equal(defaultSettings.proxyUrl,'')
-    assert.equal(defaultSettings.resumeArgumentsText,'resume\n--last')
+    assert.equal(defaultConfig.store.omw.agents.length,2)
+    assert.equal(defaultConfig.store.omw.agentsConfigured,true)
     assert.equal(defaultSettings.fileLayout,'stacked')
     assert.equal(defaultSettings.aiLayout,'tiled')
     assert.equal(defaultSettings.workspaceWidth,50);assert.equal(defaultSettings.aiWidth,50)
@@ -542,28 +543,55 @@ test('ARW settings tab persists the executable and separate CLI arguments',async
     settings.workspaceWidth=0;settings.fileHeight=NaN
     assert.equal(settings.workspaceWidth,65);assert.equal(settings.fileHeight,70)
     settings.fileLayout='stacked';settings.aiLayout='stacked'
-    settings.proxyUrl=' http://127.0.0.1:7897 '
-    settings.resumeArgumentsText=' --resume \r\n session-id\n --model\n recovery-model '
-    settings.command=' /bin/bash ';settings.argumentsText='--noprofile \r\n --norc\n  \nargument with spaces '
+    settings.agents[0].proxyUrl=' http://127.0.0.1:7897 '
+    settings.agents[0].resumeCommand=' "/opt/Codex CLI/codex" resume --last --model recovery-model '
+    settings.agents[0].command=' "/opt/Codex CLI/codex" --no-daemon '
+    settings.addAi()
+    settings.agents[1].command='claude --continue'
     await settings.save()
-    assert.equal(config.store.omw.agent.command,'/bin/bash')
-    assert.deepEqual(JSON.parse(JSON.stringify(config.store.omw.agent.shell)),{id:'local:default',name:'Bash',command:'/bin/bash',args:['--login'],env:{LANG:'C.UTF-8'},shellType:'unix'})
+    assert.deepEqual(JSON.parse(JSON.stringify(config.store.omw.agents.map(agent=>({
+        command:agent.command,resumeCommand:agent.resumeCommand,proxyUrl:agent.proxyUrl,
+    })))),[
+        {command:'"/opt/Codex CLI/codex" --no-daemon',resumeCommand:'"/opt/Codex CLI/codex" resume --last --model recovery-model',proxyUrl:'http://127.0.0.1:7897'},
+        {command:'claude --continue',resumeCommand:'',proxyUrl:''},
+    ])
+    assert.equal('agent' in config.store.omw,false)
     assert.deepEqual(JSON.parse(JSON.stringify(config.store.omw.paneProportions)),{workspaceWidth:65,aiWidth:35,fileHeight:70,terminalHeight:30})
     assert.equal(config.store.omw.fileLayout,'stacked')
     assert.equal(config.store.omw.aiLayout,'stacked')
-    assert.equal(config.store.omw.agent.proxyUrl,'http://127.0.0.1:7897')
-    assert.deepEqual(Array.from(config.store.omw.agent.args),['--noprofile','--norc','argument with spaces'])
-    assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),['--resume','session-id','--model','recovery-model'])
     assert.equal(config.saves,1);assert.equal(settings.saved,true)
     assert.equal(config.store.omw.paneProportions,proportions)
     assert.equal(settings.error,'')
-    const reopened=new (new provider.useClass().getComponentType())(config,profiles)
+    const reopened=new (new provider.useClass().getComponentType())(config)
     assert.equal(reopened.workspaceWidth,65);assert.equal(reopened.aiWidth,35);assert.equal(reopened.fileHeight,70);assert.equal(reopened.terminalHeight,30)
     assert.equal(reopened.fileLayout,'stacked');assert.equal(reopened.aiLayout,'stacked')
-    settings.resumeArgumentsText='';settings.fileLayout='tiled';settings.aiLayout='stacked';await settings.save()
+    settings.agents[0].resumeCommand='';settings.fileLayout='tiled';settings.aiLayout='stacked';await settings.save()
     assert.equal(config.store.omw.fileLayout,'tiled')
     assert.equal(config.store.omw.aiLayout,'stacked')
-    assert.deepEqual(Array.from(config.store.omw.agent.resumeArgs),[])
+    assert.equal(config.store.omw.agents[0].resumeCommand,'')
+})
+
+test('AI launch passes a PATH command and recovery command as distinct argument arrays',async()=>{
+    const plugin=load(),closed=new (await import('rxjs')).Subject(),config={store:{omw:{agents:[
+        {id:'codex-entry',command:'codex --no-daemon',resumeCommand:'codex resume --last',proxyUrl:'http://127.0.0.1:7897'},
+    ]}}}
+    let profile
+    const profiles={
+        async getProfiles(){return [{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{}}}]},
+        async openNewTabForProfile(value){profile=value;return {destroyed$:closed}},
+    }
+    const launcher=new plugin.AiLauncherService(profiles,{pin(){}},{error(message,detail){throw Error(message+detail)}},
+        config,{}, {})
+    const {localWorkspace}=require('../.build/arw-tree/workspace.js')
+    const root=await (await import('node:fs/promises')).mkdtemp((await import('node:path')).join((await import('node:os')).tmpdir(),'arw-ai-command-'))
+    try{
+        await launcher.launchConfigured({terminal:{},workspace:localWorkspace(root),hint:''},'codex-entry')
+        assert.equal(profile.options.env.ARW_AGENT_COMMAND,'codex')
+        assert.deepEqual(JSON.parse(profile.options.env.ARW_AGENT_ARGS),['--no-daemon'])
+        assert.deepEqual(JSON.parse(profile.options.env.ARW_AGENT_RESUME_COMMAND),['codex','resume','--last'])
+        assert.equal(profile.options.env.http_proxy,'http://127.0.0.1:7897')
+        closed.next()
+    }finally{await (await import('node:fs/promises')).rm(root,{recursive:true,force:true})}
 })
 
 const failureText=(notices)=>notices.map(entry=>entry.join(': ')).join('\n')
@@ -590,15 +618,16 @@ for (const savedShell of [true,false]) test(`AI launch resolves the executable i
 
 test('saved remote workspaces are isolated by SSH identity and AI uses the saved absolute root',async()=>{
     const {BehaviorSubject,Subject}=await import('rxjs')
-    const plugin=load(),config={store:{omw:{}},async save(){}},launched=[]
+    const plugin=load(),config={store:{omw:{agents:[{id:'codex',command:'codex',resumeCommand:'',proxyUrl:''}]}},async save(){}},launched=[]
     const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory(config)
     const remote={open:true,authUsername:'alice',profile:{options:{host:'host',port:22}},ref(){},unref(){},willDestroy$:new Subject()}
     const workspace={id:'remote',kind:'remote',host:'host',root:'/home/alice',label:'alice@host:/home/alice',list:async()=>[]}
     const current=new BehaviorSubject({terminal:{},workspace,remote,hint:''})
-    const tree=new plugin.TreeComponent({current},{},{info(){}},{disable:async()=>{}},{},{launchConfigured:async value=>launched.push(value)},{},store)
+    const tree=new plugin.TreeComponent({current},{},{info(){}},{disable:async()=>{}},{},{launchConfigured:async value=>launched.push(value)},{},store,undefined,config)
     try {
         await tree.refresh();await tree.addProject()
         assert.equal(tree.projects[0].root,'/home/alice')
+        await tree.selectProjectAgent(tree.projects[0],'codex')
         await tree.launchProject(tree.projects[0])
         assert.equal(launched[0].workspace.root,'/home/alice')
         assert.equal(launched[0].remote,remote)
@@ -1691,7 +1720,7 @@ test('terminal mode synchronizes its source once; refresh preserves the selected
     const {tmpdir}=await import('node:os'),{join}=await import('node:path')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
     const root=await mkdtemp(join(tmpdir(),'arw-terminal-mode-'))
-    const plugin=load(),config={store:{omw:{}},async save(){}},notices=[],launched=[]
+    const plugin=load(),config={store:{omw:{agents:[{id:'codex',command:'codex',resumeCommand:'',proxyUrl:''}]}},async save(){}},notices=[],launched=[]
     const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory(config)
     let pwd=root,pwdReads=0
     const terminal=new SSHTabComponent()
@@ -1709,7 +1738,7 @@ test('terminal mode synchronizes its source once; refresh preserves the selected
     terminal.session={open:true,getWorkingDirectory:async()=>{pwdReads++;return pwd}}
     const workspace={...localWorkspace(root),kind:'remote',host:'fixture'}
     const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},
-        {openNewTab(){}},{info(message){notices.push(message)}},{async disable(){}},{},{launchConfigured:async selection=>launched.push(selection)},{},store)
+        {openNewTab(){}},{info(message){notices.push(message)}},{async disable(){}},{},{launchConfigured:async selection=>launched.push(selection)},{},store,undefined,config)
     tree.selection={terminal,remote,workspace,hint:''}
     tree.ensureGitScan=()=>{}
     try{
@@ -2836,14 +2865,29 @@ test('incomplete Git discovery is reused only at its exact root, with directory 
     workspace.root='/A/B';workspace.host='another-host';assert.equal(tree.reuseGitScan(),false)
 })
 
+test('unassigned workspaces use the first configured AI without persisting a selection',()=>{
+    const plugin=load(),project={id:'project',root:'/project'}
+    const configured=Object.assign(Object.create(plugin.TreeComponent.prototype),{
+        config:{store:{omw:{agents:[
+            {id:'custom-ai',command:'my-agent',resumeCommand:'',proxyUrl:''},
+            {id:'codex',command:'codex',resumeCommand:'',proxyUrl:''},
+        ]}}},
+    })
+    assert.equal(configured.projectAgentId(project),'custom-ai')
+    assert.equal(configured.hasProjectAgent(project),true)
+    assert.equal(project.agentId,undefined)
+    const defaultTree=Object.assign(Object.create(plugin.TreeComponent.prototype),{config:{store:{omw:{}}}})
+    assert.equal(defaultTree.projectAgentId(project),'default-codex')
+})
+
 test('local workspaces open AI directly without forwarding or forwarding status',async()=>{
     const {BehaviorSubject}=await import('rxjs'),fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
-    const root=await fs.mkdtemp(join(tmpdir(),'arw-local-workspace-')),plugin=load(),config={store:{omw:{}},async save(){}}
+    const root=await fs.mkdtemp(join(tmpdir(),'arw-local-workspace-')),plugin=load(),config={store:{omw:{agents:[{id:'codex',command:'codex',resumeCommand:'',proxyUrl:''}]}},async save(){}}
     const store=plugin.default.ngModule.providers.find(entry=>entry.useFactory).useFactory(config)
     const workspace=localWorkspace(root),project=await store.add(workspace,root),terminal={}
-    let launched
-    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{async launchConfigured(selection){launched=selection}},{},store)
+    let launched,launchedAgentId
+    const tree=new plugin.TreeComponent({current:new BehaviorSubject(null)},{},{},{},{},{async launchConfigured(selection,agentId){launched=selection;launchedAgentId=agentId}},{},store,undefined,config)
     try{
         tree.selection={terminal,workspace,hint:''}
         await store.open(project,workspace)
@@ -2856,11 +2900,13 @@ test('local workspaces open AI directly without forwarding or forwarding status'
         assert.equal(tree.terminalMode,false)
         assert.match(plugin.TreeComponent.component.template,/\*ngIf="isRemote" class="icon-button" \[class.terminal-mode\]/)
         await tree.launchProject(project)
-        assert.equal(launched,undefined,'unselected workspace cannot launch AI')
+        assert.equal(launched,undefined,'inactive workspace cannot launch AI')
         tree.activeProject=project.id
         await tree.launchProject(project)
         assert.equal(launched.workspace.root,root)
         assert.equal(launched.workspace.kind,'local')
+        assert.equal(launchedAgentId,'codex')
+        assert.equal(project.agentId,undefined,'using the default must not persist a workspace override')
         assert.match(plugin.TreeComponent.component.template,/isRemote && !terminalMode.*class="forwarding-status"/)
     }finally{tree.ngOnDestroy();await store.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
 })
@@ -3224,11 +3270,12 @@ test('AI launch stops if workspace selection changes while forwarding starts',as
     let finish,launched=0
     const tree=Object.assign(Object.create(plugin.TreeComponent.prototype),{
         switchingWorkspace:false,activeProject:'one',projectSelectionRequest:1,activeTab:{},selection:{terminal:{}},
+        config:{store:{omw:{agents:[{id:'codex',command:'codex',resumeCommand:'',proxyUrl:''}]}}},
         savedWorkspace:()=>({kind:'remote',root:'/project'}),terminalMode:false,
         projectStore:{open(){return new Promise(resolve=>{finish=resolve})},connection(){return {}}},
         ai:{async launchConfigured(){launched++}},
     })
-    const pending=tree.launchProject({id:'one'})
+    const pending=tree.launchProject({id:'one',agentId:'codex'})
     tree.projectSelectionRequest++;tree.activeProject='two'
     finish();await pending
     assert.equal(launched,0)

@@ -107,6 +107,23 @@ test('restored AI tabs resume their CLI inside the original shell when shell-pro
     }finally{await rm(storage,{recursive:true,force:true})}
 })
 
+test('AI recovery uses the workspace-selected full recovery command',async()=>{
+    const storage=await mkdtemp(join(tmpdir(),'arw-selected-recovery-'))
+    try{
+        const options={command:'/bin/bash',args:['--login','-i','-c',"exec '/usr/bin/codex' '--no-daemon'"],cwd:storage,
+            env:{ARW_WORKSPACE_ROOT:storage,ARW_AGENT_ID:'codex-entry',ARW_AGENT_COMMAND:'/usr/bin/codex',
+                ARW_AGENT_ARGS:JSON.stringify(['--no-daemon']),
+                ARW_AGENT_RESUME_COMMAND:JSON.stringify(['/opt/codex','resume','--last','--profile','work']),
+                ARW_AGENT_SHELL_COMMAND:'/bin/bash',ARW_AGENT_SHELL_ARGS:JSON.stringify(['--login'])}}
+        const tab={profile:{type:'local',options},async getRecoveryToken(){return {type:'app:local-tab',profile:this.profile}}}
+        prepareAiRecovery(tab,storage,join(process.cwd(),'dist/arw.cjs'))
+        const token=await tab.getRecoveryToken()
+        assert.deepEqual(token.profile.options.args,['--login','-i','-c',"exec '/opt/codex' 'resume' '--last' '--profile' 'work'"])
+        assert.equal(token.profile.options.env.ARW_AGENT_ID,'codex-entry')
+        assert.equal(token.profile.options.env.ARW_AGENT_ARGS,JSON.stringify(['--no-daemon']))
+    }finally{await rm(storage,{recursive:true,force:true})}
+})
+
 test('WSL AI recovery keeps arw on PATH for restored and legacy shell profiles',async()=>{
     const storage=await mkdtemp(join(tmpdir(),'arw-wsl-recovery-'))
     try{

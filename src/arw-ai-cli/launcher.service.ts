@@ -33,6 +33,8 @@ import { agentShellFromOptions } from './agent-profile'
 import { shellCommandLine, shellCommand, shellFamily, shellEnvironment, shellPathEnvironment, type AgentShell } from './shell'
 import { sameShell, selectableShells } from './shell-selection'
 import { defaultShell } from './default-shell'
+import { configuredAiCommands, parseAiCommand } from './ai-command'
+import { resumeArguments } from './recovery'
 
 @Injectable()
 export class AiLauncherService {
@@ -69,14 +71,23 @@ export class AiLauncherService {
         tileWorkspacePanes(app,ownSplit,true)
     }
     /** Launch the command configured under Settings → ARW → AI CLI. */
-    async launchConfigured (selection: WorkspaceSelection): Promise<void> {
-        const configured = this.config.store.omw?.agent
-        const command = configured?.command
-        const configuredArgs = configured?.args ?? []
-        if (typeof command !== 'string' || !command.trim() || !Array.isArray(configuredArgs) || configuredArgs.some(arg => typeof arg !== 'string')) {
-            this.notifications.error(t('请先在 Tabby 设置 → ARW → AI CLI 中填写命令')); return
+    async launchConfigured (selection: WorkspaceSelection, agentId?:string): Promise<void> {
+        const agents=configuredAiCommands(this.config.store.omw)
+        const configured=agentId?agents.find(agent=>agent.id===agentId):agents[0]
+        if(!configured){
+            this.notifications.error(t(agents.length?'请先为此工作区选择 AI':'请先在 Tabby 设置中添加 AI 启动命令'));return
         }
-        const args = configuredArgs.map((argument:string)=>argument.trim()).filter(Boolean)
+        let command:string,args:string[],resumeCommand:string[]
+        try{
+            const parsed=parseAiCommand(configured.command)
+            command=parsed.executable;args=parsed.args
+            if(configured.resumeCommand.trim()){
+                const parsedResume=parseAiCommand(configured.resumeCommand)
+                resumeCommand=[parsedResume.executable,...parsedResume.args]
+            }
+            else resumeCommand=[command,...resumeArguments(command,args)]
+            aiProxyEnvironment(configured.proxyUrl)
+        }catch(error){this.notifications.error(t('AI 命令配置无效'),String(error));return}
         let shell:AgentShell|undefined
         try {
             const source=selection.sourceTerminal??selection.terminal
@@ -88,17 +99,19 @@ export class AiLauncherService {
             }else{
                 const profiles=await this.profiles.getProfiles({includeBuiltin:true})
                 const available=selectableShells(profiles as any[])
-                const selected=(configured?.shell ?? defaultShell(available,this.config.store.terminal?.profile)) as Partial<AgentShell>|undefined
+                const legacyShell=configured.legacyShell as Partial<AgentShell>|undefined
+                const fallback=()=>defaultShell(available,this.config.store.terminal?.profile)??available[0]
+                const selected=(legacyShell??fallback()) as Partial<AgentShell>|undefined
                 if (!selected||typeof selected.command!=='string'||!selected.command.trim()) {
-                    throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
+                    throw new Error(t('未找到可用的 Tabby 本地 Shell'))
                 }
-                const current=available.find(candidate=>sameShell(selected,candidate))
+                const current=available.find(candidate=>sameShell(selected,candidate))??(legacyShell?fallback():undefined)
                 if (!current) {
-                    throw new Error(t('所选 Shell 已不可用，请在 Tabby 设置 → ai-workspace-manager 中重新选择'))
+                    throw new Error(t('未找到可用的 Tabby 本地 Shell'))
                 }
                 shell=current
             }
-            if(!shell)throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
+            if(!shell)throw new Error(t('未找到可用的 Tabby 本地 Shell'))
         } catch (error) { this.notifications.error(t('AI CLI 启动失败'),String(error)); return }
         const workspace = selection.workspace?{...selection.workspace}:undefined
         if (!workspace) return
@@ -138,8 +151,9 @@ export class AiLauncherService {
                 ARW_SESSION_WORKSPACE_ID: workspace.id,
                 ARW_WORKSPACE_ROOT: workspace.root, ARW_WORKSPACE_NAME: workspace.titleName??workspace.name,
                 ARW_WORKSPACE_KIND: workspace.kind, ARW_AI_FRESH_START: '1', ARW_PANE_LAYOUT:paneLayout(this.config.store.omw?.aiLayout),
-                ...aiProxyEnvironment(configured?.proxyUrl),
-                ARW_AGENT_COMMAND: command.trim(), ARW_AGENT_ARGS: JSON.stringify(args),
+                ...aiProxyEnvironment(configured.proxyUrl),
+                ARW_AGENT_ID: configured.id, ARW_AGENT_COMMAND: command, ARW_AGENT_ARGS: JSON.stringify(args),
+                ARW_AGENT_RESUME_COMMAND:JSON.stringify(resumeCommand),
                 ARW_AGENT_SHELL_COMMAND: shell.command, ARW_AGENT_SHELL_ARGS: JSON.stringify(shell.args??[]),
             }
             if(shellFamily(shell)==='wsl'){
@@ -203,7 +217,7 @@ export class AiLauncherService {
             }
             const shellOptions=wslBridgeEnvironment(shell.command,shellEnvironment(shell,env),join(__dirname,'arw.cjs'),agentCwd)
             for(const key of Object.keys(shellOptions))if(['arw_workspace_id','arw_terminal_mode'].includes(key.toLowerCase()))delete shellOptions[key]
-            const launch=shellCommand({command:shell.command,args:shell.args??[],env:shellOptions,shellType:shell.shellType??null},[command.trim()].concat(args))
+            const launch=shellCommand({command:shell.command,args:shell.args??[],env:shellOptions,shellType:shell.shellType??null},[command].concat(args))
             const opened = await this.profiles.openNewTabForProfile({ type: 'local', name: shellCommandLine(launch),
                 options: { command: launch.command, args: launch.args, cwd: agentCwd, env: launch.env,
                     shellType: launch.shellType, pauseAfterExit: true } })

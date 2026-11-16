@@ -28,8 +28,8 @@ The `arw` command is available after installation. WSL AI terminals on Windows r
 
 1. Open a local or WSL terminal, or connect over SSH; the sidebar shows its workspace.
 2. Browse to your project and click **+** beside the workspace heading to save it.
-3. Configure an AI CLI command such as `codex` or `claude` and a launch shell in **Tabby Settings → AI Workspace Manager**.
-4. Click **AI** beside a saved workspace to launch an AI terminal for that project.
+3. Codex and Claude are provided by default, with their corresponding maximum-permission flags in both startup and recovery commands. The first entry is the default AI for workspaces. Modify or add entries in **Tabby Settings → AI Workspace Manager**; each has a startup command, recovery command, and proxy, and commands may use a PATH name or full path with arguments. A custom AI from the legacy configuration is retained as the first entry.
+4. Select a saved workspace to choose an AI. Workspaces without an explicit choice use the first configured AI; explicit choices are saved per workspace. Click **AI** to launch it.
 
 ## Workspace management
 
@@ -72,7 +72,7 @@ Remote image and PDF previews require SFTP.
 
 ## AI terminals
 
-- Use AI CLIs such as Codex and Claude, with configurable launch shells, launch and recovery arguments, and HTTP/HTTPS proxies.
+- Configure multiple AI startup commands, recovery commands, and HTTP/HTTPS proxies. AI names are parsed from binary filenames, and each workspace remembers its selected AI.
 - Open multiple AI terminals in one tab, with collapse, restore, and close controls.
 - Keep each AI terminal associated with its workspace when switching the sidebar.
 - Continue previous sessions with Tabby's tab recovery and AI CLI recovery arguments.

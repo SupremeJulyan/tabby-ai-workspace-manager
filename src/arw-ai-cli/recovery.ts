@@ -95,8 +95,17 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
         catch {throw new Error(t('恢复参数无效'))}
     } else agentArgs=options.args??[]
     const args=explicit?[...configuredResumeArgs]:savedExplicit?[...agentArgs]:resumeArguments(agentCommand,agentArgs)
+    let savedResumeCommand:string[]|undefined
+    if(isAgentProfile(options)&&env.ARW_AGENT_RESUME_COMMAND!==undefined){
+        try{
+            const parsed=JSON.parse(env.ARW_AGENT_RESUME_COMMAND)
+            if(!Array.isArray(parsed)||parsed.length===0||parsed.some(argument=>typeof argument!=='string'))throw new Error()
+            savedResumeCommand=parsed
+        }catch{throw new Error(t('恢复命令无效'))}
+    }
     let launchOptions:{command:string;args:string[];shellType?:string|null}={command:agentCommand,args}
     if(isAgentProfile(options)) {
+        const resumeCommand=savedResumeCommand??[agentCommand,...args]
         const shellCommandValue=env.ARW_AGENT_SHELL_COMMAND
         const savedShellType=env.ARW_AGENT_SHELL_TYPE
         const configuredShellType:ShellType|null=savedShellType==='unix'||savedShellType==='powershell'||savedShellType==='cmd'?savedShellType:null
@@ -112,17 +121,17 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
             }
             const envForShell=wslBridgeEnvironment(shellCommandValue,shellEnvironment({command:shellCommandValue,args:shellArguments,env:recoveredEnv,shellType:configuredShellType},recoveredEnv),cliSource,cwd)
             Object.assign(recoveredEnv,envForShell)
-            const launch=shellCommand({command:shellCommandValue,args:shellArguments,env:envForShell,shellType:configuredShellType},[agentCommand].concat(args))
+            const launch=shellCommand({command:shellCommandValue,args:shellArguments,env:envForShell,shellType:configuredShellType},resumeCommand)
             launchOptions={command:launch.command,args:launch.args,shellType:launch.shellType}
         } else {
             const shell=agentShellFromOptions(options)
             if(!shell)throw new Error(t('未找到原 AI 终端使用的 Shell'))
             const envForShell=wslBridgeEnvironment(shell.command,shellEnvironment(shell,recoveredEnv),cliSource,cwd)
             Object.assign(recoveredEnv,envForShell)
-            const launch=replaceShellArguments({...shell,args:shell.args??[],env:envForShell,shellType:shell.shellType??null},[agentCommand].concat(args))
+            const launch=replaceShellArguments({...shell,args:shell.args??[],env:envForShell,shellType:shell.shellType??null},resumeCommand)
             launchOptions={command:launch.command,args:launch.args,shellType:launch.shellType}
         }
-        recoveredEnv.ARW_AGENT_ARGS=JSON.stringify(args)
+        if(!savedResumeCommand)recoveredEnv.ARW_AGENT_ARGS=JSON.stringify(args)
     }
     if(explicit)recoveredEnv.ARW_AI_RECOVERY_CONFIGURED='1'
     else if(configuredResumeArgs===null)delete recoveredEnv.ARW_AI_RECOVERY_CONFIGURED
