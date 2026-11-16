@@ -467,7 +467,11 @@ test('built CommonJS plugin exposes a default NgModule and DI metadata', () => {
     assert.equal(plugin.WorkspacesService['design:paramtypes'].length, 3)
     assert.equal(plugin.ArwContextMenuProvider['design:paramtypes'][0], plugin.WorkspacesService)
     const configProvider=plugin.default.ngModule.providers.find(entry=>entry.provide===ConfigProvider)
-    assert.equal('agents' in new configProvider.useClass().defaults.omw,false)
+    const configDefaults=new configProvider.useClass().defaults.omw
+    assert.equal(configDefaults.agents,null)
+    assert.equal(configDefaults.agentsConfigured,false)
+    assert.equal(configDefaults.aiShell,null)
+    assert.equal(configDefaults.agent,null)
 })
 
 test('workspace tree saves the browsed root and opens files and AI against the saved directory', async()=>{
