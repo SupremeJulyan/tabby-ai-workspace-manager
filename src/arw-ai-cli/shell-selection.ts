@@ -1,4 +1,5 @@
 import type { AgentShell } from './shell'
+import { defaultShell } from './default-shell'
 
 interface ProfileLike {
     id?: string
@@ -25,4 +26,10 @@ export function sameShell (left:Partial<AgentShell>|undefined,right:AgentShell|u
     if (!left||!right) return false
     return Boolean(left.id&&left.id===right.id)||(left.command===right.command
         && JSON.stringify(left.args??[])===JSON.stringify(right.args??[]))
+}
+
+export function launchShell (shells:AgentShell[],shared:Partial<AgentShell>|undefined,legacy:Partial<AgentShell>|undefined,preferred:unknown):AgentShell|undefined {
+    if (shared) return shells.find(candidate=>sameShell(shared,candidate))
+    if (legacy) return shells.find(candidate=>sameShell(legacy,candidate))??defaultShell(shells,preferred)??shells[0]
+    return defaultShell(shells,preferred)??shells[0]
 }

@@ -9,6 +9,6 @@ test('AI environment overrides are absent from settings, defaults, and launcher'
     assert.doesNotMatch(settings, /arw-env|environmentText|agent\.env/)
     assert.doesNotMatch(launcher, /agentEnvironment|configured\?\.env|customEnv/)
     assert.doesNotMatch(config, /env: \[\]/)
-    assert.match(settings, /arw-proxy-url/)
+    assert.match(settings, /arw-proxy-/)
     assert.match(launcher, /aiProxyEnvironment/)
 })

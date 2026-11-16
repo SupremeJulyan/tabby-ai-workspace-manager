@@ -192,7 +192,7 @@ export const englishMessages: Record<string,string> = {
     "AI 命令": "AI Command",
     "启动 Shell": "Launch shell",
     "请选择 Tabby 的本地 Shell": "Choose a local Tabby shell",
-    "AI CLI 会由所选 Shell 启动并继承其环境变量；不再直接执行 AI 命令。": "The AI CLI launches through the selected shell and inherits its environment. The AI command is no longer executed directly.",
+    "所有 AI CLI 共用此 Shell；从 WSL 终端启动时仍沿用该 WSL 终端的 Shell。": "All AI CLIs share this shell; launches from a WSL terminal continue to use that terminal's shell.",
     "请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell": "Choose a launch shell in Tabby Settings → ai-workspace-manager first",
     "所选 Shell 已不可用，请在 Tabby 设置 → ai-workspace-manager 中重新选择": "The selected shell is unavailable. Choose a shell again in Tabby Settings → ai-workspace-manager",
     "在选定 Shell 中找不到命令：": "Command not found in the selected shell: ",

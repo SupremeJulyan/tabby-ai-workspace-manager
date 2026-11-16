@@ -57,9 +57,32 @@ function load(ssh = { SSHTabComponent }, dom = {}) {
         TreeComponent:module.exports.default.ngModule.declarations[0],
         EditorComponent:module.exports.default.ngModule.declarations[1],
         PreviewComponent:module.exports.default.ngModule.declarations[3],
+        SettingsComponent:module.exports.default.ngModule.declarations[2],
         FileRecoveryProvider:module.exports.default.ngModule.providers.find(provider=>provider.provide===TabRecoveryProvider).useClass,
         ArwContextMenuProvider: menu.useClass, exports: Object.keys(module.exports) }
 }
+
+test('AI settings save one shared shell and migrate the legacy AI shell selection',async()=>{
+    const plugin=load(),savedShell={id:'local:fish',name:'Fish',command:'/usr/bin/fish',args:['-l'],env:{PATH:'/usr/bin'},shellType:'unix'}
+    const config={store:{terminal:{profile:'local:default'},omw:{agent:{command:'codex',args:['--no-daemon'],shell:savedShell}}},save:async()=>{}}
+    const profiles={getProfiles:async()=>[
+        {id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:['--login'],env:{},shellType:'unix'}},
+        {id:'local:fish',name:'Fish',type:'local',options:{command:'/usr/bin/fish',args:['-l'],env:{PATH:'/usr/bin'},shellType:'unix'}},
+    ]}
+    const settings=new plugin.SettingsComponent(config,profiles)
+    await settings.shellsReady
+    assert.equal(settings.shellId,'local:fish')
+    settings.shellId='local:default'
+    await settings.save()
+    assert.equal(settings.error,'')
+    assert.equal(config.store.omw.aiShell.id,'local:default')
+    assert.equal(config.store.omw.aiShell.command,'/bin/bash')
+    assert.equal(config.store.omw.agents.length,2)
+    assert.equal(config.store.omw.agents[0].command,"'codex' '--no-daemon'")
+    assert.ok(config.store.omw.agents.every(agent=>!('shell' in agent)))
+    assert.equal(config.store.omw.agent,null)
+})
+
 test('editor, preview and Diff tabs round-trip through JSON recovery with file identity and edit conflicts intact',async()=>{
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const {localWorkspace}=require('../.build/arw-tree/workspace.js')
@@ -518,12 +541,13 @@ test('workspace tree saves the browsed root and opens files and AI against the s
 
 test('ARW settings persist multiple startup, recovery, and proxy commands',async()=>{
     const plugin=load(),config={store:{omw:{agents:[{id:'codex',command:'codex --no-daemon',resumeCommand:'codex resume --last',proxyUrl:''}]}},saves:0,async save(){this.saves++}}
+    const profiles={getProfiles:async()=>[{id:'local:default',name:'Bash',type:'local',options:{command:'/bin/bash',args:[],env:{},shellType:'unix'}}]}
     const proportions={workspaceWidth:50,aiWidth:50,fileHeight:60,terminalHeight:40}
     Object.defineProperty(config.store.omw,'paneProportions',{enumerable:true,get:()=>proportions})
     const provider=plugin.default.ngModule.providers.find(entry=>entry.provide===SettingsTabProvider)
-    const settings=new (new provider.useClass().getComponentType())(config)
+    const settings=new (new provider.useClass().getComponentType())(config,profiles)
     const defaultConfig={store:{omw:{}},async save(){}}
-    const defaultSettings=new (new provider.useClass().getComponentType())(defaultConfig)
+    const defaultSettings=new (new provider.useClass().getComponentType())(defaultConfig,profiles)
     assert.equal(defaultSettings.agents.length,2)
     assert.equal(defaultSettings.agents[0].command,'codex --sandbox danger-full-access --ask-for-approval on-request')
     assert.equal(defaultSettings.agents[0].resumeCommand,'codex resume --last --sandbox danger-full-access --ask-for-approval on-request')
@@ -555,7 +579,7 @@ test('ARW settings persist multiple startup, recovery, and proxy commands',async
         {command:'"/opt/Codex CLI/codex" --no-daemon',resumeCommand:'"/opt/Codex CLI/codex" resume --last --model recovery-model',proxyUrl:'http://127.0.0.1:7897'},
         {command:'claude --continue',resumeCommand:'',proxyUrl:''},
     ])
-    assert.equal('agent' in config.store.omw,false)
+    assert.equal(config.store.omw.agent,null)
     assert.deepEqual(JSON.parse(JSON.stringify(config.store.omw.paneProportions)),{workspaceWidth:65,aiWidth:35,fileHeight:70,terminalHeight:30})
     assert.equal(config.store.omw.fileLayout,'stacked')
     assert.equal(config.store.omw.aiLayout,'stacked')

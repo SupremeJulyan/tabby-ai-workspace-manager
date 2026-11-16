@@ -28,7 +28,7 @@ The `arw` command is available after installation. WSL AI terminals on Windows r
 
 1. Open a local or WSL terminal, or connect over SSH; the sidebar shows its workspace.
 2. Browse to your project and click **+** beside the workspace heading to save it.
-3. Codex and Claude are provided by default, with their corresponding maximum-permission flags in both startup and recovery commands. The first entry is the default AI for workspaces. Modify or add entries in **Tabby Settings → AI Workspace Manager**; each has a startup command, recovery command, and proxy, and commands may use a PATH name or full path with arguments. A custom AI from the legacy configuration is retained as the first entry.
+3. Codex and Claude are provided by default, with their corresponding maximum-permission flags in both startup and recovery commands. The first entry is the default AI for workspaces. Choose a shared launch shell and modify or add entries in **Tabby Settings → AI Workspace Manager**; each AI has a startup command, recovery command, and proxy, and commands may use a PATH name or full path with arguments. A custom AI from the legacy configuration is retained as the first entry.
 4. Select a saved workspace to choose an AI. Workspaces without an explicit choice use the first configured AI; explicit choices are saved per workspace. Click **AI** to launch it.
 
 ## Workspace management

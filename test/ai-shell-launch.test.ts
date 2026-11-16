@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { configuredShell } from '../src/arw-ai-cli/settings-shell'
 import { replaceShellArguments, shellCommand, shellCommandLine, shellEnvironment } from '../src/arw-ai-cli/shell'
-import { selectableShells } from '../src/arw-ai-cli/shell-selection'
+import { launchShell, selectableShells } from '../src/arw-ai-cli/shell-selection'
 
 const bash={command:'/bin/bash',args:['--login'],env:{LANG:'C.UTF-8'},shellType:'unix' as const}
 
@@ -82,6 +82,17 @@ test('settings list only usable local shell profiles and require an explicit sel
     assert.throws(()=>configuredShell(undefined),/选择启动 Shell/)
     assert.throws(()=>configuredShell({}),/选择启动 Shell/)
     assert.deepEqual(configuredShell(shells[1]),{id:'local:fish',name:'Fish',command:'/usr/bin/fish',args:[],env:{},shellType:null})
+})
+
+test('shared AI shell takes precedence over the legacy per-agent shell',()=>{
+    const shells=[
+        {id:'local:default',command:'/bin/bash',args:[],env:{},shellType:'unix' as const},
+        {id:'local:fish',command:'/usr/bin/fish',args:[],env:{},shellType:'unix' as const},
+    ]
+    assert.equal(launchShell(shells,{id:'local:fish'},{id:'local:default'},'local:default'),shells[1])
+    assert.equal(launchShell(shells,{id:'removed'},{id:'local:default'},'local:default'),undefined)
+    assert.equal(launchShell(shells,undefined,{id:'removed'},'local:fish'),shells[1])
+    assert.equal(launchShell(shells,undefined,undefined,'local:fish'),shells[1])
 })
 
 

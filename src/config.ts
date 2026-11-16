@@ -12,6 +12,10 @@ export class ArwConfigProvider extends ConfigProvider {
             aiLayout: 'tiled',
             paneProportions: {...DEFAULT_PANE_PROPORTIONS},
             projects: {},
+            agent: null,
+            agents: null,
+            agentsConfigured: false,
+            aiShell: null,
         },
     }
 }

@@ -31,8 +31,7 @@ import { aiProxyEnvironment } from './proxy'
 import { titleAiTabs, workspaceNames } from '../shared/workspace-name'
 import { agentShellFromOptions } from './agent-profile'
 import { shellCommandLine, shellCommand, shellFamily, shellEnvironment, shellPathEnvironment, type AgentShell } from './shell'
-import { sameShell, selectableShells } from './shell-selection'
-import { defaultShell } from './default-shell'
+import { launchShell, selectableShells } from './shell-selection'
 import { configuredAiCommands, parseAiCommand } from './ai-command'
 import { resumeArguments } from './recovery'
 
@@ -99,17 +98,12 @@ export class AiLauncherService {
             }else{
                 const profiles=await this.profiles.getProfiles({includeBuiltin:true})
                 const available=selectableShells(profiles as any[])
-                const legacyShell=configured.legacyShell as Partial<AgentShell>|undefined
-                const fallback=()=>defaultShell(available,this.config.store.terminal?.profile)??available[0]
-                const selected=(legacyShell??fallback()) as Partial<AgentShell>|undefined
-                if (!selected||typeof selected.command!=='string'||!selected.command.trim()) {
+                const sharedShell=this.config.store.omw?.aiShell as Partial<AgentShell>|undefined
+                const legacyShell=(this.config.store.omw?.agent?.shell??configured.legacyShell) as Partial<AgentShell>|undefined
+                shell=launchShell(available,sharedShell,legacyShell,this.config.store.terminal?.profile)
+                if (!shell) {
                     throw new Error(t('未找到可用的 Tabby 本地 Shell'))
                 }
-                const current=available.find(candidate=>sameShell(selected,candidate))??(legacyShell?fallback():undefined)
-                if (!current) {
-                    throw new Error(t('未找到可用的 Tabby 本地 Shell'))
-                }
-                shell=current
             }
             if(!shell)throw new Error(t('未找到可用的 Tabby 本地 Shell'))
         } catch (error) { this.notifications.error(t('AI CLI 启动失败'),String(error)); return }

@@ -2,11 +2,15 @@ import { remoteFileLimit } from '../arw-tree/remote-file-limit'
 import { paneProportions, panePercentage } from '../shared/pane-proportions'
 import { paneLayout, type PaneLayout } from '../shared/pane-layout'
 import { Component, Injectable } from '@angular/core'
-import { ConfigService } from 'tabby-core'
+import { ConfigService, ProfilesService } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
 import { aiProxyEnvironment } from './proxy'
 import { t } from '../shared/i18n'
 import { aiName, configuredAiCommands, createAiCommand, parseAiCommand } from './ai-command'
+import { configuredShell } from './settings-shell'
+import { defaultShell } from './default-shell'
+import { sameShell, selectableShells } from './shell-selection'
+import type { AgentShell } from './shell'
 
 @Component({
     selector: 'arw-settings',
@@ -23,6 +27,10 @@ import { aiName, configuredAiCommands, createAiCommand, parseAiCommand } from '.
         <small>{{ '布局设置对新打开的文件和 AI 终端生效。' | arwTranslate }}</small>
       </section><section class="settings-section"><div class="section-heading"><h4>{{ 'AI 命令' | arwTranslate }}</h4>
         <button type="button" class="btn btn-secondary btn-sm" (click)="addAi()">{{ '添加 AI' | arwTranslate }}</button></div>
+      <div class="form-group"><label for="arw-ai-shell">{{ '启动 Shell' | arwTranslate }}</label>
+        <select id="arw-ai-shell" class="form-control" [(ngModel)]="shellId" [disabled]="!shells.length"><option value="">{{ '请选择 Tabby 的本地 Shell' | arwTranslate }}</option>
+          <option *ngFor="let shell of shells" [value]="shell.id">{{shell.name}} — {{shell.command}}</option></select>
+        <small>{{ '所有 AI CLI 共用此 Shell；从 WSL 终端启动时仍沿用该 WSL 终端的 Shell。' | arwTranslate }}</small></div>
       <div class="ai-command" *ngFor="let agent of agents; let index=index">
         <div class="ai-command-heading"><strong>{{ agentName(agent.command) || (('AI' | arwTranslate) + ' ' + (index + 1)) }}</strong>
           <button type="button" class="btn btn-link text-danger" (click)="removeAi(index)">{{ '移除' | arwTranslate }}</button></div>
@@ -41,7 +49,7 @@ import { aiName, configuredAiCommands, createAiCommand, parseAiCommand } from '.
       <p class="empty-ai" *ngIf="!agents.length">{{ '添加一条 AI 启动命令后，可在工作区中选择使用的 AI。' | arwTranslate }}</p>
       </section><p class="text-danger" role="alert" *ngIf="error">{{error}}</p>
       <p class="settings-note"><small>{{ '远程占位目录的 AGENTS.md 会在 Agent 启动时要求使用 ARW。不同工具的实现和遵循程度可能不同。' | arwTranslate }}</small></p>
-      <div class="settings-actions"><button class="btn btn-primary" (click)="save()" [disabled]="saving">{{saving ? ('保存中…' | arwTranslate) : ('保存设置' | arwTranslate)}}</button>
+      <div class="settings-actions"><button class="btn btn-primary" (click)="save()" [disabled]="saving || !shellId">{{saving ? ('保存中…' | arwTranslate) : ('保存设置' | arwTranslate)}}</button>
       <span *ngIf="saved" role="status">{{ '已保存' | arwTranslate }}</span></div></div>`,
     styles: [`
       :host{display:block;color:inherit}
@@ -69,6 +77,7 @@ import { aiName, configuredAiCommands, createAiCommand, parseAiCommand } from '.
 })
 export class ArwSettingsComponent {
     private proportions=paneProportions(undefined)
+    private shellsReady:Promise<void>=Promise.resolve()
     get workspaceWidth():number {return this.proportions.workspaceWidth}
     set workspaceWidth(value:number) {const width=panePercentage(value,this.workspaceWidth);this.proportions.workspaceWidth=width;this.proportions.aiWidth=100-width}
     get aiWidth():number {return this.proportions.aiWidth}
@@ -78,6 +87,8 @@ export class ArwSettingsComponent {
     get terminalHeight():number {return this.proportions.terminalHeight}
     set terminalHeight(value:number) {const height=panePercentage(value,this.terminalHeight);this.proportions.terminalHeight=height;this.proportions.fileHeight=100-height}
     agents=configuredAiCommands(this.config.store.omw)
+    shellId=''
+    shells:AgentShell[]=[]
     smallScreen=false
     remoteFileLimit=10
     fileLayout: PaneLayout
@@ -85,12 +96,26 @@ export class ArwSettingsComponent {
     saving = false
     saved = false
     error = ''
-    constructor (private config: ConfigService) {
+    constructor (private config: ConfigService, private profiles:ProfilesService) {
         this.smallScreen=config.store.omw?.smallScreen===true
         this.proportions=paneProportions(config.store.omw?.paneProportions)
         this.remoteFileLimit=remoteFileLimit(config.store.omw?.remoteFileLimit)
         this.fileLayout=paneLayout(config.store.omw?.fileLayout??'stacked')
         this.aiLayout=paneLayout(config.store.omw?.aiLayout)
+        const savedShell=config.store.omw?.aiShell??config.store.omw?.agent?.shell
+        this.shellId=typeof savedShell?.id==='string'?savedShell.id:''
+        this.shellsReady=this.loadShells(savedShell)
+    }
+    private async loadShells(saved:unknown):Promise<void>{
+        try{
+            this.shells=selectableShells(await this.profiles.getProfiles({includeBuiltin:true}) as any[])
+            const savedShell=saved&&typeof saved==='object'?saved as Partial<AgentShell>:undefined
+            const selected=this.shells.find(shell=>shell.id===this.shellId)
+                ??this.shells.find(shell=>sameShell(savedShell,shell))
+                ??defaultShell(this.shells,this.config.store.terminal?.profile)
+                ??this.shells[0]
+            this.shellId=selected?.id??''
+        }catch(error){this.shellId='';this.error=String(error)}
     }
     agentName(command:string):string {
         try{return aiName(command)}catch{return ''}
@@ -107,6 +132,9 @@ export class ArwSettingsComponent {
         if (this.saving) return
         this.saving=true;this.saved=false;this.error=''
         try {
+            await this.shellsReady
+            const shell=this.shells.find(candidate=>candidate.id===this.shellId)
+            if(!shell)throw new Error(t('请先在 Tabby 设置 → ai-workspace-manager 中选择启动 Shell'))
             const agents=this.agents.map(agent=>({...agent,command:agent.command.trim(),resumeCommand:agent.resumeCommand.trim(),proxyUrl:agent.proxyUrl.trim()}))
             for(const agent of agents){
                 parseAiCommand(agent.command)
@@ -114,6 +142,7 @@ export class ArwSettingsComponent {
                 aiProxyEnvironment(agent.proxyUrl)
             }
             this.config.store.omw ??= {}
+            this.config.store.omw.aiShell=configuredShell(shell)
             this.config.store.omw.paneProportions ??= {}
             Object.assign(this.config.store.omw.paneProportions,this.proportions)
             this.config.store.omw.smallScreen=this.smallScreen
@@ -122,7 +151,7 @@ export class ArwSettingsComponent {
             this.config.store.omw.aiLayout=this.aiLayout
             this.config.store.omw.agents=agents.map(({id,command,resumeCommand,proxyUrl})=>({id,command,resumeCommand,proxyUrl}))
             this.config.store.omw.agentsConfigured=true
-            delete this.config.store.omw.agent
+            this.config.store.omw.agent=null
             this.agents=agents
             await this.config.save()
             this.saved=true
