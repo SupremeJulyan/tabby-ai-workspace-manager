@@ -22,6 +22,13 @@ test('directory switching rejects disconnected sessions and multiline paths',asy
     await assert.rejects(changeTerminalDirectory({session:{open:true},sendInput:()=>assert.fail('must not send')} as any,'/project\npwd'))
 })
 
+test('directory switching uses bracketed paste when supported by the terminal',async()=>{
+    const sent:string[]=[]
+    const tab:any={profile:{type:'local',options:{command:'bash'}},session:{open:true},frontend:{supportsBracketedPaste:()=>true},sendInput:(text:string)=>sent.push(text)}
+    await changeTerminalDirectory(tab,'/home/share/project')
+    assert.deepEqual(sent,['\x1b[200~cd -- \'/home/share/project\'\x1b[201~\r'])
+})
+
 test('directory commands honor shell hints and remote PowerShell profiles',async()=>{
     for(const type of ['local','ssh']){
         const sent:string[]=[]
