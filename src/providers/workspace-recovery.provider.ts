@@ -17,6 +17,7 @@ export class WorkspaceRecoveryProvider extends TabRecoveryProvider<BaseTabCompon
         const parameters=await this.injector.get(ProfilesService).newTabParametersForProfile(prepared)
         if(!parameters)throw new Error('Workspace profile provider is unavailable')
         const resolved=parameters.inputs?.profile??prepared
-        return {...parameters,inputs:{...parameters.inputs,profile:{...resolved,options:{...resolved.options,arwWorkspace:prepared.options.arwWorkspace}},savedState:token.savedState}}
+        return {...parameters,inputs:{...parameters.inputs,profile:{...resolved,options:{...resolved.options,
+            arwWorkspace:prepared.options.arwWorkspace,arwProjectWorkspaceId:prepared.options.arwProjectWorkspaceId}},savedState:token.savedState}}
     }
 }

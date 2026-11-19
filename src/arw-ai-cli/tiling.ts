@@ -8,6 +8,23 @@ import { orderedFilePanes } from './collapsed-panes'
 import { isAiPane, isFilePane } from '../shared/pane-kind'
 import type { AppService, BaseTabComponent, SplitContainer, SplitTabComponent } from 'tabby-core'
 
+const terminalStackStyles=new WeakSet<Document>()
+
+function updateStackedTerminalHost(tab:BaseTabComponent,hidden:boolean):void {
+    const view=tab.viewContainerEmbeddedRef??tab.hostView as {rootNodes?:HTMLElement[]}
+    const host=view?.rootNodes?.find((node:HTMLElement)=>node.nodeType===1) as HTMLElement|undefined
+    if(!host)return
+    const document=host.ownerDocument
+    if(hidden&&!terminalStackStyles.has(document)){
+        const style=document.createElement('style')
+        // Keep xterm measurable while its split slot has zero width.
+        style.textContent='.arw-hidden-main-terminal{visibility:hidden!important;pointer-events:none!important;left:0!important;width:100%!important;height:100%!important}'
+        document.head.appendChild(style)
+        terminalStackStyles.add(document)
+    }
+    host.classList.toggle('arw-hidden-main-terminal',hidden)
+}
+
 /** Rebuild workspace containers only; terminal sessions and file instances remain intact. */
 export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allowSingle=false):boolean {
     const active=target??app.activeTab
@@ -16,6 +33,9 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     if(!split?.root||typeof split.layout!=='function')return false
     const tabs=split.getAllTabs()
     updateWorkspaceVisibility(split,tabs)
+    for(const tab of tabs){
+        if(!isAiPane(tab)&&!isFilePane(tab))updateStackedTerminalHost(tab,workspaceHiddenPanes.has(tab))
+    }
     const hidden=tabs.filter(tab=>workspaceHiddenPanes.has(tab))
     const ai=orderedAiPanes(split,tabs.filter(tab=>isAiPane(tab)&&!workspaceHiddenPanes.has(tab)))
     const files=orderedFilePanes(split,tabs.filter(tab=>isFilePane(tab)&&!workspaceHiddenPanes.has(tab)))

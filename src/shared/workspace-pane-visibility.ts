@@ -5,7 +5,9 @@ const selectedTerminals=new WeakMap<object,object>()
 export const workspaceHiddenPanes=new WeakSet<object>()
 
 export function workspaceTerminalId(pane:unknown):string|undefined {
-    return (pane as {profile?:{options?:{arwProjectWorkspaceId?:string}}})?.profile?.options?.arwProjectWorkspaceId
+    const options=(pane as {profile?:{options?:{arwProjectWorkspaceId?:string;__getValue?:(key:string)=>unknown}}})?.profile?.options
+    const id=options?.arwProjectWorkspaceId??options?.__getValue?.('arwProjectWorkspaceId')
+    return typeof id==='string'&&id?id:undefined
 }
 
 export function selectWorkspaceTerminal(split:object,terminal:object):void {

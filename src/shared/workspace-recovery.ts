@@ -2,6 +2,7 @@ import { wslDirectoryArguments } from './wsl-launch-directory'
 import { isWslTerminal, terminalWorkspaceDirectory } from './wsl-directory'
 import { terminalDirectoryCommand } from './terminal-directory-command'
 import { logOperation } from '../services/operation-log'
+import { workspaceTerminalId } from './workspace-pane-visibility'
 
 export interface WorkspaceRecoveryState {root:string;mode:'files'|'git'|'activity';cwd?:string}
 interface Terminal {
@@ -41,7 +42,7 @@ export function restoredWorkspaceProfile(profile:any):any {
         const cwd=validPath(state.cwd)?state.cwd:state.root
         // Tabby's login script processor unescapes backslashes before sending.
         const send=(` ${terminalDirectoryCommand({profile},cwd)}`).replace(/\\/g,'\\\\')
-        const scripts=(options.scripts??[]).filter((script:any)=>!script.arwRestoreDirectory)
+        const scripts=(options.scripts??[]).filter((script:any)=>!script.arwRestoreDirectory&&!script.arwWorkspaceDirectory)
         const conditional=scripts.findIndex((script:any)=>Boolean(script.expect))
         scripts.splice(conditional<0?scripts.length:conditional,0,{expect:'',send,arwRestoreDirectory:true})
         options.scripts=scripts
@@ -65,6 +66,8 @@ export function prepareWorkspaceRecovery(terminal:Terminal,save?:()=>void):void 
     terminal.getRecoveryToken=async(...args)=>{
         const token=await original(...args)
         if(!token?.profile)return token
+        const projectId=workspaceTerminalId(terminal)
+        if(projectId)token.profile={...token.profile,options:{...token.profile.options,arwProjectWorkspaceId:projectId}}
         const state=states.get(terminal)
         if(!state)return token
         let cwd=state.cwd

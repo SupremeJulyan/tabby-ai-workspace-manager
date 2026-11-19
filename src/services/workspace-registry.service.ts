@@ -2,6 +2,7 @@ import { terminalLocalWorkspace } from '../adapters/wsl-workspace'
 import { isMsysTerminal } from '../shared/msys-directory'
 import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath } from '../shared/wsl-directory'
 import { workspaceRecoveryState } from '../shared/workspace-recovery'
+import { workspaceTerminalId } from '../shared/workspace-pane-visibility'
 import { readWorkspaceBinding } from '../arw-cli/workspace-binding'
 import { logOperation } from './operation-log'
 import { t } from '../shared/i18n'
@@ -54,9 +55,9 @@ export class WorkspaceRegistry {
         if (!tab) return undefined
         const terminals = (tab.getAllTabs?.() ?? [tab]) as BaseTerminalTabComponent<any>[]
         const registered = terminals.filter(terminal => this.entries.has(terminal))
-        const source = registered.find(terminal => !this.entries.get(terminal)?.pinned
+        const sources=registered.filter(terminal=>!this.entries.get(terminal)?.pinned
             && !terminal.profile?.options?.env?.ARW_WORKSPACE_ROOT)
-        return source ?? registered[0]
+        return sources.find(terminal=>!workspaceTerminalId(terminal))??sources[0]??registered[0]
     }
     private selectTab(tab: any): void {
         this.restoreBindings()

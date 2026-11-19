@@ -889,6 +889,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if(split&&this.tabs){
             const parameters=await this.profiles.newTabParametersForProfile(profile)
             if(!parameters)throw new Error(t('无法创建工作区终端'))
+            const resolved=parameters.inputs?.profile??profile
+            parameters.inputs={...parameters.inputs,profile:{...resolved,options:{...resolved.options,arwProjectWorkspaceId:project.id}}}
             const terminal=this.tabs.create(parameters) as BaseTerminalTabComponent<any>
             try {
                 await split.add(terminal,source,'r')
