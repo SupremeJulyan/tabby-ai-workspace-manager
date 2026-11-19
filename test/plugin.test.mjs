@@ -525,10 +525,14 @@ test('workspace tree saves the browsed root and opens files and AI against the s
         assert.equal(project.agentId,'codex')
         assert.equal(store.list(localWorkspace(root))[0].agentId,'codex')
         await tree.addProject();assert.equal(tree.projects.length,1)
+        let loadingWorkspace
+        const showWorkspace=tree.showWorkspace.bind(tree)
+        tree.showWorkspace=(...args)=>(loadingWorkspace=showWorkspace(...args))
         await tree.selectProject(project)
-        assert.equal(tree.workspaceSwitchNotice,'','successful synchronization clears the inline notice')
+        await loadingWorkspace
+        assert.equal(tree.workspaceSwitchNotice,'')
         assert.equal(tree.breadcrumb,join(root,'src'))
-        assert.ok(terminal.lastInput===`cd -- '${project.root}'\r`,'selecting a saved workspace also changes the source terminal directory')
+        assert.equal(terminal.lastInput,undefined,'selecting a saved workspace leaves the source shell alone')
         assert.equal(tree.nodes[0].path,'main.ts')
         await tree.open(tree.nodes[0]);assert.equal(opened[0].inputs.workspace.root,project.root)
         await tree.launchProject(project)
@@ -669,7 +673,11 @@ test('saved remote workspaces are isolated by SSH identity and AI uses the saved
             },async eof(){},async close(){}}
         },async activateChannel(channel){return channel}}
         tree.mode='git';tree.filterText='old-filter';tree.relativePath='old/nested'
+        let loadingWorkspace
+        const showWorkspace=tree.showWorkspace.bind(tree)
+        tree.showWorkspace=(...args)=>(loadingWorkspace=showWorkspace(...args))
         await tree.selectProject(tree.projects[0])
+        await loadingWorkspace
         assert.equal(listedPath,'/home/alice')
         assert.equal(tree.mode,'files')
         assert.equal(tree.filterText,'old-filter')
@@ -3274,23 +3282,31 @@ test('decorated workspace changes save the host recovery snapshot immediately',a
     }finally{tree.ngOnDestroy();decorator.ngOnDestroy()}
 })
 
-test('workspace switching blocks repeated selection and releases buttons after failures',async()=>{
+test('workspace switching reuses dedicated terminals while directory loading is pending',async()=>{
     const plugin=load()
-    let finish,loads=0
+    let creations=0
+    const source={profile:{type:'local',options:{command:'bash'}}}
+    const panes=[source]
+    const split={getAllTabs:()=>panes,async add(terminal){panes.push(terminal)}}
     const tree=Object.assign(Object.create(plugin.TreeComponent.prototype),{
-        switchingWorkspace:false,projectSelectionRequest:0,activeTab:{},selection:{},app:{tabs:[]},
-        savedWorkspace:()=>({kind:'local',root:'/project'}),render(){},
-        showWorkspace(workspace){this.browserWorkspace=workspace;loads++;return new Promise(resolve=>{finish=resolve})},
+        switchingWorkspace:false,projectSelectionRequest:0,activeTab:split,selection:{terminal:source},
+        app:{tabs:[],activeTab:split,getParentTab:()=>split},
+        profiles:{async newTabParametersForProfile(profile){return {inputs:{profile}}}},
+        tabs:{create({inputs}){creations++;return inputs}},
+        savedWorkspace:project=>({id:project.id,kind:'local',root:'/'+project.id}),render(){},
+        showWorkspace(workspace){this.browserWorkspace=workspace;return new Promise(()=>{})},
     })
     const pending=tree.selectProject({id:'one'})
     assert.equal(tree.switchingWorkspace,true)
     await tree.selectProject({id:'two'})
-    assert.equal(loads,1)
-    finish();await pending
+    await pending
     assert.equal(tree.switchingWorkspace,false)
-    tree.showWorkspace=async()=>{throw Error('directory failure')}
-    await assert.rejects(tree.selectProject({id:'two'}),/directory failure/)
-    assert.equal(tree.switchingWorkspace,false)
+    assert.equal(creations,1)
+    await tree.selectProject({id:'two'})
+    await tree.selectProject({id:'one'})
+    assert.equal(creations,2)
+    assert.equal(tree.activeProject,'one')
+    assert.deepEqual(panes.slice(1).map(pane=>pane.profile.options.cwd),['/one','/two'])
 })
 
 test('AI launch stops if workspace selection changes while forwarding starts',async()=>{

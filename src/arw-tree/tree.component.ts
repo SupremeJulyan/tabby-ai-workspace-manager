@@ -851,12 +851,11 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(this.app.activeTab!==originalTab&&this.app.activeTab!==split)return
             this.mode='files'
             this.activeProject=project.id
-            if(this.browserWorkspace?.id!==workspace.id)void this.showWorkspace(workspace)
             if(split&&terminal)selectWorkspaceTerminal(split,terminal)
             const identity=fileWorkspaceToken(workspace)
-            if(identity)activateWorkspacePanes(this.app,identity)
-            else if(split)tileWorkspacePanes(this.app,split,true)
-            if(split&&terminal)split.focus(terminal)
+            if(identity)activateWorkspacePanes(this.app,identity,split?terminal:undefined)
+            else if(split)tileWorkspacePanes(this.app,split,true,terminal)
+            if(this.browserWorkspace?.id!==workspace.id)void this.showWorkspace(workspace)
         }catch(error){
             const message=redactSensitiveText(error instanceof Error?error.message:String(error))
             logOperation('打开工作区专属终端',{workspace:project.id,error:message})

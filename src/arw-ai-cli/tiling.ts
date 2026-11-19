@@ -10,23 +10,31 @@ import type { AppService, BaseTabComponent, SplitContainer, SplitTabComponent } 
 
 const terminalStackStyles=new WeakSet<Document>()
 
-function updateStackedTerminalHost(tab:BaseTabComponent,hidden:boolean):void {
+function terminalHost(tab:BaseTabComponent):HTMLElement|undefined {
     const view=tab.viewContainerEmbeddedRef??tab.hostView as {rootNodes?:HTMLElement[]}
-    const host=view?.rootNodes?.find((node:HTMLElement)=>node.nodeType===1) as HTMLElement|undefined
+    return view?.rootNodes?.find((node:HTMLElement)=>node.nodeType===1) as HTMLElement|undefined
+}
+
+function updateStackedTerminalHost(tab:BaseTabComponent,hidden:boolean,bounds?:CSSStyleDeclaration):void {
+    const host=terminalHost(tab)
     if(!host)return
     const document=host.ownerDocument
     if(hidden&&!terminalStackStyles.has(document)){
         const style=document.createElement('style')
         // Keep xterm measurable while its split slot has zero width.
-        style.textContent='.arw-hidden-main-terminal{visibility:hidden!important;pointer-events:none!important;left:0!important;width:100%!important;height:100%!important}'
+        style.textContent='.arw-hidden-main-terminal{visibility:hidden!important;pointer-events:none!important;left:0!important;width:var(--arw-main-width,100%)!important;height:var(--arw-main-height,100%)!important}'
         document.head.appendChild(style)
         terminalStackStyles.add(document)
+    }
+    if(hidden&&bounds&&parseFloat(bounds.width)>0&&parseFloat(bounds.height)>0){
+        host.style.setProperty('--arw-main-width',bounds.width)
+        host.style.setProperty('--arw-main-height',bounds.height)
     }
     host.classList.toggle('arw-hidden-main-terminal',hidden)
 }
 
 /** Rebuild workspace containers only; terminal sessions and file instances remain intact. */
-export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allowSingle=false):boolean {
+export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allowSingle=false,focusTarget?:BaseTabComponent):boolean {
     const active=target??app.activeTab
     if(!active)return false
     const split=('getAllTabs' in active?active:app.getParentTab(active)) as SplitTabComponent|null
@@ -85,10 +93,15 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     if(root&&hidden.length)root=container('h',[root,...hidden],[1,...hidden.map(()=>0)])
     if(!root)return false
     const focused=split.getFocusedTab()
-    split.maximize(null)
     split.root=root instanceof Constructor?root:container('h',[root])
-    split.layout()
-    if(focused&&(app.activeTab===split||app.activeTab===focused)){
+    split.maximize(null)
+    const main=focusTarget??tabs.find(tab=>!isAiPane(tab)&&!isFilePane(tab)&&!workspaceHiddenPanes.has(tab))
+    const bounds=main&&terminalHost(main)?.style
+    for(const tab of hidden){
+        if(!isAiPane(tab)&&!isFilePane(tab))updateStackedTerminalHost(tab,true,bounds)
+    }
+    if(focusTarget&&app.activeTab===split)split.focus(focusTarget)
+    else if(focused&&(app.activeTab===split||app.activeTab===focused)){
         const replacement=isFilePane(focused)?files.find(tab=>!collapsedAiPanes.has(tab)):isAiPane(focused)?ai.find(tab=>!collapsedAiPanes.has(tab)):focused
         const stackedReplacement=isFilePane(focused)?selectedStackedPane(split,'file',files):isAiPane(focused)?selectedStackedPane(split,'ai',ai):focused
         const fallback=tabs.find(tab=>!isAiPane(tab)&&!isFilePane(tab)&&!workspaceHiddenPanes.has(tab))??files[0]??ai[0]

@@ -518,7 +518,6 @@ export const englishMessages: Record<string,string> = {
     " 会话级路径检测命令，不修改远端配置文件。": " session directory detection command. Remote configuration files are unchanged.",
     "展开或收起工作区列表": "Expand or collapse workspace list",
     "终端模式下不能添加工作区": "Cannot add workspaces in terminal mode",
-    "终端尚未连接，无法切换目录": "The terminal is not connected; cannot switch directories",
     "终端正在运行全屏程序，请先退出到 shell 提示符再切换目录": "A full-screen program is active; return to the shell prompt before switching directories",
     "终端路径未同步，仍有未执行输入与任务": "Terminal path is not synced; there is pending input or unfinished work.",
     "）。": ").",

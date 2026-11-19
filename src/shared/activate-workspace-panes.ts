@@ -6,7 +6,7 @@ import { collapsedAiPanes, orderedAiPanes, orderedFilePanes } from '../arw-ai-cl
 import { tileWorkspacePanes } from '../arw-ai-cli/tiling'
 
 /** Reveal matching live panes without destroying sessions or selecting several tabs in succession. */
-export function activateWorkspacePanes(app:AppService,workspace:WorkspacePaneIdentity):boolean {
+export function activateWorkspacePanes(app:AppService,workspace:WorkspacePaneIdentity,focusTarget?:BaseTabComponent):boolean {
     const matches:Array<{top:BaseTabComponent;pane:BaseTabComponent}>=[]
     for(const top of app.tabs??[]){
         const split=top as SplitTabComponent
@@ -23,9 +23,10 @@ export function activateWorkspacePanes(app:AppService,workspace:WorkspacePaneIde
                 const selected=selectedStackedPane(split,kind,group)
                 if(selected)selectStackedPane(split,kind,selected,group)
             }
-            tileWorkspacePanes(app,split,true)
+            tileWorkspacePanes(app,split,true,focusTarget)
         }
     }
+    if(focusTarget)return true
     const selected=matches.find(entry=>entry.top===app.activeTab&&!stackedHiddenPanes.has(entry.pane))??matches.find(entry=>!stackedHiddenPanes.has(entry.pane))
     if(!selected)return false
     app.selectTab(selected.top)

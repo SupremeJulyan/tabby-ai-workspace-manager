@@ -35,7 +35,7 @@ The `arw` command is available after installation. WSL AI terminals on Windows r
 
 - Manage, save, and switch between local, SSH, and WSL workspaces.
 - Remember each tab's browsing directory, expanded folders, and Git view.
-- Expand folders, complete paths, and locate the terminal's current directory. Selecting a saved workspace synchronizes the terminal path.
+- Expand folders, complete paths, and locate the terminal's current directory. Selecting a saved workspace opens its dedicated terminal or switches back to its existing session.
 - Use native Linux paths in WSL workspaces, with the source terminal's distribution, user, and environment settings.
 - Resize the sidebar, with fonts and colors following Tabby settings.
 
