@@ -118,7 +118,8 @@ test('editor, preview and Diff tabs round-trip through JSON recovery with file i
         assert.equal(preview.arwPaneLayout,'stacked')
         assert.equal(preview.error,'');assert.match(preview.markdown,/External change/)
         const previewToken=await preview.getRecoveryToken()
-        assert.equal(previewToken.type,'arw-preview');assert.equal(previewToken.filePath,'notes.md')
+        assert.equal(previewToken.type,'arw-editor');assert.equal(previewToken.filePath,'notes.md')
+        assert.equal(previewToken.state.renderOnOpen,true)
         const diff=await create({type:'arw-editor',workspace:token.workspace,filePath:'notes.md',state:{diffPatch:'--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old\n+new\n',diffLabel:'Saved diff',diffMode:'unified'}});instances.push(diff)
         assert.equal(diff.isDiff,true);assert.equal(diff.readonly,true);assert.equal(diff.diff.added,1);assert.equal(diff.diffMode,'unified')
         assert.equal((await diff.getRecoveryToken()).state.diffLabel,'Saved diff')
@@ -203,7 +204,8 @@ test('an editor still loading is not labelled as a Diff, while a failed read bec
     const readGate=new Promise(resolve=>{releaseRead=resolve})
     const editor=new plugin.EditorComponent({get:()=>({})})
     editor.setTitle=title=>{editor.shownTitle=title}
-    editor.workspace={...localWorkspace('/project'),read:async(path)=>{signalRead();await readGate;throw new Error(`remote read failed: ${path}`)}}
+    editor.workspace={...localWorkspace('/project'),fileSize:async()=>12,readByteRange:undefined,
+        read:async(path)=>{signalRead();await readGate;throw new Error(`remote read failed: ${path}`)}}
     editor.filePath='notes.txt'
     const pending=editor.ngOnInit()
     await readStarted
