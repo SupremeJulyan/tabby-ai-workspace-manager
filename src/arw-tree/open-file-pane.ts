@@ -79,7 +79,8 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
 async function openFile<T extends BaseTabComponent>(app:AppService,params:NewTabParameters<T>,source:BaseTabComponent|null|undefined,layout:string,tabs?:Pick<TabsService,'create'>):Promise<T|undefined>{
     const anchor=topLevelFor(app,source??app.activeTab)
     rememberRemoteFiles(app)
-    if(!anchor||app.tabs.length===0){
+    if(app.tabs.length===0)return app.openNewTab(params)
+    if(!anchor){
         if(!await enforceRemoteFileLimit(app,1,true))return
         return app.openNewTab(params)
     }
