@@ -1369,6 +1369,23 @@ test('workspace registry follows local cwd but a pinned AI context stays fixed',
     registry.unregister(terminal);assert.equal(registry.current.value,null)
 })
 
+test('workspace registry follows the selected workspace terminal inside a split',async()=>{
+    const {Subject}=await import('rxjs'),plugin=load(),cwd=()=>new Subject()
+    const makeTerminal=(root,hasFocus=false)=>({profile:{type:'local',options:{cwd:root}},hasFocus,focused$:new Subject(),sessionChanged$:new Subject(),destroyed$:new Subject(),
+        session:{getWorkingDirectory:async()=>root,oscProcessor:{cwdReported$:cwd()},output$:new Subject(),destroyed$:new Subject()}})
+    const source=makeTerminal('/source',true),workspaceTerminal=makeTerminal('/workspace')
+    const panes=[source,workspaceTerminal],split={getAllTabs:()=>panes}
+    const app={tabs:[split],activeTab:split,activeTabChange$:new Subject(),getParentTab:tab=>panes.includes(tab)?split:undefined}
+    const registry=new plugin.WorkspaceRegistry(app,{run:fn=>fn()})
+    try{
+        registry.register(source);registry.register(workspaceTerminal)
+        await new Promise(resolve=>setTimeout(resolve,0))
+        assert.equal(registry.current.value.terminal,source)
+        registry.selectWorkspaceTerminal(split,workspaceTerminal)
+        assert.equal(registry.current.value.terminal,workspaceTerminal)
+    }finally{registry.unregister(source);registry.unregister(workspaceTerminal)}
+})
+
 test('remote AI binding survives decorator remounts, focus and placeholder cwd reports',async()=>{
     const {Subject}=await import('rxjs')
     const plugin=load(),focused=new Subject(),cwd=new Subject(),destroyed=new Subject()

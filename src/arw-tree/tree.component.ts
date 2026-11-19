@@ -38,7 +38,7 @@ import { ArwEditorComponent } from './editor.component'
 import { refreshOpenedWorkspaceFiles } from '../services/opened-files.service'
 import { workspaceNames } from '../shared/workspace-name'
 import { activateWorkspacePanes } from '../shared/activate-workspace-panes'
-import { selectWorkspaceTerminal, workspaceTerminalId } from '../shared/workspace-pane-visibility'
+import { workspaceTerminalId } from '../shared/workspace-pane-visibility'
 import { tileWorkspacePanes } from '../arw-ai-cli/tiling'
 import { wslDirectoryArguments } from '../shared/wsl-launch-directory'
 import { fileWorkspaceToken } from './file-recovery'
@@ -852,7 +852,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(this.app.activeTab!==originalTab&&this.app.activeTab!==split)return
             this.mode='files'
             this.activeProject=project.id
-            if(split&&terminal)selectWorkspaceTerminal(split,terminal)
+            if(split&&terminal)this.registry.selectWorkspaceTerminal?.(split,terminal)
             const identity=fileWorkspaceToken(workspace)
             if(identity)activateWorkspacePanes(this.app,identity,split?terminal:undefined)
             else if(split)tileWorkspacePanes(this.app,split,true,terminal)

@@ -2,12 +2,12 @@ import { terminalLocalWorkspace } from '../adapters/wsl-workspace'
 import { isMsysTerminal } from '../shared/msys-directory'
 import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath } from '../shared/wsl-directory'
 import { workspaceRecoveryState } from '../shared/workspace-recovery'
-import { workspaceTerminalId } from '../shared/workspace-pane-visibility'
+import { selectedWorkspaceTerminal, selectWorkspaceTerminal as selectWorkspaceTerminalLayout, workspaceTerminalId } from '../shared/workspace-pane-visibility'
 import { readWorkspaceBinding } from '../arw-cli/workspace-binding'
 import { logOperation } from './operation-log'
 import { t } from '../shared/i18n'
 import { Injectable, NgZone } from '@angular/core'
-import { AppService, BaseTabComponent } from 'tabby-core'
+import { AppService, BaseTabComponent, SplitTabComponent } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { BehaviorSubject, Subject, Subscription, auditTime } from 'rxjs'
 import { isAbsolute } from 'path'
@@ -55,6 +55,8 @@ export class WorkspaceRegistry {
         if (!tab) return undefined
         const terminals = (tab.getAllTabs?.() ?? [tab]) as BaseTerminalTabComponent<any>[]
         const registered = terminals.filter(terminal => this.entries.has(terminal))
+        const selected=selectedWorkspaceTerminal(tab)
+        if(selected&&registered.includes(selected as BaseTerminalTabComponent<any>))return selected as BaseTerminalTabComponent<any>
         const sources=registered.filter(terminal=>!this.entries.get(terminal)?.pinned
             && !terminal.profile?.options?.env?.ARW_WORKSPACE_ROOT)
         return sources.find(terminal=>!workspaceTerminalId(terminal))??sources[0]??registered[0]
@@ -138,6 +140,10 @@ export class WorkspaceRegistry {
         this.restoreBindings()
         const entry = this.entries.get(terminal)
         if (entry && this.current.value?.terminal !== terminal) this.emit(entry.selection)
+    }
+    selectWorkspaceTerminal(split:SplitTabComponent,terminal:BaseTerminalTabComponent<any>):void {
+        selectWorkspaceTerminalLayout(split,terminal)
+        this.activate(terminal)
     }
     pin (terminal: BaseTerminalTabComponent<any>, selection: WorkspaceSelection): void {
         const pinned = { ...selection, terminal, sourceTerminal:selection.sourceTerminal??selection.terminal }

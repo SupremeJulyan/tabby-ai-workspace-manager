@@ -14,6 +14,10 @@ export function selectWorkspaceTerminal(split:object,terminal:object):void {
     selectedTerminals.set(split,terminal)
 }
 
+export function selectedWorkspaceTerminal(split:object):object|undefined {
+    return selectedTerminals.get(split)
+}
+
 export function selectPaneWorkspace(split:object,workspace:WorkspacePaneIdentity):void {
     selectedWorkspaces.set(split,workspace)
 }
