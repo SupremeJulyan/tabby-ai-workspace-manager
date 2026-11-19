@@ -53,7 +53,7 @@ ${TEXT_SEARCH_TEMPLATE}
  <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span><span class="toolbar-spacer"></span><button (click)="changeBinaryPage(-1)" [disabled]="binaryPage===0">{{ '上一页' | arwTranslate }}</button><span>{{binaryPage+1}} / {{binaryPages}}</span><button (click)="changeBinaryPage(1)" [disabled]="binaryPage+1>=binaryPages">{{ '下一页' | arwTranslate }}</button></div>
  <pre class="binary-content" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
 </ng-container>
-<textarea #textEditor *ngIf="!isDiff && !markdownPreview && !binaryBytes" [readOnly]="readonly || loading || saving || reconnecting" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
+<textarea #textEditor *ngIf="!isDiff && !markdownPreview && !binaryBytes" [readOnly]="readonly || loading || saving || reconnecting" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown)="insertTab($event)" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
 `
 
 export const EDITOR_STYLES = scaleTypography(`

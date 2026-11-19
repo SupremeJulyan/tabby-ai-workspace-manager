@@ -17,9 +17,11 @@ import { fileWorkspaceToken, resolveFileWorkspace } from './file-recovery'
 import { TextSearch } from './text-search'
 import { logFileRecovery } from '../services/file-recovery-log'
 import { addFileCloseButton } from '../arw-ai-cli/close-button'
+import { readLocalByteRange } from '../shared/read-bytes'
 
 @Component({selector:'arw-preview',template:PREVIEW_TEMPLATE,styles:[PREVIEW_STYLES]})
 export class ArwPreviewComponent extends BaseTabComponent implements AfterViewInit {
+    readonly textChunkSize=10*1024*1024
     readonly arwFilePane=true
     get arwWorkspaceIdentity(){return this.workspace&&fileWorkspaceToken(this.workspace)}
     arwPaneLayout:PaneLayout='stacked'
@@ -59,6 +61,13 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     private version=0
     private viewReady=false
     private closed=false
+    private textOffset=0
+    private textHasMore=false
+    private textLoadingMore=false
+    private textDecoder?:TextDecoder
+    private releaseTimer?:ReturnType<typeof setTimeout>
+    private paneFocused=true
+    private paneSubscriptions:Array<{unsubscribe():void}>=[]
     private releaseRemote?:()=>void
     private unregisterFile?:()=>void
     private removePaneHeader?:()=>void
@@ -83,8 +92,11 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     get csvHeaders(){return Array.from({length:this.csv.columns},(_,index)=>this.csvHeader?(this.csv.rows[0]?.[index]||t`列 ${index+1}`):t`列 ${index+1}`)}
     get csvPages(){return Math.max(1,Math.ceil(this.csvFiltered.length/100))}
     get csvPageRows(){return this.csvFiltered.slice((this.csvPage-1)*100,this.csvPage*100)}
+    get canLoadMoreText(){return this.isText&&this.textHasMore&&!this.loading&&!this.error}
+    get previewReleased(){return !this.loading&&!this.text&&!this.imageUrl&&!this.pdfDocument&&!this.error&&this.byteLength===0}
     private render(){if(this.viewReady&&!this.closed)this.detector.detectChanges()}
     async ngOnInit():Promise<void>{
+        if(this.focused$&&this.blurred$)this.paneSubscriptions.push(this.focused$.subscribe(()=>this.onPaneFocused()),this.blurred$.subscribe(()=>this.onPaneBlurred()))
         this.setTitle(t`预览 · ${this.filePath}`)
         try{this.workspace=await resolveFileWorkspace(this.workspace,this.controller.signal)}
         catch(error){if(!this.closed){this.error=String(error);this.loading=false;this.render()}return}
@@ -94,6 +106,11 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         await this.load()
         if(!this.closed)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:async()=>{if(!this.loading&&!this.closed)await this.load()}})
     }
+    private onPaneFocused():void{this.paneFocused=true;clearTimeout(this.releaseTimer);if(this.previewReleased)void this.load()}
+    private onPaneBlurred():void{this.paneFocused=false;clearTimeout(this.releaseTimer);this.releaseTimer=setTimeout(()=>{if(!this.closed&&!this.paneFocused)this.releasePreviewMemory()},5*60*1000)}
+    private releasePreviewMemory():void{++this.version;this.controller.abort();this.controller=new AbortController();this.renderTask?.cancel();this.renderTask=undefined
+        void this.pdfLoading?.destroy().catch(()=>undefined);this.pdfLoading=undefined;this.pdfDocument=undefined;if(this.imageUrl)URL.revokeObjectURL(this.imageUrl);this.imageUrl=''
+        this.text='';this.textDecoder=undefined;this.markdown='';this.csv={rows:[],columns:0,truncated:false};this.csvFiltered=[];this.byteLength=0;this.encoding='';this.textOffset=0;this.textHasMore=false;this.error='';this.loading=false;this.render()}
     ngAfterViewInit():void{this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error)));this.viewReady=true;if(this.pdfDocument)void this.renderPdf()}
     async getRecoveryToken():Promise<RecoveryToken|null>{
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
@@ -108,6 +125,18 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         if(bytes.length>maxBytes)throw new Error(t('文件超过预览大小限制'))
         return bytes
     }
+    private textRangeBytes(path:string,offset:number,maxBytes:number):Promise<Uint8Array>{
+        if(this.workspace.readByteRange)return this.workspace.readByteRange(path,offset,maxBytes,this.controller.signal)
+        if(this.workspace.kind==='local')return readLocalByteRange(path,offset,maxBytes,this.controller.signal)
+        throw new Error(t('当前 SSH 会话不支持分段文本预览'))
+    }
+    async loadMoreText():Promise<void>{if(!this.canLoadMoreText||this.textLoadingMore)return;this.textLoadingMore=true;const version=this.version,offset=this.textOffset,path=this.filePath
+        try{const bytes=await this.textRangeBytes(path,offset,this.textChunkSize);if(version!==this.version||this.closed)return
+            if(this.encoding!=='UTF-8')throw new Error(t('暂不支持对非 UTF-8 文本分段预览'));this.textDecoder??=new TextDecoder('utf-8');const more=bytes.length===this.textChunkSize
+            this.text+=this.textDecoder.decode(bytes,{stream:more});this.textOffset+=bytes.length;this.textHasMore=more;this.byteLength=this.textOffset
+            if(this.kind==='csv')this.parseTable();else this.markdown=renderMarkdown(this.text)
+        }catch(error){if(version===this.version&&!this.closed)this.error=String(error)}finally{this.textLoadingMore=false;this.render()}}
+    textScroll(event:Event):void{const el=event.target as HTMLElement;if(el.scrollTop+el.clientHeight>=el.scrollHeight-160&&this.textHasMore)void this.loadMoreText()}
     private async imageBlob(bytes:Uint8Array,path:string):Promise<Blob>{
         const mime=imageMime(path)
         if(mime!=='image/tiff')return new Blob([new Uint8Array(bytes).buffer],{type:mime})
@@ -128,9 +157,11 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         try{
             if(!kind)throw new Error(t('不支持此文件的预览格式'))
             logFileRecovery('preview-read-start',{filePath:path,workspace:fileWorkspaceToken(this.workspace)})
-            const bytes=await this.bytes(path,previewMaxBytes(kind));if(version!==this.version||this.closed)return
+            const chunked=this.isText&&(!!this.workspace.readByteRange||this.workspace.kind==='local')
+            const bytes=chunked?await this.textRangeBytes(path,0,this.textChunkSize):await this.bytes(path,previewMaxBytes(kind));if(version!==this.version||this.closed)return
             logFileRecovery('preview-read-ready',{filePath:path})
             this.byteLength=bytes.length
+            if(chunked){this.textOffset=bytes.length;this.textHasMore=bytes.length===this.textChunkSize;this.textDecoder=new TextDecoder('utf-8')}
             if(kind==='image'){
                 const blob=await this.imageBlob(bytes,path);if(version!==this.version||this.closed)return
                 if(this.imageUrl)URL.revokeObjectURL(this.imageUrl)
@@ -145,7 +176,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
                 this.pdfDocument=pdf;this.pdfPage=1;this.pdfPageInput=1;this.pdfPasswordRequired=false;this.loading=false;this.render()
                 if(this.viewReady)await this.renderPdf()
             }else{
-                const decoded=decodePreviewText(bytes);this.text=decoded.text;this.encoding=decoded.encoding
+                const decoded=decodePreviewText(bytes);this.encoding=decoded.encoding;this.text=chunked&&decoded.encoding==='UTF-8'?this.textDecoder!.decode(bytes,{stream:this.textHasMore}):decoded.text
                 if(kind==='csv')this.parseTable()
                 else {
                     const assets=new Map<string,string>();let total=0
@@ -224,7 +255,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     }
     ngOnDestroy():void{
         this.removePaneHeader?.();this.search.destroy()
-        this.closed=true;this.version++;this.controller.abort();this.renderTask?.cancel();this.unregisterFile?.()
+        this.closed=true;clearTimeout(this.releaseTimer);this.paneSubscriptions.forEach(subscription=>subscription.unsubscribe());this.version++;this.controller.abort();this.renderTask?.cancel();this.unregisterFile?.()
         void this.pdfLoading?.destroy().catch(()=>undefined)
         if(this.imageUrl)URL.revokeObjectURL(this.imageUrl)
         this.releaseRemote?.();super.ngOnDestroy()

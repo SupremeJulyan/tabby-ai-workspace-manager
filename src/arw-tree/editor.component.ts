@@ -82,6 +82,12 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.loading&&!this.saving&&!this.reconnecting&&!this.isDiff&&!this.saveIssue,
         ()=>{this.markdownPreview=false;this.markdownVersion++})
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff&&!this.binaryBytes)this.search.key(event)}
+    insertTab(event:KeyboardEvent):void{
+        if(event.key!=='Tab'||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||this.readonly||this.loading||this.saving||this.reconnecting||this.isDiff||this.binaryBytes)return
+        const editor=event.currentTarget as HTMLTextAreaElement,start=editor.selectionStart,end=editor.selectionEnd;event.preventDefault()
+        this.content=this.content.slice(0,start)+'\t'+this.content.slice(end)
+        queueMicrotask(()=>{editor.setSelectionRange(start+1,start+1);this.search.visible&&this.search.changed()})
+    }
     constructor (private injector: Injector) {
         super(injector)
         this.platform = injector.get(PlatformService)

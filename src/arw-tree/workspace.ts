@@ -1,6 +1,6 @@
 import { BinaryFileError } from '../shared/binary-file'
 import { withWslExecution } from '../adapters/wsl-execution'
-import { readLocalBytes } from '../shared/read-bytes';
+import { readLocalBytes, readLocalByteRange } from '../shared/read-bytes';
 import { shellQuote } from '../shared/shell-quote';
 import { open, readFile, readdir, opendir, stat, lstat } from 'node:fs/promises';
 import { resolve, relative, isAbsolute, join } from 'node:path';
@@ -36,6 +36,7 @@ export interface Workspace {
   listForGit?(path:string,limit:number,signal?:AbortSignal):Promise<{entries:WorkspaceFile[];truncated:boolean}>;
   read(path: string, signal?:AbortSignal): Promise<WorkspaceText>;
   readBytes?(path:string,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>;
+  readByteRange?(path:string,offset:number,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>;
   write(path: string, content: string, expectedHash?: string): Promise<WorkspaceText>;
   writeCli?(path:string,content:string,expectedHash?:string,signal?:AbortSignal):Promise<WorkspaceText>;
   run(command: string, signal?: AbortSignal, options?: {maxBytes?: number}): Promise<GitResult>;
@@ -61,6 +62,7 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
         reloadSave:workspace.reloadSave ? path=>workspace.reloadSave!(childRoot(root,path)) : undefined,
         retrySave:workspace.retrySave ? (path,content)=>workspace.retrySave!(childRoot(root,path),content) : undefined,
         readBytes: workspace.readBytes ? (path,maxBytes,signal)=>workspace.readBytes!(childRoot(root,path),maxBytes,signal) : undefined,
+        readByteRange:workspace.readByteRange?(path,offset,maxBytes,signal)=>workspace.readByteRange!(childRoot(root,path),offset,maxBytes,signal):undefined,
         write: (path, content, expectedHash) => workspace.write(childRoot(root, path), content, expectedHash),
         writeCli: workspace.writeCli ? (path,content,expectedHash,signal)=>workspace.writeCli!(childRoot(root,path),content,expectedHash,signal) : undefined,
         run: (command, signal) => workspace.run(workspace.kind === 'remote' ? `cd -- ${shellQuote(absolute)} && ${command}` : command, signal),
@@ -117,6 +119,7 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     },
     read,
     readBytes:async(input,maxBytes,signal)=>readLocalBytes(resolve(root,input),maxBytes,signal),
+    readByteRange:async(input,offset,maxBytes,signal)=>readLocalByteRange(resolve(root,input),offset,maxBytes,signal),
     async write(input, content, expectedHash) {
       if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 500 MiB');
       const target = filePath(input);

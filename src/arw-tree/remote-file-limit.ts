@@ -6,7 +6,7 @@ const order=new WeakMap<object,number>()
 const pending=new WeakMap<object,Promise<void>>()
 let sequence=0
 export function remoteFileLimit(value:unknown):number {
-    return typeof value==='number'&&Number.isInteger(value)&&value>=1?value:10
+    return typeof value==='number'&&Number.isInteger(value)&&value>=1?Math.min(value,9):9
 }
 export function registerRemoteFileLimit(app:object,read:()=>unknown):()=>void {
     readers.set(app,read)
@@ -14,7 +14,7 @@ export function registerRemoteFileLimit(app:object,read:()=>unknown):()=>void {
 }
 function remoteFiles(app:AppService):BaseTabComponent[] {
     const files=(app.tabs??[]).flatMap(tab=>'getAllTabs' in tab?(tab as any).getAllTabs():[tab]) as BaseTabComponent[]
-    return [...new Set(files)].filter(tab=>isFilePane(tab)&&(tab as any).workspace?.kind==='remote'&&!(tab as any).destroyed)
+    return [...new Set(files)].filter(tab=>isFilePane(tab)&&!(tab as any).destroyed)
 }
 export function rememberRemoteFiles(app:AppService):void {
     for(const file of remoteFiles(app))if(!order.has(file))order.set(file,++sequence)

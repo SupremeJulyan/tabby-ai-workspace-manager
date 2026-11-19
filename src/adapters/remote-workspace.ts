@@ -10,7 +10,7 @@ import { TabbyRelayTransport } from './transport'
 import { RemotePathGuard } from '../security/remote-path'
 import { commandBoundaryTargets } from '../security/command-policy'
 import { optionalSftp } from './optional-sftp'
-import { listShellDirectory, readShellText, parseShellDirectory } from './shell-files'
+import { listShellDirectory, readShellText, readShellByteRange, parseShellDirectory } from './shell-files'
 import { notifyWorkspaceChange } from '../shared/workspace-changes'
 import { textFileLimit } from '../arw-tree/workspace'
 import { executeChannel } from '../shared/exec-channel'
@@ -19,7 +19,7 @@ import { SaveConfirmation, SaveConfirmationState } from './save-confirmation'
 import { leafName } from '../shared/workspace-name'
 import { saveRemoteText } from './remote-save'
 import { readSftpText, saveSftpText, sftpPermissions } from './sftp-text'
-import { readSftpBytes } from './sftp-read'
+import { readSftpBytes, readSftpByteRange } from './sftp-read'
 
 class BackgroundDirectoryLimit extends Error {}
 
@@ -210,6 +210,18 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             const file=await sftp.open(target,OPEN_READ)
             try{
                 return await readSftpBytes(file,info.size,signal)
+            }finally{await file.close()}
+        },
+        async readByteRange(input,offset,maxBytes,signal){
+            previewLimit(maxBytes);if(!Number.isSafeInteger(offset)||offset<0)throw new Error('Invalid preview offset');signal?.throwIfAborted()
+            if(!session.open)throw new Error(t('SSH 已断开'))
+            const sftp=await optionalSftp(session);if(!sftp){const target=await guard.resolveRead(input,signal);return readShellByteRange(transport,target,offset,maxBytes,signal)}
+            const target=posix.resolve(root,input),before=await sftp.stat(target);if(before.isDirectory)throw new Error(t('只能预览普通文件'))
+            if(offset>before.size)throw new Error(t('远程文件在读取时发生变化，请重新打开'))
+            const length=Math.min(maxBytes,before.size-offset),file=await sftp.open(target,OPEN_READ)
+            try{const bytes=await readSftpByteRange(file,offset,length,signal),after=await sftp.stat(target)
+                if(before.size!==after.size||String(before.modified)!==String(after.modified))throw new Error(t('远程文件在读取时发生变化，请重新打开'))
+                return bytes
             }finally{await file.close()}
         },
         write,

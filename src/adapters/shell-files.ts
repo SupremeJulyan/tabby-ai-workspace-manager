@@ -62,3 +62,22 @@ test "$(stat -c '%s:%y' -- ${quoted})" = "$version" || { printf '%s\\n' '远端�
     return {content:decodeText(bytes),hash:version}
 }
 
+
+export async function readShellByteRange(transport:TabbyRelayTransport,target:string,offset:number,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>{
+    if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(maxBytes)||maxBytes<1)throw new Error('Invalid remote preview range')
+    const quoted=shellQuote(target),length=maxBytes
+    const command=`test -f ${quoted} || exit 1
+version=$(stat -c '%s:%y' -- ${quoted}) || exit $?
+size=\${version%%:*}
+test "$size" -le ${textFileLimit} || exit 1
+test "${offset}" -le "$size" || exit 1
+printf 'ARW_RANGE:%s\\n' "$version"
+tail -c +$(( ${offset} + 1 )) -- ${quoted} | head -c ${length} | base64 || exit $?
+test "$(stat -c '%s:%y' -- ${quoted})" = "$version" || exit 1`
+    const result=await transport.run(command,signal??AbortSignal.timeout(30000),{maxBytes:Math.ceil(length/3)*4+2048})
+    signal?.throwIfAborted();if(result.exitCode!==0)throw new Error(result.stderr.trim()||t('无法读取远端文件片段'))
+    const newline=result.stdout.indexOf('\n'),header=result.stdout.slice(0,newline);if(newline<0||!/^ARW_RANGE:\d+:.+$/.test(header))throw new Error(t('无法读取远端文件的修改时间或大小'))
+    const encoded=result.stdout.slice(newline+1).replace(/[\r\n\t ]/g,'');const bytes=Buffer.from(encoded,'base64'),size=Number(header.slice('ARW_RANGE:'.length).split(':')[0])
+    if(bytes.toString('base64')!==encoded||bytes.length!==Math.min(length,size-offset))throw new Error(t('远程文件在读取时发生变化，请重新打开'))
+    return bytes
+}

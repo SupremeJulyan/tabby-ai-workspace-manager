@@ -132,6 +132,7 @@ export function restoredFileWorkspace(token:FileWorkspaceToken,app:AppService,po
         list:async(path,signal)=>(await resolve(signal)).list(path,signal),
         read:async(path,signal)=>(await resolve(signal)).read(path,signal),
         readBytes:async(path,maxBytes,signal)=>(await resolve(signal)).readBytes!(path,maxBytes,signal),
+        readByteRange:async(path,offset,maxBytes,signal)=>(await resolve(signal)).readByteRange!(path,offset,maxBytes,signal),
         write:async(path,content,hash)=>(await resolve()).write(path,content,hash),
         run:async(command,signal,options)=>(await resolve(signal)).run(command,signal,options)}
     restored.set(workspace,{token,resolve})
