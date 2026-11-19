@@ -3003,7 +3003,7 @@ test('conflict resolution failures retain the draft and ordinary failures never 
     }
 })
 
-test('Markdown opens as editable source and previews the unsaved buffer in the same tab',async()=>{
+test('Markdown opens in preview and edits and renders the unsaved buffer in the same tab',async()=>{
     const {BehaviorSubject}=await import('rxjs'),plugin=load(),opened=[],writes=[]
     const workspace={id:'markdown',kind:'local',root:'/project',host:'localhost',name:'project',label:'project',
         read:async()=>({content:'# Original',hash:'version'}),write:async(...args)=>{writes.push(args);return {content:args[1],hash:'saved'}},
@@ -3020,7 +3020,9 @@ test('Markdown opens as editable source and previews the unsaved buffer in the s
         assert.equal(opened.at(-1).type,plugin.PreviewComponent,'image routing is preserved')
         editor=new plugin.EditorComponent({get:()=>({})});editor.setTitle=()=>{}
         Object.assign(editor,opened[0].inputs);await editor.ngOnInit()
-        assert.equal(editor.readonly,false);assert.equal(editor.markdownPreview,false)
+        assert.equal(editor.readonly,false);assert.equal(editor.viewOnly,true);assert.equal(editor.markdownPreview,true)
+        editor.toggleTextMode()
+        assert.equal(editor.viewOnly,false);assert.equal(editor.markdownPreview,false)
         editor.content='# Unsaved heading\n\n![diagram](diagram.png)\n\n<script>bad()</script>'
         await editor.toggleMarkdown()
         assert.equal(editor.markdownPreview,true);assert.match(editor.markdown,/<h1[^>]*>Unsaved heading<\/h1>/)
