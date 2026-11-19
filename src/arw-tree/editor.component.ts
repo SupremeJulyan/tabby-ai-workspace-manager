@@ -353,11 +353,18 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     get isDiff (): boolean { return this.diffPatch !== undefined }
     get isMarkdown():boolean {return !this.isDiff&&!this.binaryBytes&&previewKind(this.filePath)==='markdown'}
     get isCsv():boolean {return !this.isDiff&&!this.binaryBytes&&previewKind(this.filePath)==='csv'}
-    get canToggleTextMode():boolean{return !this.isDiff&&!this.binaryBytes&&!this.readonly&&this.initialContent===undefined}
-    toggleTextMode():void{
-        if(!this.canToggleTextMode||this.loading||this.saving||this.reconnecting)return
-        this.viewOnly=!this.viewOnly
-        if(!this.viewOnly)this.clearRenderedPreview()
+    get canToggleContentMode():boolean{return !this.isDiff&&!this.binaryBytes&&!this.readonly&&this.initialContent===undefined}
+    async toggleContentMode(event?:MouseEvent):Promise<void>{
+        event?.preventDefault();event?.stopPropagation()
+        if(!this.canToggleContentMode||this.loading||this.saving||this.reconnecting)return
+        if(this.markdownPreview){this.clearRenderedPreview();this.viewOnly=false;return}
+        if(this.viewOnly){this.viewOnly=false;return}
+        if(this.isMarkdown||this.isCsv){
+            this.viewOnly=true
+            await this.toggleMarkdown()
+            return
+        }
+        this.viewOnly=true
     }
     private clearRenderedPreview():void{
         this.markdownPreview=false;this.markdownVersion++;this.markdown='';this.markdownError=''
