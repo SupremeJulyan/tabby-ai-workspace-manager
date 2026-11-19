@@ -25,7 +25,7 @@ export async function readSftpText(sftp:SFTPSession,target:string,signal?:AbortS
     signal?.throwIfAborted()
     info ??= await sftp.stat(target)
     if(info.isDirectory)throw new Error(t('只能读取普通文本文件'))
-    if(!Number.isSafeInteger(info.size)||info.size<0||info.size>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
+    if(!Number.isSafeInteger(info.size)||info.size<0||info.size>textFileLimit)throw new Error(t('文本文件上限为 100 MiB'))
     const version=sftpTextVersion(info)
     signal?.throwIfAborted()
     const file=await sftp.open(target,OPEN_READ)
@@ -56,7 +56,7 @@ export async function saveSftpText(
     }
     const mode=before?sftpPermissions(before):'600'
     if(mode!==undefined)recordPermissions(mode)
-    // Keep encoding memory bounded even for a 500 MiB editor buffer.
+    // Keep encoding memory bounded even for a 100 MiB editor buffer.
     const bytes=Buffer.allocUnsafe(Math.min(256*1024,content.length*3)),encoder=new TextEncoder()
     let writtenBytes=0
     signal.throwIfAborted()

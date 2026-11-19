@@ -2,6 +2,7 @@ import { terminalLocalWorkspace } from '../adapters/wsl-workspace'
 import { isMsysTerminal } from '../shared/msys-directory'
 import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath, terminalWorkspaceDisplayPath } from '../shared/wsl-directory'
 import { terminalDirectoryCommand } from '../shared/terminal-directory-command'
+import { checkFileReadSize } from '../shared/file-size-policy'
 import { limitConcurrency } from '../shared/concurrency'
 import { rememberWorkspace, workspaceRecoveryState } from '../shared/workspace-recovery'
 import { logOperation } from '../services/operation-log'
@@ -1371,13 +1372,24 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         if (!workspace || (node.loading && !node.directory)) return
         if(node.symlink){this.error=t('符号链接不支持在文件浏览器中打开：')+node.path;this.render();return}
         if (!node.directory) {
+            if(workspace.fileSize){
+                const tab=this.activeTab
+                try {checkFileReadSize(workspace.kind,await workspace.fileSize(node.path,AbortSignal.timeout(15000)))}
+                catch(error){
+                    if(tab===this.activeTab){this.error=redactSensitiveText(String(error));this.render()}
+                    return
+                }
+                if(tab!==this.activeTab||workspace!==(this.browserWorkspace??this.selection?.workspace))return
+            }
             this.rememberBrowsing()
             const kind=previewKind(node.path)
-            if(kind&&kind!=='markdown'){
+            if(kind==='image'||kind==='pdf'){
                 const paths=workspacePath(workspace.kind),parent=paths.dirname(node.path)
                 const imagePaths=this.nodes.filter(entry=>!entry.directory&&previewKind(entry.path)==='image'&&paths.dirname(entry.path)===parent).map(entry=>entry.path)
                 await openFilePane(this.app,{type:ArwPreviewComponent,inputs:{workspace,filePath:node.path,imagePaths}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
-            }else await openFilePane(this.app,{ type: ArwEditorComponent, inputs: { workspace, filePath:node.path } },this.source,this.config?.store.omw?.fileLayout,this.tabs)
+            }else await openFilePane(this.app,{type:ArwEditorComponent,inputs:{
+                workspace,filePath:node.path,viewOnly:true,renderOnOpen:kind==='markdown'||kind==='csv',
+            }},this.source,this.config?.store.omw?.fileLayout,this.tabs)
             return
         }
         await this.enter(node)

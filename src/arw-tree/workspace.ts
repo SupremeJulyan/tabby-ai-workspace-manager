@@ -35,8 +35,9 @@ export interface Workspace {
   list(path: string, signal?: AbortSignal): Promise<WorkspaceFile[]>;
   listForGit?(path:string,limit:number,signal?:AbortSignal):Promise<{entries:WorkspaceFile[];truncated:boolean}>;
   read(path: string, signal?:AbortSignal): Promise<WorkspaceText>;
+  fileSize?(path:string,signal?:AbortSignal):Promise<number>;
   readBytes?(path:string,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>;
-  readByteRange?(path:string,offset:number,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>;
+  readByteRange?(path:string,offset:number,maxBytes:number,signal?:AbortSignal,forEditing?:boolean):Promise<Uint8Array>;
   write(path: string, content: string, expectedHash?: string): Promise<WorkspaceText>;
   writeCli?(path:string,content:string,expectedHash?:string,signal?:AbortSignal):Promise<WorkspaceText>;
   run(command: string, signal?: AbortSignal, options?: {maxBytes?: number}): Promise<GitResult>;
@@ -57,12 +58,13 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
         get connectionStatus(){return workspace.connectionStatus},
         list: (path, signal) => workspace.list(childRoot(root, path), signal),
         read: (path,signal) => workspace.read(childRoot(root, path),signal),
+        fileSize: workspace.fileSize ? (path,signal)=>workspace.fileSize!(childRoot(root,path),signal) : undefined,
         saveIssue:workspace.saveIssue ? path=>workspace.saveIssue!(childRoot(root,path)) : undefined,
         verifySave:workspace.verifySave ? path=>workspace.verifySave!(childRoot(root,path)) : undefined,
         reloadSave:workspace.reloadSave ? path=>workspace.reloadSave!(childRoot(root,path)) : undefined,
         retrySave:workspace.retrySave ? (path,content)=>workspace.retrySave!(childRoot(root,path),content) : undefined,
         readBytes: workspace.readBytes ? (path,maxBytes,signal)=>workspace.readBytes!(childRoot(root,path),maxBytes,signal) : undefined,
-        readByteRange:workspace.readByteRange?(path,offset,maxBytes,signal)=>workspace.readByteRange!(childRoot(root,path),offset,maxBytes,signal):undefined,
+        readByteRange:workspace.readByteRange?(path,offset,maxBytes,signal,forEditing)=>workspace.readByteRange!(childRoot(root,path),offset,maxBytes,signal,forEditing):undefined,
         write: (path, content, expectedHash) => workspace.write(childRoot(root, path), content, expectedHash),
         writeCli: workspace.writeCli ? (path,content,expectedHash,signal)=>workspace.writeCli!(childRoot(root,path),content,expectedHash,signal) : undefined,
         run: (command, signal) => workspace.run(workspace.kind === 'remote' ? `cd -- ${shellQuote(absolute)} && ${command}` : command, signal),
@@ -82,9 +84,9 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     const info=await lstat(target);
     if(info.isSymbolicLink())throw new Error('Editing symbolic links is not supported yet');
     if(!info.isFile())throw new Error('Only regular files can be read');
-    if(info.size > textFileLimit) throw new Error('Text files are limited to 500 MiB');
+    if(info.size > textFileLimit) throw new Error('Text files are limited to 100 MiB');
     const bytes = await readFile(target);
-    if (bytes.length > textFileLimit) throw new Error('Text files are limited to 500 MiB');
+    if (bytes.length > textFileLimit) throw new Error('Text files are limited to 100 MiB');
     if (bytes.includes(0)) throw new BinaryFileError();
     const content = decodeText(bytes);
     return { content, hash: textHash(content) };
@@ -119,9 +121,15 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
     },
     read,
     readBytes:async(input,maxBytes,signal)=>readLocalBytes(resolve(root,input),maxBytes,signal),
-    readByteRange:async(input,offset,maxBytes,signal)=>readLocalByteRange(resolve(root,input),offset,maxBytes,signal),
+    readByteRange:async(input,offset,maxBytes,signal,forEditing)=>readLocalByteRange(resolve(root,input),offset,maxBytes,signal,forEditing),
+    fileSize:async(input,signal)=>{
+        signal?.throwIfAborted()
+        const info=await stat(resolve(root,input))
+        if(!info.isFile())throw new Error(t('只能预览普通文件'))
+        return info.size
+    },
     async write(input, content, expectedHash) {
-      if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 500 MiB');
+      if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 100 MiB');
       const target = filePath(input);
       let before:Awaited<ReturnType<typeof snapshot>>|undefined;
       try{before=await snapshot(target)}catch(error){

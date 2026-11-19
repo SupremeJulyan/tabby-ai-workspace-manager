@@ -73,7 +73,7 @@ Remote image and PDF previews require SFTP.
 ## AI terminals
 
 - Configure multiple AI startup commands, recovery commands, and HTTP/HTTPS proxies. AI names are parsed from binary filenames, and each workspace remembers its selected AI.
-- Open multiple AI terminals in one tab, with collapse, restore, and close controls.
+- Open up to 9 AI terminals at a time, with collapse, restore, and close controls in the same tab.
 - Keep each AI terminal associated with its workspace when switching the sidebar.
 - Continue previous sessions with Tabby's tab recovery and AI CLI recovery arguments.
 - Browse and edit workspace files, search content, execute commands, and operate Git through ARW.

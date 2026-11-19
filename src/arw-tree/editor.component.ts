@@ -1,10 +1,10 @@
 import { optionalSftp } from '../adapters/optional-sftp'
+import { checkFileReadSize, checkFileWriteSize, fileReadLimit, fileWriteLimit } from '../shared/file-size-policy'
 import { posix } from 'node:path'
 import { shellQuote } from '../shared/shell-quote'
 import { FileSessionPool } from '../services/file-session-pool'
 import { remoteWorkspace } from '../adapters/remote-workspace'
 import { isBinaryFileError, binaryPageBytes, formatHexPage } from '../shared/binary-file'
-import { textFileLimit } from '../shared/text-file-limit'
 import type { PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { AfterViewInit, Component, Injector, ElementRef, HostListener, ViewChild } from '@angular/core'
@@ -18,7 +18,12 @@ import { TextSearch, type FindState } from './text-search'
 import { logFileRecovery } from '../services/file-recovery-log'
 import { addFileCloseButton } from '../arw-ai-cli/close-button'
 import { isFileConflict, isFileMissing } from '../shared/file-conflict'
-import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime } from './preview/model'
+import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
+
+const editorChunkBytes=256*1024
+interface EditorPage {offset:number;start:number}
+interface PageText {text:string;length:number;more:boolean}
+interface PageEdit {start:number;original:string;content:string}
 
 @Component({
     selector: 'arw-editor',
@@ -35,6 +40,10 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     original = ''
     hash?: string
     readonly = false
+    largeTextReadOnly=false
+    get editLimitMiB():number{return fileWriteLimit(this.workspace?.kind??'local')/(1024*1024)}
+    viewOnly=false
+    renderOnOpen=false
     initialContent?: string
     diffPatch?: string
     diffLabel?: string
@@ -48,18 +57,144 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     error = ''
     binaryBytes?:Uint8Array
     binaryPage=0
+    private pages:EditorPage[]=[]
+    private pageCache=new Map<number,PageText>()
+    private pageEdits=new Map<number,PageEdit>()
+    textPage=0
+    get pagedText():boolean{return this.pages.length>0}
+    private needsFileVersion=false
+    hasMoreText=false
     get binaryPages():number {return Math.max(1,Math.ceil((this.binaryBytes?.length??0)/binaryPageBytes))}
     get binaryContent():string {return this.binaryBytes?formatHexPage(this.binaryBytes,this.binaryPage):''}
     changeBinaryPage(delta:number):void {this.binaryPage=Math.max(0,Math.min(this.binaryPages-1,this.binaryPage+delta))}
     private async readFile():Promise<void> {
+        const signal=this.recoveryController.signal
+        const size=await this.workspace.fileSize?.(this.filePath,signal)??0
+        checkFileReadSize(this.workspace.kind,size)
+        this.largeTextReadOnly=size>fileWriteLimit(this.workspace.kind)
+        this.readonly=this.largeTextReadOnly
         try {
+            if(this.workspace.readByteRange){
+                const bytes=await this.workspace.readByteRange(this.filePath,0,editorChunkBytes+1,this.recoveryController.signal,true)
+                if(bytes.length>editorChunkBytes&&!bytes.includes(0)){
+                    try{
+                        const chunk=this.decodeEditorChunk(bytes,0)
+                        this.resetPages()
+                        this.pages=[{offset:0,start:0}]
+                        this.showPage(0,{...chunk,more:true})
+                        this.needsFileVersion=true;this.hash=undefined
+                        return
+                    }catch(error){if(!(error instanceof TypeError))throw error}
+                }
+            }
             const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
             this.content=file.content;this.hash=file.hash
         }catch(error){
             if(!isBinaryFileError(error)||!this.workspace.readBytes)throw error
-            this.binaryBytes=await this.workspace.readBytes(this.filePath,textFileLimit,this.recoveryController.signal)
+            this.binaryBytes=await this.workspace.readBytes(this.filePath,fileReadLimit(this.workspace.kind),this.recoveryController.signal)
             this.binaryPage=0;this.readonly=true;this.content='';this.hash=undefined
         }
+        this.resetPages();this.needsFileVersion=false
+    }
+    private decodeEditorChunk(bytes:Uint8Array,offset:number):{text:string;length:number}{
+        let length=Math.min(bytes.length,editorChunkBytes)
+        while(length>0&&length<bytes.length&&(bytes[length]&0xc0)===0x80)length--
+        if(!length&&bytes.length)throw new TypeError('Invalid UTF-8 boundary')
+        const text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:offset>0}).decode(bytes.subarray(0,length))
+        return {text,length}
+    }
+    private resetPages():void {
+        this.pages=[];this.pageCache.clear();this.pageEdits.clear()
+        this.textPage=0;this.hasMoreText=false
+    }
+    private rememberPageEdit():void {
+        if(!this.pagedText)return
+        const {start}=this.pages[this.textPage]
+        if(this.content===this.original)this.pageEdits.delete(start)
+        else this.pageEdits.set(start,{start,original:this.original,content:this.content})
+    }
+    private async fetchPage(index:number):Promise<PageText>{
+        const cached=this.pageCache.get(index)
+        if(cached)return cached
+        const {offset,start}=this.pages[index]
+        const bytes=await this.workspace.readByteRange!(this.filePath,offset,editorChunkBytes+1,this.recoveryController.signal,true)
+        if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
+        const chunk=this.decodeEditorChunk(bytes,offset),more=chunk.length<bytes.length
+        const next=this.pages[index+1]
+        if(next&&(!more||next.offset!==offset+chunk.length||next.start!==start+chunk.text.length)){
+            throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
+        }
+        if(more&&!next)this.pages[index+1]={offset:offset+chunk.length,start:start+chunk.text.length}
+        return {...chunk,more}
+    }
+    private showPage(index:number,page:PageText):void {
+        const {offset,start}=this.pages[index]
+        if(page.more&&!this.pages[index+1])this.pages[index+1]={offset:offset+page.length,start:start+page.text.length}
+        this.textPage=index;this.hasMoreText=page.more
+        this.pageCache.set(index,page)
+        for(const cached of this.pageCache.keys())if(Math.abs(cached-index)>1)this.pageCache.delete(cached)
+        const edit=this.pageEdits.get(start)
+        this.original=edit?.original??page.text;this.content=edit?.content??page.text
+        this.clearRenderedPreview()
+    }
+    async changeTextPage(delta:number):Promise<void>{
+        const index=this.textPage+delta
+        if(!this.pages[index]||this.loading||this.saving||this.reconnecting||this.saveIssue)return
+        const restorePreview=this.markdownPreview
+        this.rememberPageEdit()
+        this.loading=true;this.error=''
+        try{
+            this.showPage(index,await this.fetchPage(index))
+            if(this.search.visible)this.search.changed()
+        }catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+        finally{this.loading=false}
+        if(restorePreview&&!this.error)await this.toggleMarkdown()
+    }
+    private async mergeText():Promise<{content:string;original:string;hash?:string}>{
+        this.rememberPageEdit()
+        const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
+        const edits=this.pagedText?[...this.pageEdits.values()].sort((a,b)=>a.start-b.start):
+            [{start:0,original:this.original,content:this.content}]
+        const parts:string[]=[]
+        let end=0
+        for(const edit of edits){
+            if(edit.start<end||file.content.slice(edit.start,edit.start+edit.original.length)!==edit.original){
+                throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
+            }
+            parts.push(file.content.slice(end,edit.start),edit.content)
+            end=edit.start+edit.original.length
+        }
+        parts.push(file.content.slice(end))
+        return {content:parts.join(''),original:file.content,hash:file.hash}
+    }
+    async searchFullText():Promise<void>{
+        if(this.loading||this.saving||this.reconnecting||this.saveIssue||!this.pagedText)return
+        this.rememberPageEdit()
+        this.loading=true;this.error=''
+        const query=this.search.state
+        let text=''
+        const scan=new TextSearch(()=>text,()=>{},()=>undefined,()=>undefined,()=>false)
+        Object.assign(scan,query)
+        const cached=[...this.pageCache.keys()].filter(index=>index!==this.textPage)
+        const current=()=>this.search.visible&&!this.recoveryController.signal.aborted&&JSON.stringify(this.search.state)===JSON.stringify(query)
+        const searchPage=async(index:number)=>{
+            const page=await this.fetchPage(index)
+            if(!current())return true
+            text=this.pageEdits.get(this.pages[index].start)?.content??page.text
+            scan.changed()
+            if(!scan.matches.length)return false
+            this.showPage(index,page);this.search.changed()
+            return true
+        }
+        try{
+            for(const index of cached)if(await searchPage(index))return
+            for(let index=0;index<this.pages.length&&current();index++){
+                if(index!==this.textPage&&!cached.includes(index)&&await searchPage(index))return
+            }
+            if(current())this.error=t('全文未找到匹配内容')
+        }
+        catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+        finally{scan.destroy();this.loading=false}
     }
     markdownPreview=false
     markdown=''
@@ -74,16 +209,17 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private reconnectPool?:FileSessionPool
     reconnecting=false
     get canReconnect():boolean {return this.workspace?.kind==='remote'&&!this.isDiff&&this.initialContent===undefined}
-    recoveredEdit?:{content:string;original:string;hash?:string}
+    recoveredEdit?:{content:string;original:string;hash?:string;loadedBytes?:number;hasMoreText?:boolean;needsFileVersion?:boolean}
+    recoveredPages?:{pages:EditorPage[];page:number;edits:PageEdit[]}
     initialFind?:FindState
     @ViewChild('textEditor') textEditor?:ElementRef<HTMLTextAreaElement>
     @ViewChild('findInput') findInput?:ElementRef<HTMLInputElement>
     readonly search=new TextSearch(()=>this.content,text=>{this.content=text},()=>this.textEditor?.nativeElement,
-        ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.loading&&!this.saving&&!this.reconnecting&&!this.isDiff&&!this.saveIssue,
-        ()=>{this.markdownPreview=false;this.markdownVersion++})
+        ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.viewOnly&&!this.loading&&!this.saving&&!this.reconnecting&&!this.isDiff&&!this.saveIssue,
+        ()=>this.clearRenderedPreview())
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff&&!this.binaryBytes)this.search.key(event)}
     insertTab(event:KeyboardEvent):void{
-        if(event.key!=='Tab'||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||this.readonly||this.loading||this.saving||this.reconnecting||this.isDiff||this.binaryBytes)return
+        if(event.key!=='Tab'||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||this.readonly||this.viewOnly||this.loading||this.saving||this.reconnecting||this.isDiff||this.binaryBytes)return
         const editor=event.currentTarget as HTMLTextAreaElement,start=editor.selectionStart,end=editor.selectionEnd;event.preventDefault()
         this.content=this.content.slice(0,start)+'\t'+this.content.slice(end)
         queueMicrotask(()=>{editor.setSelectionRange(start+1,start+1);this.search.visible&&this.search.changed()})
@@ -94,16 +230,53 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         this.app = injector.get(AppService)
         this.notifications = injector.get(NotificationsService)
     }
-    get dirty (): boolean { return !this.readonly && this.content !== this.original }
+    get dirty (): boolean {
+        return !this.readonly&&(this.content!==this.original||
+            [...this.pageEdits.keys()].some(start=>start!==this.pages[this.textPage]?.start))
+    }
     get saveIssue (): {message:string;busy:boolean}|undefined {return this.workspace?.saveIssue?.(this.filePath)}
     get isDiff (): boolean { return this.diffPatch !== undefined }
     get isMarkdown():boolean {return !this.isDiff&&!this.binaryBytes&&previewKind(this.filePath)==='markdown'}
+    get isCsv():boolean {return !this.isDiff&&!this.binaryBytes&&previewKind(this.filePath)==='csv'}
+    get canToggleTextMode():boolean{return !this.isDiff&&!this.binaryBytes&&!this.readonly&&this.initialContent===undefined}
+    toggleTextMode():void{
+        if(!this.canToggleTextMode||this.loading||this.saving||this.reconnecting)return
+        this.viewOnly=!this.viewOnly
+        if(!this.viewOnly)this.clearRenderedPreview()
+    }
+    private clearRenderedPreview():void{
+        this.markdownPreview=false;this.markdownVersion++;this.markdown='';this.markdownError=''
+        this.csv={rows:[],columns:0,truncated:false};this.csvFiltered=[]
+    }
+    csv:CsvPreview={rows:[],columns:0,truncated:false}
+    csvDelimiter='auto'
+    csvHeader=true
+    csvQuery=''
+    csvPage=1
+    csvFiltered:Array<{values:string[];index:number}>=[]
+    get csvHeaders(){return Array.from({length:this.csv.columns},(_,index)=>this.csvHeader?(this.csv.rows[0]?.[index]||t`列 ${index+1}`):t`列 ${index+1}`)}
+    get csvPages(){return Math.max(1,Math.ceil(this.csvFiltered.length/100))}
+    get csvPageRows(){return this.csvFiltered.slice((this.csvPage-1)*100,this.csvPage*100)}
+    parseTable():void{
+        try{
+            const delimiter=this.csvDelimiter==='auto'?(this.filePath.toLowerCase().endsWith('.tsv')?'\t':detectDelimiter(this.content)):this.csvDelimiter
+            this.csv=parseCsv(this.content,delimiter);this.markdownError='';this.filterTable()
+        }catch(error){this.markdownError=String(error)}
+    }
+    filterTable():void{
+        const query=this.csvQuery.toLocaleLowerCase()
+        this.csvFiltered=this.csv.rows.flatMap((values,index)=>index===0&&this.csvHeader||
+            query&&!values.some(value=>value.toLocaleLowerCase().includes(query))?[]:[{values,index:index+1}])
+        this.csvPage=1
+    }
+    changeCsvPage(delta:number):void{this.csvPage=Math.max(1,Math.min(this.csvPages,this.csvPage+delta))}
     async toggleMarkdown():Promise<void> {
-        if(!this.isMarkdown||this.loading||this.saving)return
+        if((!this.isMarkdown&&!this.isCsv)||this.loading||this.saving)return
+        if(this.markdownPreview){this.clearRenderedPreview();return}
         const version=++this.markdownVersion
-        this.markdownPreview=!this.markdownPreview;this.markdownError=''
-        if(!this.markdownPreview)return
+        this.markdownPreview=true;this.markdownError=''
         this.search.close()
+        if(this.isCsv){this.parseTable();return}
         const content=this.content,path=this.filePath,workspace=this.workspace
         const current=()=>this.markdownPreview&&version===this.markdownVersion&&!this.recoveryController.signal.aborted
         try{
@@ -132,7 +305,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 if(heading.id===id){heading.scrollIntoView();break}
         }
     }
-    get waitingForConnection (): boolean { return !this.recoveredEdit && !this.isDiff && this.initialContent===undefined && Boolean(this.workspace?.waitForConnection) }
+    get waitingForConnection (): boolean { return !this.recoveredEdit && !this.recoveredPages && !this.isDiff && this.initialContent===undefined && Boolean(this.workspace?.waitForConnection) }
     get connectionStatus (): string|undefined { return this.workspace?.connectionStatus }
     get visibleHunks (): DiffHunk[] { return this.activeHunk < 0 ? this.diff?.hunks ?? [] : this.diff?.hunks.slice(this.activeHunk,this.activeHunk+1) ?? [] }
     nextHunk (): void { if(this.diff?.hunks.length)this.activeHunk=(this.activeHunk+1)%this.diff.hunks.length }
@@ -153,6 +326,16 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         try {
             if (this.isDiff) { this.updateDiff(this.diffPatch!); return }
             this.workspace=await resolveFileWorkspace(this.workspace,this.recoveryController.signal)
+            if(this.recoveredPages&&this.workspace.readByteRange){
+                const {pages,page,edits}=this.recoveredPages
+                this.pages=pages;this.pageEdits=new Map(edits.map(edit=>[edit.start,edit]))
+                this.needsFileVersion=true;this.textPage=page
+                const edit=this.pageEdits.get(pages[page].start)
+                if(edit){
+                    this.original=edit.original;this.content=edit.content;this.hasMoreText=Boolean(pages[page+1])
+                }else this.showPage(page,await this.fetchPage(page))
+                return
+            }
             if(this.recoveredEdit){Object.assign(this,this.recoveredEdit);return}
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }
             else {
@@ -167,17 +350,26 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         }
         finally {
             this.loading = false
+            if(this.renderOnOpen&&!this.error&&!this.initialFind&&!this.recoveryController.signal.aborted)void this.toggleMarkdown()
             if(this.initialFind)this.search.restore(this.initialFind)
             if(!this.recoveryController.signal.aborted&&!this.isDiff&&this.initialContent===undefined&&!this.waitingForConnection)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:()=>this.reloadOpenFile()})
         }
     }
     async reloadOpenFile (): Promise<void> {
         if(this.loading||this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue)return
+        if(this.needsFileVersion){
+            this.loading=true
+            try{await this.readFile();this.original=this.content;this.error='';if(this.search.visible)this.search.changed()}
+            catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+            finally{this.loading=false}
+            return
+        }
         const original=this.original
         try {
             const file=await this.workspace.read(this.filePath)
-            if(this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue||this.original!==original)return
+            if(this.loading||this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue||this.original!==original)return
             this.content=file.content;this.original=file.content;this.hash=file.hash
+            this.hasMoreText=false;this.needsFileVersion=false
             this.error='';this.readonly=false
             if(this.markdownPreview){this.markdownPreview=false;await this.toggleMarkdown()}
         } catch(error) {this.error=String(error)}
@@ -223,7 +415,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 this.binaryBytes=undefined;this.binaryPage=0
                 await this.readFile()
                 this.original=this.content
-                if(!this.binaryBytes)this.readonly=false
+                if(!this.binaryBytes)this.readonly=this.largeTextReadOnly
                 this.markdownPreview=false;this.markdownVersion++
             }
             this.unregisterFile?.()
@@ -236,19 +428,53 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
         if(!workspace)return null
         const state:Record<string,unknown>={arwPaneLayout:this.arwPaneLayout,readonly:this.readonly,initialContent:this.initialContent,diffPatch:this.diffPatch,
-            diffLabel:this.diffLabel,diffDescription:this.diffDescription,diffStaged:this.diffStaged,diffMode:this.diffMode}
-        if(options?.includeState!==false&&this.dirty)state.recoveredEdit={content:this.content,original:this.original,hash:this.hash}
+            diffLabel:this.diffLabel,diffDescription:this.diffDescription,diffStaged:this.diffStaged,diffMode:this.diffMode,
+            viewOnly:this.viewOnly,renderOnOpen:this.markdownPreview}
+        if(options?.includeState!==false&&this.dirty){
+            if(this.pagedText){
+                this.rememberPageEdit()
+                state.recoveredPages={pages:this.pages,page:this.textPage,edits:[...this.pageEdits.values()]}
+            }else state.recoveredEdit={content:this.content,original:this.original,hash:this.hash,...(this.needsFileVersion&&this.recoveredEdit)}
+        }
         if(this.saveIssue){state.initialContent=this.content;delete state.recoveredEdit}
         return {type:'arw-editor',workspace,filePath:this.filePath,state}
     }
     ngAfterViewInit (): void { this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error))) }
     ngOnDestroy (): void { this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.reconnectPool?.dispose();this.unregisterFile?.(); super.ngOnDestroy() }
     saveKey (event: Event): void { event.preventDefault(); void this.save() }
+    private async checkWriteLimit(content?:string):Promise<void>{
+        if(content!==undefined)checkFileWriteSize(this.workspace.kind,Buffer.byteLength(content))
+        const size=await this.workspace.fileSize?.(this.filePath,this.recoveryController.signal)
+        if(size!==undefined)checkFileWriteSize(this.workspace.kind,size)
+    }
     async save (): Promise<void> {
         if (this.readonly || this.reconnecting || this.saving || this.loading || !this.dirty || this.saveIssue) return
         this.saving = true; this.error = ''
-        const content = this.content
         try {
+            await this.checkWriteLimit()
+            if(this.pagedText){
+                const merged=await this.mergeText()
+                checkFileWriteSize(this.workspace.kind,Buffer.byteLength(merged.content))
+                try{
+                    await this.workspace.write(this.filePath,merged.content,merged.hash)
+                }catch(error){
+                    if(this.saveIssue){
+                        // An uncertain remote write needs the exact payload for an explicit retry.
+                        Object.assign(this,merged)
+                        this.resetPages();this.needsFileVersion=false
+                    }
+                    if(this.workspace.kind==='remote'&&isFileMissing(error)){await this.closeMissingFile();return}
+                    throw error
+                }
+                this.resetPages();this.needsFileVersion=false
+                this.content='';this.original=''
+                await this.readFile();this.original=this.content
+                if(this.search.visible)this.search.changed()
+                return
+            }
+            if(this.needsFileVersion){Object.assign(this,await this.mergeText());this.needsFileVersion=false;this.hasMoreText=false}
+            const content = this.content
+            checkFileWriteSize(this.workspace.kind,Buffer.byteLength(content))
             let file
             try { file=await this.workspace.write(this.filePath,content,this.hash) }
             catch(error){
@@ -270,7 +496,10 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             }
             this.hash=file.hash;this.original=content
         }
-        catch (error) { this.error = String(error) }
+        catch (error) {
+            if(this.workspace.kind==='remote'&&isFileMissing(error)){await this.closeMissingFile();return}
+            this.error=String(error)
+        }
         finally { this.saving = false }
     }
     async verifySave (): Promise<void> {
@@ -301,6 +530,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         this.saving=true;this.error=''
         const content=this.content
         try {
+            await this.checkWriteLimit(content)
             const file=await this.workspace.retrySave(this.filePath,content)
             this.hash=file.hash;this.original=content
         }catch(error){this.error=String(error)}

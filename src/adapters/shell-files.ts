@@ -45,7 +45,7 @@ export async function readShellText (transport:TabbyRelayTransport, target:strin
     const result=await transport.run(t`test -f ${quoted} || { printf '%s\\n' '仅支持读取普通文本文件' >&2; exit 1; }
 version=$(stat -c '%s:%y' -- ${quoted}) || exit $?
 size=\${version%%:*}
-test "$size" -le ${textFileLimit} || { printf '%s\\n' '文本文件上限为 500 MiB' >&2; exit 1; }
+test "$size" -le ${textFileLimit} || { printf '%s\\n' '文本文件上限为 100 MiB' >&2; exit 1; }
 printf 'ARW_TEXT_VERSION:%s\\n' "$version"
 base64 < ${quoted} || exit $?
 test "$(stat -c '%s:%y' -- ${quoted})" = "$version" || { printf '%s\\n' '远端文件已变化' >&2; exit 1; }`,signal??AbortSignal.timeout(30000),{maxBytes:Math.ceil(textFileLimit/3)*4+Math.ceil(textFileLimit/57)+2048})
@@ -57,7 +57,7 @@ test "$(stat -c '%s:%y' -- ${quoted})" = "$version" || { printf '%s\\n' '远端�
     const encoded=result.stdout.slice(newline+1).replace(/[\r\n\t ]/g,'')
     const bytes=Buffer.from(encoded,'base64')
     if(bytes.toString('base64')!==encoded)throw new Error(t('SSH 文本结果不是完整的 Base64 数据'))
-    if(bytes.length>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
+    if(bytes.length>textFileLimit)throw new Error(t('文本文件上限为 100 MiB'))
     if(bytes.includes(0))throw new BinaryFileError(t('暂不支持二进制文件'))
     return {content:decodeText(bytes),hash:version}
 }

@@ -230,7 +230,7 @@ test('SFTP and shell saves preserve ordinary permissions without managing setuid
     }
 })
 
-test('SFTP reads text above the old limit and rejects files over 500 MiB', {skip:process.platform==='win32'}, async context=>{
+test('SFTP reads text above the old limit and rejects files over 100 MiB', {skip:process.platform==='win32'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-sftp-size-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const fixture=sessionFixture(root);fixture.session.openSFTP=async()=>sftpFixture()
@@ -238,8 +238,8 @@ test('SFTP reads text above the old limit and rejects files over 500 MiB', {skip
     const text='x'.repeat(11*1024*1024)
     await writeFile(join(root,'large'),text)
     assert.equal((await workspace.read('large')).content,text)
-    await truncate(join(root,'large'),500*1024*1024+1)
-    await assert.rejects(workspace.read('large'),/500 MiB/)
+    await truncate(join(root,'large'),100*1024*1024+1)
+    await assert.rejects(workspace.read('large'),/100 MiB/)
 })
 
 test('SFTP and shell saves preserve extended ACLs and xattrs, including inherited ACL directories', {skip:process.platform!=='linux'}, async context=>{
@@ -441,15 +441,15 @@ test('SSH without SFTP lists hidden directories, quotes paths and safely reads a
     await another.list('.');assert.equal(fixture.opens,1)
 })
 
-test('SSH text fallback preserves the 500 MiB limit and rejects binary, invalid UTF-8 and directories', {skip:process.platform==='win32'}, async context=>{
+test('SSH text fallback preserves the 100 MiB limit and rejects binary, invalid UTF-8 and directories', {skip:process.platform==='win32'}, async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-shell-read-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const fixture=sessionFixture(root),workspace=remoteWorkspace(fixture.session as any,root)
     const text='x'.repeat(11*1024*1024)
     await writeFile(join(root,'large'),text)
     assert.equal((await workspace.read('large')).content,text)
-    await truncate(join(root,'large'),500*1024*1024+1)
-    await assert.rejects(workspace.read('large'),/500 MiB/)
+    await truncate(join(root,'large'),100*1024*1024+1)
+    await assert.rejects(workspace.read('large'),/100 MiB/)
     await writeFile(join(root,'binary'),Buffer.from([65,0,66]))
     await assert.rejects(workspace.read('binary'),/二进制/)
     await writeFile(join(root,'invalid'),Buffer.from([255]))

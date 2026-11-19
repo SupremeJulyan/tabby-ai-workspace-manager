@@ -44,7 +44,7 @@ test('local workspace refuses binary/oversized text and symlink replacement',asy
   const root=await mkdtemp(join(tmpdir(),'arw-workspace-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const workspace=localWorkspace(root);
   await writeFile(join(root,'binary'),Buffer.from([0,1]));await assert.rejects(workspace.read('binary'),/binary/);
-  await writeFile(join(root,'large'),'');await truncate(join(root,'large'),500*1024*1024+1);await assert.rejects(workspace.read('large'),/500 MiB/);
+  await writeFile(join(root,'large'),'');await truncate(join(root,'large'),100*1024*1024+1);await assert.rejects(workspace.read('large'),/100 MiB/);
   if(process.platform!=='win32'){
     await writeFile(join(root,'target'),'original');await symlink('target',join(root,'link'));
     await assert.rejects(workspace.read('link'),/symbolic/);await assert.rejects(workspace.write('link','replace'),/symbolic/);

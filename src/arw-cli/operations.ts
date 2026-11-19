@@ -97,7 +97,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
         await run(`mkdir -- ${target}`);
       } else if (args.type === 'file') {
         const content = text(args.content ?? '', 'content');
-        if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 500 MiB');
+        if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 100 MiB');
         const temporary = shellQuote((await guard.resolve(path(), true, signal)) + '.arw-' + randomUUID() + '.tmp');
         let created = false;
         try {

@@ -37,6 +37,21 @@ import { resumeArguments } from './recovery'
 
 @Injectable()
 export class AiLauncherService {
+    private openingAiTerminals=0
+
+    private async openAiTerminal(profile:Parameters<ProfilesService['openNewTabForProfile']>[0]) {
+        const panes=(this.app?.tabs??[]).flatMap(tab=>'getAllTabs' in tab
+            ? (tab as {getAllTabs():object[]}).getAllTabs() : [tab])
+        if(new Set(panes.filter(isAiPane)).size+this.openingAiTerminals>=9){
+            throw new Error(t('最多打开 9 个 AI 终端，请先关闭一个再试。'))
+        }
+        this.openingAiTerminals++
+        try {
+            return await this.profiles.openNewTabForProfile(profile)
+        } finally {
+            this.openingAiTerminals--
+        }
+    }
     private get auditFile (): string|undefined {
         const configPath = this.platform?.getConfigPath?.()
         return configPath ? join(dirname(configPath), 'omw', 'audit.jsonl') : undefined
@@ -212,7 +227,7 @@ export class AiLauncherService {
             const shellOptions=wslBridgeEnvironment(shell.command,shellEnvironment(shell,env),join(__dirname,'arw.cjs'),agentCwd)
             for(const key of Object.keys(shellOptions))if(['arw_workspace_id','arw_terminal_mode'].includes(key.toLowerCase()))delete shellOptions[key]
             const launch=shellCommand({command:shell.command,args:shell.args??[],env:shellOptions,shellType:shell.shellType??null},[command].concat(args))
-            const opened = await this.profiles.openNewTabForProfile({ type: 'local', name: shellCommandLine(launch),
+            const opened = await this.openAiTerminal({ type: 'local', name: shellCommandLine(launch),
                 options: { command: launch.command, args: launch.args, cwd: agentCwd, env: launch.env,
                     shellType: launch.shellType, pauseAfterExit: true } })
             if (!opened) throw new Error(t('无法创建 AI 终端'))

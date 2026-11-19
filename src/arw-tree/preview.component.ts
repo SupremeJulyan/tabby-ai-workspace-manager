@@ -1,4 +1,5 @@
 import { textFileLimit } from '../shared/text-file-limit'
+import { checkFileReadSize, fileReadLimit } from '../shared/file-size-policy'
 import type { PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { openFilePane } from './open-file-pane'
@@ -8,7 +9,7 @@ import { join } from 'node:path'
 import type { Workspace } from './workspace'
 import { remoteWorkspaceSession } from '../adapters/remote-workspace'
 import { ArwEditorComponent } from './editor.component'
-import { previewKind, previewMaxBytes, imageMime, markdownImages, relativePreviewAsset, renderMarkdown, decodePreviewText, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
+import { previewKind, imageMime, markdownImages, relativePreviewAsset, renderMarkdown, decodePreviewText, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
 import type { PdfDocument, PdfLoading } from './preview/pdf-engine'
 import { PREVIEW_TEMPLATE, PREVIEW_STYLES } from './preview.view'
 import * as UTIF from 'utif'
@@ -156,9 +157,12 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
         this.setTitle(t`预览 · ${path}`);this.render()
         try{
             if(!kind)throw new Error(t('不支持此文件的预览格式'))
+            const size=await this.workspace.fileSize?.(path,this.controller.signal)
+            if(version!==this.version||this.closed)return
+            if(size!==undefined)checkFileReadSize(this.workspace.kind,size)
             logFileRecovery('preview-read-start',{filePath:path,workspace:fileWorkspaceToken(this.workspace)})
             const chunked=this.isText&&(!!this.workspace.readByteRange||this.workspace.kind==='local')
-            const bytes=chunked?await this.textRangeBytes(path,0,this.textChunkSize):await this.bytes(path,previewMaxBytes(kind));if(version!==this.version||this.closed)return
+            const bytes=chunked?await this.textRangeBytes(path,0,this.textChunkSize):await this.bytes(path,fileReadLimit(this.workspace.kind));if(version!==this.version||this.closed)return
             logFileRecovery('preview-read-ready',{filePath:path})
             this.byteLength=bytes.length
             if(chunked){this.textOffset=bytes.length;this.textHasMore=bytes.length===this.textChunkSize;this.textDecoder=new TextDecoder('utf-8')}

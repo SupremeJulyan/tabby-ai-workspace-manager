@@ -8,9 +8,17 @@ export const EDITOR_TEMPLATE = `
   <button *ngIf="!isDiff && !binaryBytes" class="file-icon-button" [title]="'查找' | arwTranslate" [attr.aria-label]="'查找' | arwTranslate" (click)="search.open()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0"/></svg></button>
   <button *ngIf="!isDiff && !readonly" class="file-icon-button" [title]="'替换' | arwTranslate" [attr.aria-label]="'替换' | arwTranslate" (click)="search.open(true)" [disabled]="!search.canReplace()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"/></svg></button>
   <button *ngIf="!isDiff" class="file-icon-button" [title]="(saving ? '保存中…' : '保存') | arwTranslate" [attr.aria-label]="(saving ? '保存中…' : '保存') | arwTranslate" [disabled]="readonly || loading || saving || reconnecting || !dirty || saveIssue" (click)="save()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h12l4 4v14H3V3h2Zm2 0v6h10V3M7 21v-8h10v8"/></svg></button>
-  <button *ngIf="isMarkdown" class="file-icon-button" [title]="(markdownPreview ? '源码' : '预览') | arwTranslate" [attr.aria-label]="(markdownPreview ? '源码' : '预览') | arwTranslate" (click)="toggleMarkdown()" [disabled]="loading || saving"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18"/></svg></button>
+  <button *ngIf="canToggleTextMode" class="btn btn-sm btn-secondary" (click)="toggleTextMode()" [disabled]="loading || saving || reconnecting">{{ (viewOnly ? '编辑' : '只读') | arwTranslate }}</button>
+  <button *ngIf="isMarkdown || isCsv" class="btn btn-sm btn-secondary" (click)="toggleMarkdown()" [disabled]="loading || saving">{{ (markdownPreview ? '源码' : '预览') | arwTranslate }}</button>
 </header>
 ${TEXT_SEARCH_TEMPLATE}
+<div *ngIf="largeTextReadOnly" class="preview-note" role="status">{{ '文件超过写入上限，只读打开。' | arwTranslate }} · {{editLimitMiB}} MiB</div>
+<div *ngIf="pagedText && !binaryBytes" class="diff-toolbar">
+  <button (click)="changeTextPage(-1)" [disabled]="textPage===0 || loading || saving || reconnecting || !!saveIssue">{{ '上一页' | arwTranslate }}</button>
+  <span role="status">{{ '页码' | arwTranslate }} {{textPage+1}}</span>
+  <button (click)="changeTextPage(1)" [disabled]="!hasMoreText || loading || saving || reconnecting || !!saveIssue">{{ '下一页' | arwTranslate }}</button>
+  <button *ngIf="search.visible && search.query && !search.matches.length && !search.error" (click)="searchFullText()" [disabled]="loading || saving || reconnecting || !!saveIssue">{{ '未找到匹配，逐段搜索全文' | arwTranslate }}</button>
+</div>
 <div class="error" *ngIf="saveIssue as issue" role="alert">
   {{issue.message}}
   <button class="btn btn-sm btn-secondary" [disabled]="saving || loading || issue.busy" (click)="verifySave()">{{'核对远端文件' | arwTranslate}}</button>
@@ -48,16 +56,24 @@ ${TEXT_SEARCH_TEMPLATE}
   </div>
 </ng-container>
 <div *ngIf="markdownPreview && markdownError" class="error" role="alert">{{markdownError}}</div>
-<article *ngIf="markdownPreview" class="markdown-preview" tabindex="0" [innerHTML]="markdown" (click)="markdownClick($event)"></article>
+<div *ngIf="markdownPreview && pagedText" class="preview-note" role="status">{{ '仅渲染当前文本页' | arwTranslate }}</div>
+<article *ngIf="markdownPreview && isMarkdown" class="markdown-preview" tabindex="0" [innerHTML]="markdown" (click)="markdownClick($event)"></article>
+<ng-container *ngIf="isCsv && markdownPreview && !loading">
+ <div class="preview-toolbar"><label>{{ '分隔符' | arwTranslate }} <select [(ngModel)]="csvDelimiter" (ngModelChange)="parseTable()"><option value="auto">{{ '自动' | arwTranslate }}</option><option value=",">{{ '逗号' | arwTranslate }}</option><option value=";">{{ '分号' | arwTranslate }}</option><option [value]="'	'">Tab</option><option value="|">{{ '竖线' | arwTranslate }}</option></select></label><label><input type="checkbox" [(ngModel)]="csvHeader" (ngModelChange)="filterTable()"/> {{ '首行表头' | arwTranslate }}</label><input class="csv-filter" [(ngModel)]="csvQuery" (ngModelChange)="filterTable()" [placeholder]="'筛选表格内容' | arwTranslate" [attr.aria-label]="'筛选 CSV' | arwTranslate"/><span>{{csvFiltered.length}} {{ '行 ·' | arwTranslate }} {{csv.columns}} {{ '列' | arwTranslate }}</span></div>
+ <div class="preview-note" *ngIf="csv.truncated">{{ '已限制预览：最多 10,000 行数据、200 列；请查看源码或下载完整文件。' | arwTranslate }}</div>
+ <div class="csv-scroll" *ngIf="!markdownError"><table><thead><tr><th class="row-number">{{ '行' | arwTranslate }}</th><th *ngFor="let header of csvHeaders">{{header}}</th></tr></thead><tbody><tr *ngFor="let row of csvPageRows"><th class="row-number">{{row.index}}</th><td *ngFor="let header of csvHeaders; let column=index">{{row.values[column] || ''}}</td></tr></tbody></table><div *ngIf="!csvFiltered.length" class="preview-note">{{ '没有可显示的数据' | arwTranslate }}</div></div>
+ <div class="preview-toolbar"><button (click)="changeCsvPage(-1)" [disabled]="csvPage<=1" class="file-icon-button" [title]="'上一页' | arwTranslate" [attr.aria-label]="'上一页' | arwTranslate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><span>{{csvPage}} / {{csvPages}} {{ '· 每页 100 行' | arwTranslate }}</span><button (click)="changeCsvPage(1)" [disabled]="csvPage>=csvPages" class="file-icon-button" [title]="'下一页' | arwTranslate" [attr.aria-label]="'下一页' | arwTranslate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button></div>
+</ng-container>
 <ng-container *ngIf="binaryBytes && !loading && !error">
  <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span><span class="toolbar-spacer"></span><button (click)="changeBinaryPage(-1)" [disabled]="binaryPage===0">{{ '上一页' | arwTranslate }}</button><span>{{binaryPage+1}} / {{binaryPages}}</span><button (click)="changeBinaryPage(1)" [disabled]="binaryPage+1>=binaryPages">{{ '下一页' | arwTranslate }}</button></div>
  <pre class="binary-content" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
 </ng-container>
-<textarea #textEditor *ngIf="!isDiff && !markdownPreview && !binaryBytes" [readOnly]="readonly || loading || saving || reconnecting" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown)="insertTab($event)" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
+<textarea #textEditor *ngIf="!isDiff && !markdownPreview && !binaryBytes" [readOnly]="readonly || viewOnly || loading || saving || reconnecting" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown)="insertTab($event)" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
 `
 
 export const EDITOR_STYLES = scaleTypography(`
 ${TEXT_SEARCH_STYLES}
+.preview-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.preview-note{opacity:.75;padding:6px 0}.csv-scroll{flex:1;min-height:0;overflow:auto}.csv-scroll table{border-collapse:collapse}.csv-scroll th,.csv-scroll td{border:1px solid var(--diff-border);padding:4px 8px;white-space:pre-wrap}.csv-scroll thead{position:sticky;top:0;background:var(--theme-bg,#202124)}
 .binary-content{flex:1;min-height:0;overflow:auto;white-space:pre;font:12px/1.65 monospace;color:inherit;padding:12px;border:1px solid var(--diff-border);border-radius:5px;margin:0}
 ${MARKDOWN_STYLES}
 :host{font-family:var(--arw-font-family,inherit);font-size:12px;line-height:1.45}

@@ -1,1 +1,1 @@
-export const textFileLimit=500*1024*1024
+export const textFileLimit=100*1024*1024

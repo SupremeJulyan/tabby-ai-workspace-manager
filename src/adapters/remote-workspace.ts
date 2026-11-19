@@ -1,6 +1,7 @@
 import { retainExecEventBuffers } from './exec-event-buffers'
 import { t } from '../shared/i18n'
 import { previewLimit } from '../shared/read-bytes'
+import { checkFileReadSize, checkFileWriteSize } from '../shared/file-size-policy'
 import { posix } from 'path'
 import { randomUUID } from 'crypto'
 import { OPEN_READ } from 'russh'
@@ -206,17 +207,37 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             if(!sftp)throw new Error(t('当前 SSH 会话不支持 SFTP 二进制预览'))
             const target=posix.resolve(root,input),info=await sftp.stat(target)
             if(info.isDirectory)throw new Error(t('只能预览普通文件'))
+            checkFileReadSize('remote',info.size)
             if(!Number.isSafeInteger(info.size)||info.size<0||info.size>maxBytes)throw new Error(t`预览上限为 ${Math.floor(maxBytes/1024/1024)} MiB`)
             const file=await sftp.open(target,OPEN_READ)
             try{
                 return await readSftpBytes(file,info.size,signal)
             }finally{await file.close()}
         },
+        async fileSize(input,signal){
+            signal?.throwIfAborted()
+            if(!session.open)throw new Error(t('SSH 已断开'))
+            const sftp=await optionalSftp(session)
+            if(sftp){
+                const info=await sftp.stat(posix.resolve(root,input))
+                if(info.isDirectory)throw new Error(t('只能预览普通文件'))
+                return info.size
+            }
+            const target=await guard.resolveRead(input,signal)
+            const quoted=shellQuote(target)
+            const result=await transport.run(`test -f ${quoted} && stat -c '%s' -- ${quoted}`,signal,{maxBytes:1024})
+            const size=result.stdout.trim()
+            if(result.exitCode!==0||!/^\d+$/.test(size)||!Number.isSafeInteger(Number(size))){
+                throw new Error(t('无法读取远端文件的修改时间或大小'))
+            }
+            return Number(size)
+        },
         async readByteRange(input,offset,maxBytes,signal){
             previewLimit(maxBytes);if(!Number.isSafeInteger(offset)||offset<0)throw new Error('Invalid preview offset');signal?.throwIfAborted()
             if(!session.open)throw new Error(t('SSH 已断开'))
             const sftp=await optionalSftp(session);if(!sftp){const target=await guard.resolveRead(input,signal);return readShellByteRange(transport,target,offset,maxBytes,signal)}
             const target=posix.resolve(root,input),before=await sftp.stat(target);if(before.isDirectory)throw new Error(t('只能预览普通文件'))
+            checkFileReadSize('remote',before.size)
             if(offset>before.size)throw new Error(t('远程文件在读取时发生变化，请重新打开'))
             const length=Math.min(maxBytes,before.size-offset),file=await sftp.open(target,OPEN_READ)
             try{const bytes=await readSftpByteRange(file,offset,length,signal),after=await sftp.stat(target)
@@ -237,7 +258,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
     }
     // CLI requests never enter SaveConfirmation: no editor state or manual unlock.
     async function writeCli(input:string,content:string,expectedHash?:string,requestSignal?:AbortSignal) {
-        if(Buffer.byteLength(content)>textFileLimit)throw new Error(t('文本文件上限为 500 MiB'))
+        if(Buffer.byteLength(content)>textFileLimit)throw new Error(t('文本文件上限为 100 MiB'))
         const signal=AbortSignal.any([AbortSignal.timeout(30000),...(requestSignal?[requestSignal]:[])])
         const connection=session.ssh
         const check=()=>{
@@ -271,7 +292,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
         }finally{finishForegroundWrite(priority)}
     }
     async function write(input:string, content:string, expectedHash?:string,confirmedRetry=false) {
-            if (Buffer.byteLength(content) > textFileLimit) throw new Error(t('文本文件上限为 500 MiB'))
+            checkFileWriteSize('remote',Buffer.byteLength(content))
             return saves.run(saveKey(input),content,async(signal,recordPermissions,started)=>{
               priority.active++
               try {
