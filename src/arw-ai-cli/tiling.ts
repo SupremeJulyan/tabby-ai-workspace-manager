@@ -1,5 +1,5 @@
 import { smallScreenEnabled, selectedScreenLayer } from '../shared/small-screen'
-import { updateWorkspaceVisibility, workspaceHiddenPanes } from '../shared/workspace-pane-visibility'
+import { updateWorkspaceVisibility, workspaceHiddenPanes, workspaceTerminalId } from '../shared/workspace-pane-visibility'
 import { workspacePaneProportions } from '../shared/pane-proportions'
 import { stackedGroup, stackedHiddenPanes, selectedStackedPane, selectStackedPane } from '../shared/pane-layout'
 import type { WorkspacePaneKind } from '../shared/pane-kind'
@@ -71,7 +71,7 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     if(focused&&(app.activeTab===split||app.activeTab===focused)){
         const replacement=isFilePane(focused)?files.find(tab=>!collapsedAiPanes.has(tab)):isAiPane(focused)?ai.find(tab=>!collapsedAiPanes.has(tab)):focused
         const stackedReplacement=isFilePane(focused)?selectedStackedPane(split,'file',files):isAiPane(focused)?selectedStackedPane(split,'ai',ai):focused
-        const fallback=tabs.find(tab=>!isAiPane(tab)&&!isFilePane(tab))??files[0]??ai[0]
+        const fallback=tabs.find(tab=>!isAiPane(tab)&&!isFilePane(tab)&&!workspaceHiddenPanes.has(tab))??files[0]??ai[0]
         if(workspaceHiddenPanes.has(focused)){if(fallback)split.focus(fallback)}
         else split.focus(stackedHiddenPanes.has(focused)?stackedReplacement??focused:collapsedAiPanes.has(focused)?replacement??focused:focused)
     }
@@ -108,7 +108,7 @@ export class AutomaticAiTiling {
                 const split=top as SplitTabComponent,tabs=split.getAllTabs(),previous=this.snapshots.get(split)
                 if(previous&&previous.tabs.length===tabs.length&&previous.tabs.every((tab,index)=>tab===tabs[index]))continue
                 const aiCount=tabs.filter(isAiPane).length,fileCount=tabs.filter(isFilePane).length
-                if(fileCount>0||aiCount>=2||(aiCount===1&&(previous?.aiCount??0)>=2)||(fileCount===0&&(previous?.fileCount??0)>0))tileWorkspacePanes(this.app,split,true)
+                if(tabs.some(workspaceTerminalId)||fileCount>0||aiCount>=2||(aiCount===1&&(previous?.aiCount??0)>=2)||(fileCount===0&&(previous?.fileCount??0)>0))tileWorkspacePanes(this.app,split,true)
                 this.snapshots.set(split,{tabs:split.getAllTabs(),aiCount,fileCount})
             }
         }catch(error){this.onError(error)}finally{this.arranging=false}

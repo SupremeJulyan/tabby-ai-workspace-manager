@@ -1,7 +1,16 @@
 import { isAiPane, isFilePane, paneMatchesWorkspace, type WorkspacePaneIdentity } from './pane-kind'
 
 const selectedWorkspaces=new WeakMap<object,WorkspacePaneIdentity>()
+const selectedTerminals=new WeakMap<object,object>()
 export const workspaceHiddenPanes=new WeakSet<object>()
+
+export function workspaceTerminalId(pane:unknown):string|undefined {
+    return (pane as {profile?:{options?:{arwProjectWorkspaceId?:string}}})?.profile?.options?.arwProjectWorkspaceId
+}
+
+export function selectWorkspaceTerminal(split:object,terminal:object):void {
+    selectedTerminals.set(split,terminal)
+}
 
 export function selectPaneWorkspace(split:object,workspace:WorkspacePaneIdentity):void {
     selectedWorkspaces.set(split,workspace)
@@ -10,8 +19,13 @@ export function selectPaneWorkspace(split:object,workspace:WorkspacePaneIdentity
 /** Keep inactive panes in the split for recovery and running terminal sessions. */
 export function updateWorkspaceVisibility(split:object,panes:object[]):void {
     const workspace=selectedWorkspaces.get(split)
+    const managed=panes.filter(workspaceTerminalId)
+    const selected=selectedTerminals.get(split)
+    const anchor=panes.find(pane=>!workspaceTerminalId(pane)&&!isAiPane(pane)&&!isFilePane(pane))
+    const terminal=selected&&panes.includes(selected)?selected:anchor??managed[0]
     for(const pane of panes){
-        if(workspace&&(isAiPane(pane)||isFilePane(pane))&&!paneMatchesWorkspace(pane,workspace))workspaceHiddenPanes.add(pane)
+        const hiddenTerminal=managed.length>0&&pane!==terminal&&(workspaceTerminalId(pane)||pane===anchor)
+        if(hiddenTerminal||(workspace&&(isAiPane(pane)||isFilePane(pane))&&!paneMatchesWorkspace(pane,workspace)))workspaceHiddenPanes.add(pane)
         else workspaceHiddenPanes.delete(pane)
     }
 }
