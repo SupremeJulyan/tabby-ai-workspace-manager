@@ -1345,33 +1345,34 @@ test('terminal profile labels stay fixed across split changes without touching e
 })
 
 test('workspace registry uses configured cwd and ignores terminal cwd reports',async()=>{
-    const {Subject}=await import('rxjs')
+    const {Subject}=await import('rxjs'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const plugin=load(),changed=new Subject(),cwd=new Subject(),focused=new Subject(),closed=new Subject()
+    const first=join(tmpdir(),'first'),otherRoot=join(tmpdir(),'other')
     let reads=0
-    const terminal={profile:{type:'local',options:{cwd:'C:\\first'}},hasFocus:true,focused$:focused,sessionChanged$:changed,
+    const terminal={profile:{type:'local',options:{cwd:first}},hasFocus:true,focused$:focused,sessionChanged$:changed,
         session:{getWorkingDirectory:async()=>{reads++;return '/wrong'},oscProcessor:{cwdReported$:cwd},output$:new Subject(),destroyed$:closed}}
     const registry=new plugin.WorkspaceRegistry({activeTabChange$:new Subject()},{run:fn=>fn()})
     registry.register(terminal);await new Promise(r=>setTimeout(r,0))
-    assert.equal(registry.current.value.workspace.root,'C:\\first')
+    assert.equal(registry.current.value.workspace.root,first)
     let emissions=0
     const observation=registry.current.subscribe(()=>emissions++)
     const beforeFocus=emissions
     focused.next();registry.activate(terminal)
     await new Promise(r=>setTimeout(r,0))
     assert.equal(emissions,beforeFocus)
-    const other={profile:{type:'local',options:{cwd:'C:\\other'}},hasFocus:false,focused$:new Subject(),sessionChanged$:new Subject(),
+    const other={profile:{type:'local',options:{cwd:otherRoot}},hasFocus:false,focused$:new Subject(),sessionChanged$:new Subject(),
         session:{getWorkingDirectory:async()=>'/other',oscProcessor:{cwdReported$:new Subject()},output$:new Subject(),destroyed$:new Subject()}}
     registry.register(other);await new Promise(r=>setTimeout(r,0))
     registry.activate(other)
-    assert.equal(registry.current.value.workspace.root,'C:\\other')
+    assert.equal(registry.current.value.workspace.root,otherRoot)
     registry.activate(terminal)
-    assert.equal(registry.current.value.workspace.root,'C:\\first')
+    assert.equal(registry.current.value.workspace.root,first)
     registry.unregister(other);observation.unsubscribe()
     cwd.next('/second');await new Promise(r=>setTimeout(r,0))
-    assert.equal(registry.current.value.workspace.root,'C:\\first');assert.equal(reads,0)
+    assert.equal(registry.current.value.workspace.root,first);assert.equal(reads,0)
     registry.pin(terminal,registry.current.value)
     cwd.next('/third');await new Promise(r=>setTimeout(r,0))
-    assert.equal(registry.current.value.workspace.root,'C:\\first');assert.equal(reads,0)
+    assert.equal(registry.current.value.workspace.root,first);assert.equal(reads,0)
     registry.unregister(terminal);assert.equal(registry.current.value,null)
 })
 
@@ -1964,7 +1965,7 @@ test('SSH without SFTP initializes the directory tree and saves editor changes',
     const root=await fs.mkdtemp(join(tmpdir(),'arw-plugin-no-sftp-'))
     const plugin=load(),terminal=new SSHTabComponent(),output=new Subject()
     let probes=0
-    terminal.profile={type:'ssh'};terminal.hasFocus=true;terminal.focused$=new Subject();terminal.sessionChanged$=new Subject();terminal.sftpPath='/'
+    terminal.profile={type:'ssh',options:{cwd:root}};terminal.hasFocus=true;terminal.focused$=new Subject();terminal.sessionChanged$=new Subject();terminal.sftpPath='/'
     terminal.session={getWorkingDirectory:async()=>null,oscProcessor:{cwdReported$:new Subject()},destroyed$:new Subject(),output$:output}
     terminal.sshSession={open:true,profile:{options:{host:'no-sftp'}},ssh:{async openSessionChannel(){return {}},async activateChannel(){
         const data$=new Subject(),extendedData$=new Subject(),closed$=new Subject();let child
@@ -2073,7 +2074,7 @@ test('editing a nested remote file and returning to the SSH tab retains A/B thro
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const home=await fs.mkdtemp(join(tmpdir(),'arw-editor-return-')),directory=join(home,'A/B')
     const plugin=load(),activeTabChange$=new Subject(),terminal=new SSHTabComponent(),opened=[]
-    terminal.profile={type:'ssh'};terminal.hasFocus=true;terminal.focused$=new Subject();terminal.sessionChanged$=new Subject();terminal.destroyed$=new Subject()
+    terminal.profile={type:'ssh',options:{cwd:home}};terminal.hasFocus=true;terminal.focused$=new Subject();terminal.sessionChanged$=new Subject();terminal.destroyed$=new Subject()
     terminal.session={open:true,getWorkingDirectory:async()=>home,oscProcessor:{cwdReported$:new Subject()},destroyed$:new Subject(),output$:new Subject()}
     terminal.sshSession={open:true,profile:{options:{host:'fixture'}},ssh:{async openSessionChannel(){return {}},async activateChannel(){
         const data$=new Subject(),extendedData$=new Subject(),closed$=new Subject();let child
