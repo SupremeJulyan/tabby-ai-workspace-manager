@@ -9,7 +9,7 @@ import { localWorkspace } from '../src/arw-tree/workspace';
 import { registerActiveWorkspace, readWorkspaceCatalog, writeWorkspaceCatalog } from '../src/arw-cli/workspace-catalog';
 import { sftpFixture } from './sftp-copy-fixture';
 
-test('SFTP copy publishes only complete files and removes failed, cancelled and disconnected transfers', async t => {
+test('SFTP copy publishes only complete files and removes failed, cancelled and disconnected transfers', {skip:process.platform==='win32'}, async t => {
   const root = await mkdtemp(join(tmpdir(), 'arw-sftp-copy-'));
   t.after(() => rm(root, {recursive: true, force: true}));
   const workspace = localWorkspace(root), controller = new AbortController();
@@ -46,7 +46,7 @@ test('manual forwards are discoverable without a connection option and survive s
   assert.deepEqual(await readWorkspaceCatalog(catalog), {workspaces:[]});
 });
 
-test('download sources may leave the workspace while upload destinations cannot',async t=>{
+test('download sources may leave the workspace while upload destinations cannot',{skip:process.platform==='win32'},async t=>{
   const fs=await import('node:fs/promises');
   const directory=await mkdtemp(join(tmpdir(),'arw-copy-scope-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const root=join(directory,'project'),outside=join(directory,'reference');await fs.mkdir(root);await fs.writeFile(outside,'download');

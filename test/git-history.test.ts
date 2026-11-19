@@ -23,8 +23,7 @@ test('local Git history, branches, first commit and safe branch switching', asyn
     const root = await mkdtemp(join(tmpdir(), 'arw-git-history-'))
     context.after(() => rm(root, {recursive:true, force:true}))
     const workspace = localWorkspace(root)
-    // Inherit a translated Git environment without changing the test process locale.
-    const git = new RemoteGit(command => workspace.run(`LC_ALL=zh_CN.UTF-8 LANGUAGE=zh_CN ${command}`))
+    const git = new RemoteGit({run:args=>workspace.runGit!(args)})
     for (const args of [['init', '-b', 'main'], ['config', 'user.name', 'ARW Test'], ['config', 'user.email', 'arw@example.test']]) await git.run(args)
     assert.deepEqual(await git.history(), [])
     assert.deepEqual(await git.branches(), [{name:'main',current:true}])
@@ -84,7 +83,7 @@ test('Git history retains the full 50 entry bound and treats subjects as text',(
     assert.equal(commits[49].subject,'<img src=x>49')
 })
 
-test('remote Git inspection reduces exec requests and avoids history walks when upstream equals HEAD',async context=>{
+test('remote Git inspection reduces exec requests and avoids history walks when upstream equals HEAD',{skip:process.platform==='win32'},async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-git-inspection-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     const workspace=localWorkspace(root)

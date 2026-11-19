@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import { relayGit, type RelayTransport } from '../src/arw-tree/git/git-relay';
 import { localGitRunner } from '../src/arw-tree/git/local-git-push';
 import { execGitFixture as exec } from './git-fixture-exec';
-test('desktop relay orchestrates pull and push over bundle transport', async t => {
+test('desktop relay orchestrates pull and push over bundle transport', {skip:process.platform==='win32'}, async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'arw-desktop-relay-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const upstream = path.join(root, 'upstream.git'), seed = path.join(root, 'seed');

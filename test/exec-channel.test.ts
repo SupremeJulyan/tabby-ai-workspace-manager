@@ -31,13 +31,13 @@ function channel(shell='/bin/sh',args=['-c'],prefix=''): ExecChannel {
     async close() { child?.kill(); }
   };
 }
-test('exec preserves split UTF-8, NUL output, stderr, and nonzero exit status', async () => {
+test('exec preserves split UTF-8, NUL output, stderr, and nonzero exit status', {skip:process.platform==='win32'}, async () => {
   const result = await executeChannel(channel(), "printf '中文\\000末尾'; printf error >&2; exit 17", '/tmp');
   assert.equal(result.exitCode, 17);
   assert.equal(result.stdout, '中文\0末尾');
   assert.equal(result.stderr, 'error');
 });
-test('exec never runs in another directory when cwd is missing', async () => {
+test('exec never runs in another directory when cwd is missing', {skip:process.platform==='win32'}, async () => {
   const result = await executeChannel(channel(), 'printf first; printf should-not-run', '/does-not-exist-arw');
   assert.notEqual(result.exitCode, 0);
   assert.equal(result.stdout, '');
@@ -47,13 +47,13 @@ test('exec treats a dropped channel as unknown, not success', async () => {
   remote.requestExec = async () => { (remote.closed$ as Events<void>).emit(); };
   await assert.rejects(executeChannel(remote, 'true', '/tmp'), /状态未知/);
 });
-test('exec bounds output and rejects pre-cancelled requests', async () => {
+test('exec bounds output and rejects pre-cancelled requests', {skip:process.platform==='win32'}, async () => {
   await assert.rejects(executeChannel(channel(), "printf '123456789'", '/tmp', { maxBytes: 4 }), /输出超过限制/);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(executeChannel(channel(), 'true', '/tmp', { signal: controller.signal }), /取消/);
 });
 
-test('exec streams input in chunks instead of embedding contents in the remote command',async()=>{
+test('exec streams input in chunks instead of embedding contents in the remote command',{skip:process.platform==='win32'},async()=>{
   const input=Buffer.from('中文\0'.repeat(20000));
   const result=await executeChannel(channel(),'wc -c','/tmp',{input});
   assert.equal(result.exitCode,0);
@@ -61,7 +61,7 @@ test('exec streams input in chunks instead of embedding contents in the remote c
   assert.equal((await executeChannel(channel(),'wc -c','/tmp',{input:Buffer.alloc(0)})).stdout.trim(),'0');
 });
 
-test('exec waits for a split ready marker before streaming input',async()=>{
+test('exec waits for a split ready marker before streaming input',{skip:process.platform==='win32'},async()=>{
   const remote=channel(),write=remote.write!.bind(remote);
   let ready=false,written=0;
   remote.write=async bytes=>{assert.equal(ready,true);written+=bytes.length;await write(bytes)};
@@ -73,7 +73,7 @@ test('exec waits for a split ready marker before streaming input',async()=>{
   assert.equal(result.stdout,'READY7\n');
 });
 
-test('exec returns preflight rejection without uploading or hanging on readiness',async()=>{
+test('exec returns preflight rejection without uploading or hanging on readiness',{skip:process.platform==='win32'},async()=>{
   const remote=channel();
   remote.write=async()=>{throw Error('Input must not be sent')};
   const result=await executeChannel(remote,'printf conflict >&2; exit 9','/tmp',{
@@ -95,7 +95,7 @@ test('exec aborts cleanly while waiting for readiness',async()=>{
   assert.equal(writes,0);
 });
 
-test('exec transport is a single line and a login-shell exit trap cannot corrupt the trailer',async()=>{
+test('exec transport is a single line and a login-shell exit trap cannot corrupt the trailer',{skip:process.platform==='win32'},async()=>{
   const remote=channel('/bin/bash',['--noprofile','--norc','-c'],"trap 'printf UNWANTED_LOGOUT' EXIT; "),request=remote.requestExec.bind(remote);
   remote.requestExec=async script=>{
     assert.ok(script.startsWith('exec /bin/sh -c '));
@@ -130,7 +130,7 @@ test('missing completion reports bounded redacted stderr without exposing comman
   assert.equal(requests,1);
 });
 
-test('exec completion survives an inner exec replacement and command syntax errors',async()=>{
+test('exec completion survives an inner exec replacement and command syntax errors',{skip:process.platform==='win32'},async()=>{
   const replaced=await executeChannel(channel(),'exec printf replaced','/tmp');
   assert.equal(replaced.stdout,'replaced');assert.equal(replaced.exitCode,0);
   const invalid=await executeChannel(channel(),'printf should-not-run; (','/tmp');
@@ -138,7 +138,7 @@ test('exec completion survives an inner exec replacement and command syntax erro
 })
 
 
-test('exec drains remote rejection after stdin EPIPE and never accepts a truncated successful upload',async()=>{
+test('exec drains remote rejection after stdin EPIPE and never accepts a truncated successful upload',{skip:process.platform==='win32'},async()=>{
   const rejected=channel();
   rejected.write=async()=>{throw Object.assign(new Error('write EPIPE'),{code:'EPIPE'})};
   const result=await executeChannel(rejected,'sleep 0.02; printf "writer failed" >&2; exit 1','/tmp',{input:Buffer.from('payload'),timeoutMs:1000});

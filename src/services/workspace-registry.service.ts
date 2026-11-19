@@ -1,6 +1,5 @@
 import { terminalLocalWorkspace } from '../adapters/wsl-workspace'
-import { isMsysTerminal } from '../shared/msys-directory'
-import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath } from '../shared/wsl-directory'
+import { isWslTerminal, resolveTerminalWorkspacePath, wslHomeDirectory } from '../shared/wsl-directory'
 import { workspaceRecoveryState } from '../shared/workspace-recovery'
 import { selectedWorkspaceTerminal, selectWorkspaceTerminal as selectWorkspaceTerminalLayout, workspaceTerminalId } from '../shared/workspace-pane-visibility'
 import { readWorkspaceBinding } from '../arw-cli/workspace-binding'
@@ -9,13 +8,13 @@ import { t } from '../shared/i18n'
 import { Injectable, NgZone } from '@angular/core'
 import { AppService, BaseTabComponent, SplitTabComponent } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
-import { BehaviorSubject, Subject, Subscription, auditTime } from 'rxjs'
+import { BehaviorSubject, Subject, Subscription } from 'rxjs'
 import { isAbsolute } from 'path'
+import { homedir } from 'os'
 import { Workspace } from '../arw-tree/workspace'
-import { TabbyRelayTransport } from '../adapters/transport'
 import { remoteWorkspace } from '../adapters/remote-workspace'
 import { isSshTab, SSHSession } from '../adapters/ssh-compat'
-import { optionalSftp } from '../adapters/optional-sftp'
+import { TabbyRelayTransport } from '../adapters/transport'
 import { titleAiTabs, titleTerminalTab } from '../shared/workspace-name'
 
 export interface WorkspaceSelection {
@@ -24,17 +23,28 @@ export interface WorkspaceSelection {
     workspace?: Workspace
     remote?: SSHSession
     sourceTerminal?: BaseTerminalTabComponent<any>
-    pathSource?: 'terminal'|'sftp'|'restored'
+    pathSource?: 'configured'|'restored'
     hint: string
 }
 interface RestoredWorkspace { host: string; port: number; user?: string; remoteRoot: string;workspaceId?:string;terminalOnly?:boolean }
 interface RecordEntry { selection: WorkspaceSelection; root?: string; session?: unknown; version: number; pinned: boolean; restored?: RestoredWorkspace; subscriptions: Subscription[] }
 
+function configuredRoot(terminal:BaseTerminalTabComponent<any>):string|undefined{
+    const options=terminal.profile?.options??{}
+    const saved=options.arwWorkspace??options.__getValue?.('arwWorkspace')
+    let root=typeof saved?.root==='string'?saved.root:typeof options.cwd==='string'?options.cwd:undefined
+    if(isWslTerminal(terminal)&&!root){
+        const args:string[]=options.args??[]
+        const index=args.findIndex(value=>value==='--cd'||value.startsWith('--cd='))
+        if(index>=0)root=args[index]==='--cd'?args[index+1]:args[index].slice('--cd='.length)
+    }
+    return typeof root==='string'&&(root==='~'||isAbsolute(root))?root:undefined
+}
+
 @Injectable()
 export class WorkspaceRegistry {
     readonly current = new BehaviorSubject<WorkspaceSelection|null>(null)
     readonly selectionChanged = new Subject<{terminal:BaseTerminalTabComponent<any>;selection:WorkspaceSelection}>()
-    private initialDirectories = new WeakMap<SSHSession, Promise<string>>()
     private entries = new Map<BaseTerminalTabComponent<any>, RecordEntry>()
     private pinnedSelections = new WeakMap<BaseTerminalTabComponent<any>, WorkspaceSelection>()
     constructor (private app: AppService, private zone: NgZone) {
@@ -76,6 +86,12 @@ export class WorkspaceRegistry {
                 ??terminals.find(terminal=>this.entries.has(terminal)&&terminal.profile?.name)
             if(source)titleTerminalTab(tab,source.profile.name)
         }
+    }
+    private async remoteHomeDirectory(remote:SSHSession):Promise<string>{
+        const result=await new TabbyRelayTransport(remote,'/').run('printf %s "$HOME"',AbortSignal.timeout(15000),{operation:'读取 SSH 账号家目录'})
+        const root=result.stdout.replace(/\r?\n$/,'')
+        if(result.exitCode!==0||!root.startsWith('/')||/[\x00-\x1f\x7f]/.test(root))throw new Error(t('无法解析 SSH 账号家目录'))
+        return root
     }
     private emit(value:WorkspaceSelection|null):void{
         // Pane focus and late background updates must never select another top-level tab.
@@ -128,7 +144,7 @@ export class WorkspaceRegistry {
             if (entry.selection.remote === remote && entry.selection.workspace?.root === metadata.remoteRoot) continue
             const env=terminal.profile?.options?.env
             const backend=remote?remoteWorkspace(remote,metadata.remoteRoot):undefined
-            entry.selection = remote ? { terminal, sourceTerminal: source, remote, hint: '', pathSource: 'terminal',terminalMode:metadata.terminalOnly??env?.ARW_TERMINAL_MODE==='1',
+            entry.selection = remote ? { terminal, sourceTerminal: source, remote, hint: '', pathSource: 'restored',terminalMode:metadata.terminalOnly??env?.ARW_TERMINAL_MODE==='1',
                 workspace: {...backend!,sourceWorkspace:backend,id:metadata.workspaceId??backend!.id} }
                 : { terminal, hint: t`等待连接远程工作区：${metadata.host}:${metadata.port} ${metadata.remoteRoot}` }
             this.selectionChanged.next({terminal,selection:entry.selection})
@@ -145,6 +161,9 @@ export class WorkspaceRegistry {
         selectWorkspaceTerminalLayout(split,terminal)
         this.activate(terminal)
     }
+    bindWorkspaceTerminal(terminal:BaseTerminalTabComponent<any>,sourceTerminal:BaseTerminalTabComponent<any>,workspace:Workspace,remote?:SSHSession):void {
+        this.pin(terminal,{terminal:sourceTerminal,sourceTerminal,workspace,remote,pathSource:'configured',hint:''})
+    }
     pin (terminal: BaseTerminalTabComponent<any>, selection: WorkspaceSelection): void {
         const pinned = { ...selection, terminal, sourceTerminal:selection.sourceTerminal??selection.terminal }
         if (!this.pinnedSelections.has(terminal)) terminal.destroyed$?.subscribe(() => {
@@ -160,55 +179,25 @@ export class WorkspaceRegistry {
         entry.selection = pinned
         this.emit(entry.selection)
     }
-    private initialDirectory (remote: SSHSession): Promise<string> {
-        let pending=this.initialDirectories.get(remote)
-        if(!pending){
-            // Tabby's SFTP API exposes no realpath('.'). Resolve the login channel's initial
-            // directory once, then validate it through SFTP. This is not the interactive shell's cwd.
-            pending=new TabbyRelayTransport(remote,'.').run('pwd -P',AbortSignal.timeout(15000),{operation:'检测 SSH 登录初始目录'}).then(result=>{
-                const root=result.stdout.replace(/\r?\n$/,'')
-                if(result.exitCode!==0||!root.startsWith('/')||root.includes('\n')||root.includes('\0')){
-                    throw new Error(t`无法解析远程初始目录：${result.stderr||t('pwd 未返回绝对路径')}`)
-                }
-                return root
-            })
-            this.initialDirectories.set(remote,pending)
-            pending.catch(()=>{if(this.initialDirectories.get(remote)===pending)this.initialDirectories.delete(remote)})
-        }
-        return pending
-    }
     register (terminal: BaseTerminalTabComponent<any>): void {
         if (this.entries.has(terminal)) return
         if (!isSshTab(terminal) && terminal.profile?.type !== 'local') return
         const pinned = this.pinnedSelections.get(terminal)
-        const entry: RecordEntry = { selection: pinned ?? { terminal, hint: t('等待终端报告当前目录…') }, version: 0, pinned: Boolean(pinned), subscriptions: [] }
+        const entry: RecordEntry = { selection: pinned ?? { terminal, hint: t('请选择一个工作区路径') }, version: 0, pinned: Boolean(pinned), subscriptions: [] }
         this.entries.set(terminal, entry)
         this.refreshTerminalTitles()
-        let sftpValidation: { remote: SSHSession; root: string; promise: Promise<void> }|undefined
         const inspect = async () => {
             if (entry.pinned || this.entries.get(terminal) !== entry) return
             const version = ++entry.version
             const session = terminal.session
             try {
-                const reported = await terminalWorkspaceDirectory(terminal)
-                if (version !== entry.version || this.entries.get(terminal) !== entry || entry.pinned) return
                 const remote = isSshTab(terminal) ? terminal.sshSession ?? undefined : undefined
                 if (isSshTab(terminal) && !remote?.open) {
                     entry.selection={terminal,remote,hint:t('正在连接 SSH…')}
                     if(this.current.value?.terminal===terminal)this.emit(entry.selection)
                     return
                 }
-                let root=reported && isAbsolute(reported)?reported:undefined
                 const env=terminal.profile?.options?.env
-                let pathSource:'terminal'|'sftp'|'restored'='terminal'
-                if(!root&&isWslTerminal(terminal)&&!env?.ARW_WORKSPACE_ROOT){
-                    const saved=workspaceRecoveryState(terminal)
-                    if(saved?.root&&isAbsolute(saved.root)){
-                        root=await resolveTerminalWorkspacePath(terminal,saved.root)
-                        if(version!==entry.version||this.entries.get(terminal)!==entry||entry.pinned)return
-                        pathSource='restored'
-                    }
-                }
                 // A manual cd into a placeholder does not bind an ordinary local terminal.
                 const binding=!remote&&env?.ARW_WORKSPACE_ROOT&&env?.ARW_LOCAL_WORKSPACE_ROOT?readWorkspaceBinding(env.ARW_LOCAL_WORKSPACE_ROOT,true):undefined
                 if(binding){
@@ -224,22 +213,21 @@ export class WorkspaceRegistry {
                     return
                 }
                 entry.restored = undefined
-                if(!root && remote && isSshTab(terminal)){
-                    // Use the same authenticated session and browser path as Tabby's native SFTP panel.
-                    const saved=workspaceRecoveryState(terminal)
-                    const browser=(terminal.sftpPanelVisible||entry.root)?terminal.sftpPath:(saved?.cwd??saved?.root??terminal.sftpPath)
-                    root=browser?.startsWith('/')&&(browser!=='/'||terminal.sftpPanelVisible||entry.root)
-                        ?browser:await this.initialDirectory(remote)
-                    if(version!==entry.version||this.entries.get(terminal)!==entry||entry.pinned)return
-                    pathSource='sftp'
-                }
+                const saved=workspaceRecoveryState(terminal)
+                let root=configuredRoot(terminal)??(saved?.root&&isAbsolute(saved.root)?saved.root:undefined)
+                let pathSource:'configured'|'restored'=root&&root===saved?.root?'restored':'configured'
+                if(isWslTerminal(terminal)){
+                    if(!root||root==='~')root=await wslHomeDirectory(terminal)
+                    else if(root.startsWith('/'))root=await resolveTerminalWorkspacePath(terminal,root)
+                }else if(!root)root=remote?await this.remoteHomeDirectory(remote):homedir()
+                else if(root==='~')root=homedir()
+                if (version !== entry.version || this.entries.get(terminal) !== entry || entry.pinned) return
                 if(!root){
-                    entry.selection={terminal,hint:isWslTerminal(terminal)?t('终端尚未上报目录，请点击“跟随终端当前目录”。'):t('正在检测本地终端目录…')}
+                    entry.selection={terminal,remote,hint:t('请选择一个已配置工作路径的工作区')}
                     if(this.current.value?.terminal===terminal)this.emit(entry.selection)
                     return
                 }
-                const hint=pathSource==='sftp'?t('当前显示远程浏览目录；终端尚未上报实际路径。')
-                    :pathSource==='restored'?t('已恢复上次浏览目录；终端尚未上报实际路径。'):''
+                const hint=pathSource==='restored'?t('已恢复上次工作区路径。'):''
                 if(entry.root===root&&entry.session===session&&entry.selection.remote===remote&&entry.selection.workspace){
                     if(entry.selection.pathSource!==pathSource){
                         entry.selection={...entry.selection,pathSource,hint}
@@ -247,32 +235,14 @@ export class WorkspaceRegistry {
                     }
                     return
                 }
-                if(pathSource==='sftp'&&remote){
-                    if(sftpValidation?.remote!==remote||sftpValidation.root!==root){
-                        const directory=root
-                        sftpValidation={remote,root,promise:(async()=>{
-                            const sftp=await optionalSftp(remote)
-                            if(sftp){if(!(await sftp.stat(directory)).isDirectory)throw new Error(t('Tabby SFTP 当前路径不是目录'))}
-                            else{
-                                const result=await new TabbyRelayTransport(remote,directory).run('test -d . && test -r . && test -x .',AbortSignal.timeout(15000),{operation:'验证 SSH 工作区目录可访问性'})
-                                if(result.exitCode!==0)throw new Error(result.stderr||t('SSH 当前路径不是可读取的目录'))
-                            }
-                        })()}
-                    }
-                    const validation=sftpValidation
-                    try { await validation.promise }
-                    finally { if(sftpValidation===validation)sftpValidation=undefined }
-                    if(version!==entry.version||this.entries.get(terminal)!==entry||entry.pinned)return
-                }
-                if(pathSource==='sftp'&&isSshTab(terminal)&&!terminal.sftpPanelVisible&&(!terminal.sftpPath||terminal.sftpPath==='/'))terminal.sftpPath=root
                 entry.root=root;entry.session=session
                 entry.selection={terminal,remote,pathSource,hint,workspace:remote?remoteWorkspace(remote,root):terminalLocalWorkspace(root,terminal)}
                 if(this.current.value?.terminal===terminal||terminal.hasFocus)this.emit(entry.selection)
             } catch (error) {
                 if (version !== entry.version || entry.pinned) return
-                logOperation('自动检测终端工作目录',{host:isSshTab(terminal)?terminal.sshSession?.profile.options.host:undefined,error:String(error)})
+                logOperation('读取配置工作区路径',{host:isSshTab(terminal)?terminal.sshSession?.profile.options.host:undefined,error:String(error)})
                 if(entry.selection.workspace)return
-                entry.selection = { terminal, remote:isSshTab(terminal)?terminal.sshSession??undefined:undefined, hint:t('等待终端报告当前目录…') }
+                entry.selection = { terminal, remote:isSshTab(terminal)?terminal.sshSession??undefined:undefined, hint:t('请选择一个已配置工作路径的工作区') }
                 if (this.current.value?.terminal === terminal) this.emit(entry.selection)
             } finally {
                 if (isSshTab(terminal)) this.restoreBindings()
@@ -284,8 +254,6 @@ export class WorkspaceRegistry {
             sessionSubscriptions = []
             const session = terminal.session
             if (session) {
-                sessionSubscriptions.push(session.oscProcessor.cwdReported$.subscribe(() => { void inspect() }))
-                if(session.output$)sessionSubscriptions.push(session.output$.pipe(auditTime(200)).subscribe(() => { if(this.current.value?.terminal===terminal||terminal.hasFocus)void inspect() }))
                 sessionSubscriptions.push(session.destroyed$.subscribe(() => {
                     if (entry.pinned) return
                     entry.version++; entry.root = undefined
@@ -303,12 +271,6 @@ export class WorkspaceRegistry {
         }))
         entry.subscriptions.push(terminal.sessionChanged$.subscribe(watch))
         entry.subscriptions.push(new Subscription(() => sessionSubscriptions.forEach(subscription => subscription.unsubscribe())))
-        if(isSshTab(terminal)){
-            const timer=setInterval(()=>{
-                if(terminal.sftpPanelVisible&&this.current.value?.terminal===terminal&&entry.selection.pathSource==='sftp'&&terminal.sftpPath!==entry.root)void inspect()
-            },750)
-            entry.subscriptions.push(new Subscription(()=>clearInterval(timer)))
-        }
         watch()
         if (terminal.hasFocus || !this.current.value) this.activate(terminal)
     }

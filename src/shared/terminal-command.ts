@@ -1,6 +1,7 @@
 import type { BaseTerminalTabComponent } from 'tabby-terminal'
 import type { GitResult } from '../arw-tree/git/remote-git'
 import type { RemoteShell } from './shell-integration'
+import { terminalDirectoryCommand } from './terminal-directory-command'
 
 const modes=new WeakMap<object,{enabled:boolean;controller:AbortController;shell:RemoteShell}>()
 const running=new WeakSet<object>()
@@ -24,10 +25,10 @@ export async function runTerminalCommand(tab:Terminal,root:string,command:string
     combined.throwIfAborted()
     running.add(tab)
     try {
-        const cwd=await session.getWorkingDirectory()
-        combined.throwIfAborted()
-        if(cwd!==root)throw new Error('Terminal directory changed. Follow its current directory and reopen the AI terminal')
         if(tab.session!==session)throw new Error('Terminal session changed')
+        // Keep command execution anchored to the selected workspace. PTY cwd
+        // reporting is intentionally not used by workspace binding.
+        const changeDirectory=terminalDirectoryCommand(tab,root)
         return await new Promise<GitResult>((resolve,reject)=>{
             let buffer='',bytes=0,settled=false
             let idle:ReturnType<typeof setTimeout>|undefined
@@ -60,7 +61,7 @@ export async function runTerminalCommand(tab:Terminal,root:string,command:string
             const text=command.replace(/\r\n/g,'\n')
             const input=text.includes('\n')&&tab.frontend?.supportsBracketedPaste()
                 ?`\x1b[200~${text}\x1b[201~`:text.replace(/\n/g,'\r')
-            try{tab.sendInput(input+'\r');if(!settled)schedule()}catch(error){finish(error)}
+            try{tab.sendInput(`${changeDirectory}\r`);tab.sendInput(input+'\r');if(!settled)schedule()}catch(error){finish(error)}
         })
     } finally {running.delete(tab)}
 }

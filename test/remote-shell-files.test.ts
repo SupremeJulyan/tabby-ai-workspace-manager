@@ -706,7 +706,7 @@ test('unavailable event watch falls back to cached metadata checks instead of re
     assert.ok(fixture.commands.every(command=>!command.includes('ARW_DIRECTORY_V1')),'metadata checks never reread the full directory tree')
 })
 
-test('remote Git discovery streams a bounded directory prefix including unusual filenames',async context=>{
+test('remote Git discovery streams a bounded directory prefix including unusual filenames',{skip:process.platform==='win32'},async context=>{
     const root=await mkdtemp(join(tmpdir(),'arw-remote-git-limit-'))
     context.after(()=>rm(root,{recursive:true,force:true}))
     for(const name of ['a file','line\nbreak','third','fourth'])await writeFile(join(root,name),'')

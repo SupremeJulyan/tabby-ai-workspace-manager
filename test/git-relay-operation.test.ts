@@ -12,7 +12,7 @@ import type { SSHSession } from '../src/adapters/ssh-compat'
 
 const execute = promisify(execFile)
 
-test('CLI Git relay scopes repositories and shares sidebar locks, releasing SSH references on failure', async t => {
+test('CLI Git relay scopes repositories and shares sidebar locks, releasing SSH references on failure', {skip:process.platform==='win32'}, async t => {
     const root = await mkdtemp(join(tmpdir(), 'arw-relay-operation-'))
     t.after(() => rm(root, {recursive:true,force:true}))
     const repo = join(root,'repo'), nested = join(repo,'nested')

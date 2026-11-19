@@ -22,7 +22,7 @@ test('local synchronization fetches, fast-forwards and pushes only the tracked b
     await run(first,['remote','add','origin',upstream]);await run(first,['push','-u','origin','main'])
     await runner(['clone','--branch','main',upstream,second])
     for(const args of [['config','user.name','Test'],['config','user.email','test@example.com']])await run(second,args)
-    const workspace=localWorkspace(second),git=new RemoteGit(command=>workspace.run(command))
+    const workspace=localWorkspace(second),git=new RemoteGit({run:args=>workspace.runGit!(args)})
     await writeFile(join(first,'file'),'upstream change')
     await run(first,['commit','-am','upstream change']);await syncLocalGit(first,'push')
     await syncLocalGit(second,'fetch')

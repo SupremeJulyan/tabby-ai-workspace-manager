@@ -121,12 +121,13 @@ test('entry budgets bound concurrent enumeration and report incomplete scans',as
 
 test('a discovery deadline stops a stalled listing while preserving discovered repositories',async()=>{
   let signal:AbortSignal|undefined
-  const workspace={...localWorkspace('/tmp'),
-    runGit:async()=>({exitCode:0,stdout:'/tmp\n',stderr:''}),
+  const root=join(tmpdir(),'arw-discovery-deadline')
+  const workspace={...localWorkspace(root),
+    runGit:async()=>({exitCode:0,stdout:root+'\n',stderr:''}),
     listForGit:async(_path:string,_limit:number,received?:AbortSignal)=>{signal=received;return new Promise<never>(()=>{})},
   }
   const result=await discoverGitRepositories(workspace,{maxDurationMs:20})
-  assert.deepEqual(result.roots,['/tmp'])
+  assert.deepEqual(result.roots,[root])
   assert.equal(result.truncated,true)
   assert.equal(signal?.aborted,true)
 })

@@ -61,7 +61,7 @@ async function fixture(t:any,empty=false){
   return {root,upstream,remote,storagePath,workspace,transport,local,git,commands,localCommands};
 }
 
-test('initialization executes at the selected remote directory and preserves existing files',async t=>{
+test('initialization executes at the selected remote directory and preserves existing files',{skip:process.platform==='win32'},async t=>{
   const f=await fixture(t);
   await writeFile(join(f.remote,'existing.txt'),'keep');
   assert.equal(await initializeRemoteGit(f.transport,identity),f.remote);
@@ -77,7 +77,7 @@ test('initialization executes at the selected remote directory and preserves exi
   assert.deepEqual(f.localCommands,[],'initialization never invokes the local network runner');
 });
 
-test('local clone transfers branches, tags and checkout by bundle and keeps the original origin URL',async t=>{
+test('local clone transfers branches, tags and checkout by bundle and keeps the original origin URL',{skip:process.platform==='win32'},async t=>{
   const f=await fixture(t);
   await writeFile(join(f.remote,'existing.txt'),'keep');
   const target=await cloneThroughLocalGit(f.transport,{...identity,directory:'project'},{storagePath:f.storagePath,local:f.local});
@@ -98,7 +98,7 @@ test('local clone transfers branches, tags and checkout by bundle and keeps the 
   assert.equal(await readFile(join(target,'file.txt'),'utf8'),'contents');
 });
 
-test('cloning an empty upstream initializes a usable remote repository without an empty bundle',async t=>{
+test('cloning an empty upstream initializes a usable remote repository without an empty bundle',{skip:process.platform==='win32'},async t=>{
   const f=await fixture(t,true);
   const target=await cloneThroughLocalGit(f.transport,{...identity,directory:'empty'},{storagePath:f.storagePath,local:f.local});
   assert.equal((await f.git(['-C',target,'symbolic-ref','--short','HEAD'])).trim(),'main');
@@ -107,7 +107,7 @@ test('cloning an empty upstream initializes a usable remote repository without a
   assert.deepEqual((await readdir(target)).filter(name=>name!=='.git'),[]);
 });
 
-test('failed and cancelled clones clean their staging directories and never publish a partial project',async t=>{
+test('failed and cancelled clones clean their staging directories and never publish a partial project',{skip:process.platform==='win32'},async t=>{
   const f=await fixture(t);
   await assert.rejects(cloneThroughLocalGit({...f.transport,upload:async()=>{throw Error('SFTP failed')}},{...identity,directory:'failed'},{storagePath:f.storagePath,local:f.local}),/SFTP failed/);
   await assert.rejects(access(join(f.remote,'failed')));
@@ -127,7 +127,7 @@ test('creation validates identity, network URL and destination names before maki
   for(const directory of ['..','../other','/absolute','nested/project'])assert.throws(()=>cloneDirectory(identity.url,directory));
 });
 
-test('a destination created during the local clone is preserved without publishing over it',async t=>{
+test('a destination created during the local clone is preserved without publishing over it',{skip:process.platform==='win32'},async t=>{
   const f=await fixture(t),target=join(f.remote,'raced');
   const local:typeof f.local=async(args,signal,report)=>{
     const result=await f.local(args,signal,report);

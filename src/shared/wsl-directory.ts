@@ -17,6 +17,19 @@ function distributionArguments(terminal:{profile?:any}):string[]{
     const name=index>=0?args[index+1]:args.find(arg=>arg.startsWith('--distribution='))?.slice('--distribution='.length)
     return name?['--distribution',name]:[]
 }
+function wslProfileArguments(terminal:{profile?:any}):string[]{
+    const args:string[]=terminal.profile?.options?.args??[],result:string[]=[]
+    for(let i=0;i<args.length;i++){
+        const value=args[i]
+        if(value==='--'||value==='--exec'||value==='-e')break
+        if(value==='-d'||value==='--distribution'||value==='-u'||value==='--user'){
+            if(args[i+1])result.push(value,args[++i])
+        }else if(value.startsWith('--distribution=')||value.startsWith('--user='))result.push(value)
+        else if(value==='--cd'){i++}
+        else if(value.startsWith('--cd='))continue
+    }
+    return result
+}
 function rememberDisplayPath(terminal:{session?:object|null},root:string,path:Promise<string>):void{
     const owner=terminal.session??terminal,paths=displayPaths.get(owner)??new Map<string,Promise<string>>()
     if(paths.size>=32)paths.delete(paths.keys().next().value!)
@@ -43,19 +56,6 @@ export async function terminalWorkspaceDisplayPath(
     })()
     rememberDisplayPath(terminal,key,path)
     return path
-}
-
-/** Resolve inside the selected distribution, including its custom automount settings. */
-export async function terminalWorkspaceDirectory(
-    terminal:{profile?:any;session?:{getWorkingDirectory():Promise<string|null>}|null},
-    platform:NodeJS.Platform=process.platform,
-    convert:(args:string[])=>Promise<string>=async args=>(await execute('wsl.exe',args,{windowsHide:true,timeout:5000})).stdout,
-):Promise<string|undefined> {
-    const root=await terminal.session?.getWorkingDirectory()
-    if(!root)return undefined
-    // Windows' PTY cwd is only a host-side guess for WSL, not its shell's cwd.
-    if(platform==='win32'&&isWslTerminal(terminal)&&!root.startsWith('/'))return undefined
-    return resolveTerminalWorkspacePath(terminal,root,platform,convert)
 }
 
 /** Resolve a user-entered guest path using the terminal's own filesystem. */
@@ -91,4 +91,16 @@ export async function resolveTerminalWorkspacePath(
     conversions.set(terminal.session??terminal,entry)
     path.catch(()=>{if(conversions.get(terminal.session??terminal)===entry)conversions.delete(terminal.session??terminal)})
     return path
+}
+
+/** Resolve the configured WSL user's home without consulting the interactive terminal cwd. */
+export async function wslHomeDirectory(
+    terminal:{profile?:any;session?:object|null},
+    platform:NodeJS.Platform=process.platform,
+    convert:(args:string[])=>Promise<string>=async args=>(await execute('wsl.exe',args,{windowsHide:true,timeout:5000})).stdout,
+):Promise<string|undefined>{
+    if(platform!=='win32'||!isWslTerminal(terminal))return undefined
+    const result=(await convert([...wslProfileArguments(terminal),'--exec','sh','-lc','printf %s "$HOME"'])).replace(/\r?\n$/,'')
+    if(!result.startsWith('/')||/[\x00-\x1f\x7f]/.test(result))throw new Error('Invalid WSL home directory')
+    return resolveTerminalWorkspacePath(terminal,result,platform,convert)
 }

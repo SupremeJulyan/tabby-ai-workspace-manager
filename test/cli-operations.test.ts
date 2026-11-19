@@ -68,7 +68,11 @@ test('CLI uses its exact directory binding, not inherited environment or parent 
   assert.equal(JSON.parse((await cli(['read','file'])).stdout).content,'reconnected');
 });
 
-test('expanded CLI performs structured reads, searches, edits, file management and ordered batches', async t => {
+test('expanded CLI performs structured reads, searches, edits, file management and ordered batches', {
+  // This integration fixture exercises the POSIX remote-path guard and shell commands.
+  // Windows runs the portable CLI suite; Linux CI runs this full POSIX integration case.
+  skip: process.platform === 'win32' ? 'POSIX remote workspace fixture is not compatible with Windows paths/shell' : false,
+}, async t => {
   const root = await mkdtemp(join(tmpdir(), 'arw-operations-'));
   const workspace = localWorkspace(root);
   const gitCalls: {direction:string,path:string}[] = [];

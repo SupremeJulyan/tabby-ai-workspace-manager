@@ -16,13 +16,13 @@ function terminal(){
     return {tab,sent,output$,input$,closed$,run}
 }
 
-test('native Tabby streams capture output without setup commands or fabricated exit codes',async()=>{
+test('workspace command mode uses the configured root without reading terminal cwd',async()=>{
     const {sent,output$,run}=terminal()
     const pending=run('touch test')
     await new Promise(resolve=>setTimeout(resolve,0))
     output$.next('touch test\r\nuser$ ')
     const result=await pending
-    assert.deepEqual(sent,['touch test\r'])
+    assert.deepEqual(sent,['cd -- \'/project\'\r','touch test\r'])
     assert.deepEqual(result,{stdout:'touch test\nuser$ ',stderr:'',exitCode:null})
     assert.equal(output$.observers.length,0)
 })
@@ -48,7 +48,7 @@ test('native stream capture stops on disable, disconnect, and output limits',asy
 test('terminal-only forwarding rejects structured tools before invoking file backends and restores them when disabled',async t=>{
     const root=await mkdtemp(join(tmpdir(),'arw-terminal-policy-'));t.after(()=>rm(root,{recursive:true,force:true}))
     let enabled=true,reads=0,commands=0
-    const server=new ForwardingServer({workspace:{id:'terminal',root,host:'fixture'},terminalOnly:()=>enabled,
+    const server=new ForwardingServer({workspace:{id:'terminal',root:'/workspace',host:'fixture'},terminalOnly:()=>enabled,
         list:async()=>{reads++;return {entries:[]}},read:async()=>{reads++;return {}},write:async()=>{reads++;return {}},
         run:async(command)=>{assert.equal(command,'touch test');commands++;return {stdout:'ok',stderr:'',exitCode:0}}},join(root,'audit.jsonl'))
     const args={workspaceId:'terminal'}
@@ -70,6 +70,6 @@ test('multiline input uses native bracketed paste capability and normalizes Wind
         const rejected=assert.rejects(pending,/Terminal mode stopped/)
         setTerminalCommandMode(tab,false)
         await rejected
-        assert.equal(sent[0],supported?'\x1b[200~echo first\necho second\x1b[201~\r':'echo first\recho second\r')
+        assert.equal(sent[1],supported?'\x1b[200~echo first\necho second\x1b[201~\r':'echo first\recho second\r')
     }
 })

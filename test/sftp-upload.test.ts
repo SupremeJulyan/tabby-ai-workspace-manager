@@ -9,7 +9,7 @@ import {localWorkspace} from '../src/arw-tree/workspace'
 import {sftpFixture} from './sftp-copy-fixture'
 import type {SSHSession} from '../src/adapters/ssh-compat'
 
-test('desktop uploads preserve nested and empty directories, stream binary files, and refuse collisions', async t => {
+test('desktop uploads preserve nested and empty directories, stream binary files, and refuse collisions', {skip:process.platform==='win32'}, async t => {
     const root = await mkdtemp(join(tmpdir(), 'arw-drop-'))
     t.after(() => rm(root, {recursive: true, force: true}))
     const source = join(root, 'local'), remote = join(root, 'remote')

@@ -1,6 +1,6 @@
 import { terminalLocalWorkspace } from '../adapters/wsl-workspace'
 import { isMsysTerminal } from '../shared/msys-directory'
-import { isWslTerminal, terminalWorkspaceDirectory, resolveTerminalWorkspacePath, terminalWorkspaceDisplayPath } from '../shared/wsl-directory'
+import { isWslTerminal, resolveTerminalWorkspacePath, terminalWorkspaceDisplayPath } from '../shared/wsl-directory'
 import { terminalDirectoryCommand } from '../shared/terminal-directory-command'
 import { checkFileReadSize } from '../shared/file-size-policy'
 import { limitConcurrency } from '../shared/concurrency'
@@ -95,7 +95,7 @@ interface TabState {
     gitSetupRoot:string;
     gitSetupError:string;
     gitSetupProgress:string;
-    cwdShell:RemoteShell;
+    terminalShell:RemoteShell;
     collapsed:Map<string,boolean>;
     viewScroll:{savedWorkspaces:number;browser:number;footer:number};
 }
@@ -428,20 +428,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         } catch(error) { if(version===this.version){this.error=String(error);this.render()} }
     }
     hint = t('选择一个本地或 SSH 终端')
-    cwdShell:RemoteShell='bash'
-    cwdSetupPending=false
-    cwdSetupError=''
-    private cwdSetupCleanup?:()=>Promise<void>
-    private cwdSetupVersion=0
-    private cwdFollowVersion?:number
-    private cwdSetupWaiter?:(success:boolean)=>void
+    terminalShell:RemoteShell='bash'
     private terminalModeSwitching=false
-    private clearCwdSetup(success=false):void{
-        const waiter=this.cwdSetupWaiter;this.cwdSetupWaiter=undefined;waiter?.(success)
-        this.cwdSetupVersion++;this.cwdFollowVersion=undefined;clearTimeout(this.cwdSetupTimer)
-        const cleanup=this.cwdSetupCleanup;this.cwdSetupCleanup=undefined;void cleanup?.()
-    }
-    private cwdSetupTimer?:ReturnType<typeof setTimeout>
     mode: 'files'|'git'|'activity' = 'files'
     private viewScroll={savedWorkspaces:0,browser:0,footer:0}
     private get currentActivityScopes (): Set<string> {
@@ -502,7 +490,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     private readonly automaticGitScans=new Set<string>()
     private gitNeedsScan=false
     error = ''
-    dismissError(field:'error'|'gitSetupError'|'cwdSetupError'='error'):void{
+    dismissError(field:'error'|'gitSetupError'='error'):void{
         this[field]='';this.rememberIfTabbed();this.render()
     }
     dismissRepositoryError(repository:GitRepositoryView,field:'error'|'inspectorError'='error'):void{
@@ -569,7 +557,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             error:this.error,activityCategory:this.activityCategory,activityStatus:this.activityStatus,
             gitSetupMode:this.gitSetupMode,gitSetupName:this.gitSetupName,gitSetupEmail:this.gitSetupEmail,gitSetupUrl:this.gitSetupUrl,
             gitSetupDirectory:this.gitSetupDirectory,gitSetupRoot:this.gitSetupRoot,gitSetupError:this.gitSetupError,gitSetupProgress:this.gitSetupProgress,
-            cwdShell:this.cwdShell,
+            terminalShell:this.terminalShell,
             collapsed:new Map(this.collapsed),viewScroll:{...this.viewScroll},
         }
     }
@@ -632,7 +620,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.activityCategory='all';this.activityStatus='all'
         this.gitSetupMode=null;this.gitSetupName='';this.gitSetupEmail='';this.gitSetupUrl='';this.gitSetupDirectory='';this.gitSetupRoot=''
         this.gitSetupError='';this.gitSetupBusy=false;this.gitSetupProgress=''
-        this.cwdShell='bash'
+        this.terminalShell='bash'
         this.viewScroll={savedWorkspaces:0,browser:0,footer:0};this.projects=[];this.activeProject=''
     }
     private restoreLoadedState(state:TabState,selection:WorkspaceSelection):void{
@@ -654,7 +642,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         this.gitSetupMode=state.gitSetupMode;this.gitSetupName=state.gitSetupName;this.gitSetupEmail=state.gitSetupEmail
         this.gitSetupUrl=state.gitSetupUrl;this.gitSetupDirectory=state.gitSetupDirectory;this.gitSetupRoot=state.gitSetupRoot
         this.gitSetupError=state.gitSetupError;this.gitSetupProgress=state.gitSetupProgress
-        this.cwdShell=state.cwdShell
+        this.terminalShell=state.terminalShell
         this.loading=false;this.gitLoading=false
         this.loadProjects(selection.workspace);this.activeProject=state.activeProject
         this.restoreScroll(state.viewScroll);this.render()
@@ -678,21 +666,12 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         private projectStore?: ProjectStore, private changeDetector?: ChangeDetectorRef, private config?:ConfigService, private tabs?:TabsService,
         private profiles?:ProfilesService) {
         this.subscription = registry.current.subscribe(next => {
-            const followReport=this.cwdSetupPending&&this.cwdFollowVersion===this.version&&next?.workspace&&next.pathSource==='terminal'&&next.terminal===this.selection?.terminal
-            if(next?.terminal!==this.selection?.terminal||(next?.workspace&&next.pathSource!=='sftp'&&next.pathSource!=='restored')){
-                this.cwdSetupPending=false;this.cwdSetupError='';this.clearCwdSetup(Boolean(followReport))
-            }
             const nextTab=this.browsingKey(next),tabChanged=nextTab!==this.activeTab
             if(tabChanged||!next?.workspace)this.saveActiveState()
             if((tabChanged||!next?.workspace)&&this.selection?.workspace)this.stopForwarding()
             if (!next?.workspace) {
                 this.activeTab=nextTab;this.selection=next;this.resetVisibleState()
                 this.hint=next?.hint ?? t('选择一个本地或 SSH 终端');this.render()
-                return
-            }
-            if(followReport&&!tabChanged&&this.browserWorkspace){
-                this.selection=next
-                void this.showWorkspace(next.workspace)
                 return
             }
             const sameRemote=this.selection?.remote===next.remote
@@ -852,6 +831,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(this.app.activeTab!==originalTab&&this.app.activeTab!==split)return
             this.mode='files'
             this.activeProject=project.id
+            if(terminal)this.registry.bindWorkspaceTerminal?.(terminal,this.source??terminal,workspace,this.selection?.remote)
             if(split&&terminal)this.registry.selectWorkspaceTerminal?.(split,terminal)
             const identity=fileWorkspaceToken(workspace)
             if(identity)activateWorkspacePanes(this.app,identity,split?terminal:undefined)
@@ -902,7 +882,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         }
         const opened=await this.profiles.openNewTabForProfile(profile)
         if(!opened)throw new Error(t('无法创建工作区终端'))
-        return (opened as SplitTabComponent).getFocusedTab?.() as BaseTerminalTabComponent<any>??opened as BaseTerminalTabComponent<any>
+        const terminal=(opened as SplitTabComponent).getFocusedTab?.() as BaseTerminalTabComponent<any>??opened as BaseTerminalTabComponent<any>
+        return terminal
     }
 
     async removeProject (project: ArwProject, event?: Event): Promise<void> {
@@ -958,16 +939,9 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
         try{
             if(!this.terminalMode){
                 if(!terminal.session?.open||terminal.alternateScreenActive){this.error=t('请回到 shell 命令提示符后重试。');this.render();return}
-                this.cwdSetupError=''
-                await this.followTerminal()
-                if(this.cwdSetupPending){
-                    const success=await new Promise<boolean>(resolve=>{this.cwdSetupWaiter=resolve})
-                    if(!success)return
-                }
-                if(this.source!==terminal||this.error||this.cwdSetupError||this.cwdSetupPending)return
             }
             this.terminalMode=!this.terminalMode
-            setTerminalCommandMode(terminal,this.terminalMode,this.cwdShell)
+            setTerminalCommandMode(terminal,this.terminalMode,this.terminalShell)
             this.projectsExpanded=true
             this.loadProjects(this.selection?.workspace)
             this.rememberBrowsing();this.render()
@@ -978,37 +952,6 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     private rememberBrowsing():void{
         this.saveActiveState()
-    }
-    async followTerminal (): Promise<void> {
-        const terminal=this.source,version=this.version,key=this.browsingKey(this.selection)
-        if(!terminal||this.cwdSetupPending)return
-        try{
-            const root=await terminalWorkspaceDirectory(terminal)
-            if(this.source!==terminal||version!==this.version||this.browsingKey(this.selection)!==key)return
-            if(!root){
-                if(isWslTerminal(terminal)){
-                    if(!terminal.session?.open||terminal.alternateScreenActive){this.error=t('请回到 shell 命令提示符后重试。');this.render();return}
-                    this.error='';this.cwdSetupError='';this.cwdSetupPending=true
-                    this.cwdFollowVersion=this.version
-                    const request=++this.cwdSetupVersion
-                    this.cwdSetupTimer=setTimeout(()=>{
-                        if(request!==this.cwdSetupVersion)return
-                        this.cwdSetupPending=false
-                        this.cwdSetupError=t('未收到终端目录，请确认已回到 shell 命令提示符后重试。')
-                        this.clearCwdSetup();this.render()
-                    },8000)
-                    // Ask the existing shell once; a separate WSL process cannot know its cwd.
-                    terminal.sendInput("printf '\\033]1337;CurrentDir=%s\\007' \"$PWD\"\r")
-                    this.render();return
-                }
-                this.error=t('Tabby 尚未提供终端当前目录，请启用 Tabby 的路径检测后重试。');this.render()
-                return
-            }
-            const remote=isSshTab(terminal)?terminal.sshSession??undefined:undefined
-            const workspace=remote?remoteWorkspace(remote,root):terminalLocalWorkspace(root,this.source??undefined)
-            this.selection={terminal,remote,workspace,pathSource:'terminal',hint:''}
-            await this.showWorkspace(workspace)
-        }catch(error){if(version===this.version&&this.browsingKey(this.selection)===key){this.cwdSetupPending=false;this.clearCwdSetup();this.error=String(error);this.render()}}
     }
     commitMessage (repository:GitRepositoryView): string { return this.commitMessages.get(repository.root) ?? '' }
     setCommitMessage (repository:GitRepositoryView, value:string): void {
@@ -1777,11 +1720,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     get connectionLabel():string{
         if(this.selection?.workspace?.executionEnvironment==='wsl'||(this.source&&isWslTerminal(this.source)))return t('WSL 远程工作区')
         if(this.selection?.workspace)return this.isRemote?t('SSH 远程工作区'):t('本地工作区')
-        return this.selection?.remote?.open?t('SSH 已连接 · 等待路径'):this.selection?t('正在检测目录'):t('等待终端')
-    }
-    get canEnableCwd():boolean{return Boolean(!this.selection?.sourceTerminal&&this.source&&((isSshTab(this.source)&&this.source.sshSession?.open)||isWslTerminal(this.source)||isMsysTerminal(this.source))&&this.source.session?.open)}
-    async enableCwd():Promise<void>{
-        await this.followTerminal()
+        return this.selection?.remote?.open?t('SSH 已连接 · 正在读取工作路径'):this.selection?t('正在读取工作路径'):t('等待终端')
     }
     private watchController?:AbortController
     private snapshotController?:AbortController
@@ -1886,5 +1825,5 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
     ngAfterViewInit():void{this.viewReady=true;this.restoreFileScroll();this.watchWorkspace()}
     private disposeWorkspaceWatch():void{clearTimeout(this.workspaceChangeTimer);this.watchController?.abort();this.snapshotController?.abort();this.snapshotController=undefined;this.watchController=undefined;this.watchedWorkspace=undefined;this.snapshotInputs=[]}
-    ngOnDestroy():void{this.treeAbort?.abort();this.disposeWorkspaceWatch();this.cancelUpload();this.gitSetupController?.abort();this.viewReady=false;this.unsubscribeActivity();this.gitAbort?.abort();this.clearCwdSetup();this.subscription.unsubscribe();this.stopForwarding()}
+    ngOnDestroy():void{this.treeAbort?.abort();this.disposeWorkspaceWatch();this.cancelUpload();this.gitSetupController?.abort();this.viewReady=false;this.unsubscribeActivity();this.gitAbort?.abort();this.subscription.unsubscribe();this.stopForwarding()}
 }
