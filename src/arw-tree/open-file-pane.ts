@@ -70,7 +70,8 @@ function selectFileWorkspace(split:SplitTabComponent,pane:BaseTabComponent):void
 
 /** Open a file inside the current split instead of creating another top-level tab. */
 export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='stacked',tabs?:Pick<TabsService,'create'>):Promise<T|undefined> {
-    const task=(pendingOpens.get(app)??Promise.resolve()).catch(()=>{}).then(()=>openFile(app,params,source,layout,tabs))
+    const previous=pendingOpens.get(app)
+    const task=previous?previous.catch(()=>{}).then(()=>openFile(app,params,source,layout,tabs)):openFile(app,params,source,layout,tabs)
     pendingOpens.set(app,task)
     try{return await task}
     finally{if(pendingOpens.get(app)===task)pendingOpens.delete(app)}
@@ -79,7 +80,7 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
 async function openFile<T extends BaseTabComponent>(app:AppService,params:NewTabParameters<T>,source:BaseTabComponent|null|undefined,layout:string,tabs?:Pick<TabsService,'create'>):Promise<T|undefined>{
     const anchor=topLevelFor(app,source??app.activeTab)
     rememberRemoteFiles(app)
-    if(app.tabs.length===0)return app.openNewTab(params)
+    if(!app.tabs?.length)return app.openNewTab(params)
     if(!anchor){
         if(!await enforceRemoteFileLimit(app,1,true))return
         return app.openNewTab(params)
