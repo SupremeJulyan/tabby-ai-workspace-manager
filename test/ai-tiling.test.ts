@@ -9,7 +9,7 @@ class Container {
 test('AI tiling preserves sessions, source panes, focus and other top-level tabs',()=>{
     const source={name:'SSH'},editor={name:'editor'},ai=Array.from({length:4},(_,i)=>({name:`ai${i}`,profile:{options:{env:{ARW_WORKSPACE_ROOT:'/project'}}}}))
     const others=new Container([source,editor]),inactive=new Container([{name:'other tab'}]);let layouts=0,updates=0,focused:any=ai[2],maximized:any=ai[0]
-    const split={root:new Container([others,...ai]),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>focused,focus(tab:any){focused=tab},maximize(tab:any){maximized=tab},layout(){layouts++}}
+    const split={root:new Container([others,...ai]),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>focused,focus(tab:any){focused=tab},maximize(tab:any){maximized=tab;this.layout()},layout(){layouts++}}
     const app:any={activeTab:split,tabs:[split,inactive],emitTabsChanged(){updates++}}
     assert.equal(tileAiTerminals(app),true)
     assert.deepEqual(split.root.getAllTabs(),[source,editor,...ai])
@@ -26,7 +26,7 @@ test('automatic tiling responds to added and removed panes without reflowing on 
     const {AutomaticAiTiling}=await import('../src/arw-ai-cli/tiling'),{Subject}=await import('rxjs')
     const changed=new Subject<void>(),source={name:'SSH'},ai=Array.from({length:4},()=>({profile:{options:{env:{ARW_WORKSPACE_ROOT:'/project'}}}}))
     let layouts=0
-    const split={root:new Container([source,...ai]),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>ai[0],focus(){throw Error('Background tiling must not take focus')},maximize(){},layout(){layouts++}}
+    const split={root:new Container([source,...ai]),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>ai[0],focus(){throw Error('Background tiling must not take focus')},maximize(){this.layout()},layout(){layouts++}}
     const app:any={tabs:[split],activeTab:null,tabsChanged$:changed,emitTabsChanged(){changed.next()}}
     const automatic=new AutomaticAiTiling(app,error=>{throw error}),tick=()=>new Promise(resolve=>setTimeout(resolve,10))
     try{
