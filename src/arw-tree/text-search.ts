@@ -24,7 +24,7 @@ export class TextSearch {
     restore(state:FindState):void {Object.assign(this,state);this.open(state.replaceVisible)}
     open(replace=false):void {
         if(replace&&!this.canReplace()){this.edit?.();return}
-        this.visible=true;this.replaceVisible=replace||this.replaceVisible;this.prepare()
+        this.visible=true;this.replaceVisible=replace;this.prepare()
         const target=this.target(),selected=target?.value.slice(target.selectionStart,target.selectionEnd)
         if(selected&&!selected.includes('\n'))this.query=selected
         this.changed()
