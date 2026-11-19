@@ -1,6 +1,6 @@
 import { textFileLimit } from '../shared/text-file-limit'
 import { checkFileReadSize, fileReadLimit } from '../shared/file-size-policy'
-import type { PaneLayout } from '../shared/pane-layout'
+import { filePaneReleaseDelayMs, type PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { openFilePane } from './open-file-pane'
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, Injector, ViewChild } from '@angular/core'
@@ -66,9 +66,10 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     private textHasMore=false
     private textLoadingMore=false
     private textDecoder?:TextDecoder
+    private retainFileContent=true
+    private retentionQueued=false
     private releaseTimer?:ReturnType<typeof setTimeout>
-    private paneFocused=true
-    private paneSubscriptions:Array<{unsubscribe():void}>=[]
+    previewReleased=false
     private releaseRemote?:()=>void
     private unregisterFile?:()=>void
     private removePaneHeader?:()=>void
@@ -94,24 +95,45 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     get csvPages(){return Math.max(1,Math.ceil(this.csvFiltered.length/100))}
     get csvPageRows(){return this.csvFiltered.slice((this.csvPage-1)*100,this.csvPage*100)}
     get canLoadMoreText(){return this.isText&&this.textHasMore&&!this.loading&&!this.error}
-    get previewReleased(){return !this.loading&&!this.text&&!this.imageUrl&&!this.pdfDocument&&!this.error&&this.byteLength===0}
     private render(){if(this.viewReady&&!this.closed)this.detector.detectChanges()}
     async ngOnInit():Promise<void>{
-        if(this.focused$&&this.blurred$)this.paneSubscriptions.push(this.focused$.subscribe(()=>this.onPaneFocused()),this.blurred$.subscribe(()=>this.onPaneBlurred()))
         this.setTitle(t`预览 · ${this.filePath}`)
         try{this.workspace=await resolveFileWorkspace(this.workspace,this.controller.signal)}
         catch(error){if(!this.closed){this.error=String(error);this.loading=false;this.render()}return}
         const remote=remoteWorkspaceSession(this.workspace)
         if(remote?.open){remote.ref();this.releaseRemote=()=>{remote.unref()}}
         if(!this.imagePaths.includes(this.filePath))this.imagePaths=[this.filePath]
-        await this.load()
-        if(!this.closed)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,refresh:async()=>{if(!this.loading&&!this.closed)await this.load()}})
+        if(this.retainFileContent)await this.load()
+        else this.releasePreviewMemory()
+        if(!this.closed)this.unregisterFile=registerOpenedWorkspaceFile({workspace:this.workspace,filePath:this.filePath,
+            refresh:async()=>{if(this.retainFileContent&&!this.previewReleased&&!this.loading&&!this.closed)await this.load()}})
     }
-    private onPaneFocused():void{this.paneFocused=true;clearTimeout(this.releaseTimer);if(this.previewReleased)void this.load()}
-    private onPaneBlurred():void{this.paneFocused=false;clearTimeout(this.releaseTimer);this.releaseTimer=setTimeout(()=>{if(!this.closed&&!this.paneFocused)this.releasePreviewMemory()},5*60*1000)}
-    private releasePreviewMemory():void{++this.version;this.controller.abort();this.controller=new AbortController();this.renderTask?.cancel();this.renderTask=undefined
+    setFileContentRetained(retained:boolean):void{
+        this.retainFileContent=retained
+        if(retained&&this.releaseTimer!==undefined){
+            clearTimeout(this.releaseTimer)
+            this.releaseTimer=undefined
+            this.retentionQueued=false
+        }
+        this.scheduleFileRetention()
+    }
+    private scheduleFileRetention():void{
+        if(this.retentionQueued||this.loading||this.closed||this.retainFileContent!==this.previewReleased)return
+        this.retentionQueued=true
+        const reconcile=()=>{
+            this.releaseTimer=undefined
+            this.retentionQueued=false
+            if(this.loading||this.closed||this.retainFileContent!==this.previewReleased)return
+            if(this.retainFileContent)void this.load()
+            else this.releasePreviewMemory()
+        }
+        if(this.retainFileContent)queueMicrotask(reconcile)
+        else this.releaseTimer=setTimeout(reconcile,filePaneReleaseDelayMs)
+    }
+    private releasePreviewMemory():void{this.previewReleased=true;++this.version;this.controller.abort();this.controller=new AbortController();this.renderTask?.cancel();this.renderTask=undefined
         void this.pdfLoading?.destroy().catch(()=>undefined);this.pdfLoading=undefined;this.pdfDocument=undefined;if(this.imageUrl)URL.revokeObjectURL(this.imageUrl);this.imageUrl=''
-        this.text='';this.textDecoder=undefined;this.markdown='';this.csv={rows:[],columns:0,truncated:false};this.csvFiltered=[];this.byteLength=0;this.encoding='';this.textOffset=0;this.textHasMore=false;this.error='';this.loading=false;this.render()}
+        this.passwordCallback=undefined;this.pdfPasswordRequired=false;this.pdfPasswordError=''
+        this.text='';this.textDecoder=undefined;this.markdown='';this.csv={rows:[],columns:0,truncated:false};this.csvFiltered=[];this.byteLength=0;this.encoding='';this.textOffset=0;this.textHasMore=false;this.error='';this.loading=false;this.search.changed();this.render()}
     ngAfterViewInit():void{this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error)));this.viewReady=true;if(this.pdfDocument)void this.renderPdf()}
     async getRecoveryToken():Promise<RecoveryToken|null>{
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
@@ -153,6 +175,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     }
     private async load():Promise<void>{
         const version=++this.version,path=this.filePath,kind=this.kind
+        this.previewReleased=false
         this.loading=true;this.error='';this.text='';this.source=false;this.markdown='';this.fit=true;this.zoom=1
         this.setTitle(t`预览 · ${path}`);this.render()
         try{
@@ -201,7 +224,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
             logFileRecovery('preview-load-error',{filePath:path,cancelled:this.controller.signal.aborted,error:String(error)})
             if(version===this.version&&!this.closed)this.error=this.controller.signal.aborted?t('预览读取已取消或 SSH 已断开'):error instanceof Error?error.message:String(error)
         }
-        finally{if(version===this.version&&!this.closed){this.loading=false;this.render()}}
+        finally{if(version===this.version&&!this.closed){this.loading=false;this.render();this.scheduleFileRetention()}}
     }
     async reload():Promise<void>{if(this.loading||this.pdfRendering)return;++this.version;this.loading=true;if(this.pdfLoading)await this.pdfLoading.destroy().catch(()=>undefined);this.pdfLoading=undefined;this.pdfDocument=undefined;this.pdfPasswordRequired=false;await this.load()}
     async changeImage(delta:number):Promise<void>{
@@ -259,7 +282,7 @@ export class ArwPreviewComponent extends BaseTabComponent implements AfterViewIn
     }
     ngOnDestroy():void{
         this.removePaneHeader?.();this.search.destroy()
-        this.closed=true;clearTimeout(this.releaseTimer);this.paneSubscriptions.forEach(subscription=>subscription.unsubscribe());this.version++;this.controller.abort();this.renderTask?.cancel();this.unregisterFile?.()
+        this.closed=true;clearTimeout(this.releaseTimer);this.version++;this.controller.abort();this.renderTask?.cancel();this.unregisterFile?.()
         void this.pdfLoading?.destroy().catch(()=>undefined)
         if(this.imageUrl)URL.revokeObjectURL(this.imageUrl)
         this.releaseRemote?.();super.ngOnDestroy()

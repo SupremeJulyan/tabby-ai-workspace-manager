@@ -2,6 +2,7 @@ import type { WorkspacePaneKind } from './pane-kind'
 import { workspaceHiddenPanes } from './workspace-pane-visibility'
 
 export type PaneLayout = 'tiled' | 'stacked'
+export const filePaneReleaseDelayMs=5000
 type LayoutPane = {arwPaneLayout?:unknown;profile?:{options?:{env?:Record<string,string>}}}
 const selections = new WeakMap<object,Partial<Record<WorkspacePaneKind,{pane:object;index:number}>>>()
 const paneSelections = new WeakMap<object,{pane:object;index:number}>()

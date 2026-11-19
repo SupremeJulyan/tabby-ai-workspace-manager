@@ -46,7 +46,8 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     }
     const hidden=tabs.filter(tab=>workspaceHiddenPanes.has(tab))
     const ai=orderedAiPanes(split,tabs.filter(tab=>isAiPane(tab)&&!workspaceHiddenPanes.has(tab)))
-    const files=orderedFilePanes(split,tabs.filter(tab=>isFilePane(tab)&&!workspaceHiddenPanes.has(tab)))
+    const allFiles=orderedFilePanes(split,tabs.filter(isFilePane))
+    const files=allFiles.filter(tab=>!workspaceHiddenPanes.has(tab))
     if(!smallScreenEnabled(app)&&!hidden.length&&files.length===0&&ai.length<(allowSingle?1:2))return false
     const Constructor=split.root.constructor as new()=>SplitContainer,managed=new Set<BaseTabComponent>([...ai,...files,...hidden])
     const container=(orientation:'h'|'v',children:(BaseTabComponent|SplitContainer)[],ratios=children.map(()=>1/children.length))=>{
@@ -95,6 +96,17 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     const focused=split.getFocusedTab()
     split.root=root instanceof Constructor?root:container('h',[root])
     split.maximize(null)
+    const stackedFiles=stackedGroup(files.length?files:allFiles)
+    const selectedFile=stackedFiles?selectedStackedPane(split,'file',files):undefined
+    const keepFiles=new Set<BaseTabComponent>()
+    if(selectedFile){
+        const index=files.indexOf(selectedFile)
+        for(const delta of [-1,0,1])keepFiles.add(files[(index+delta+files.length)%files.length])
+    }
+    for(const file of allFiles){
+        const pane=file as BaseTabComponent&{setFileContentRetained?:(retained:boolean)=>void}
+        pane.setFileContentRetained?.(!stackedFiles||keepFiles.has(file))
+    }
     const main=focusTarget??tabs.find(tab=>!isAiPane(tab)&&!isFilePane(tab)&&!workspaceHiddenPanes.has(tab))
     const bounds=main&&terminalHost(main)?.style
     for(const tab of hidden){

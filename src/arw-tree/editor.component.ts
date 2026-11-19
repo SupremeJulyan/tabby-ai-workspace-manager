@@ -5,7 +5,7 @@ import { shellQuote } from '../shared/shell-quote'
 import { FileSessionPool } from '../services/file-session-pool'
 import { remoteWorkspace } from '../adapters/remote-workspace'
 import { isBinaryFileError, binaryPageBytes, formatHexPage } from '../shared/binary-file'
-import type { PaneLayout } from '../shared/pane-layout'
+import { filePaneReleaseDelayMs, type PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { AfterViewInit, Component, Injector, ElementRef, HostListener, ViewChild } from '@angular/core'
 import { AppService, BaseTabComponent, NotificationsService, PlatformService, type GetRecoveryTokenOptions, type RecoveryToken } from 'tabby-core'
@@ -307,10 +307,63 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     get waitingForConnection (): boolean { return !this.recoveredEdit && !this.recoveredPages && !this.isDiff && this.initialContent===undefined && Boolean(this.workspace?.waitForConnection) }
     get connectionStatus (): string|undefined { return this.workspace?.connectionStatus }
+    private retainFileContent=true
+    private fileContentReleased=false
+    private restoreRenderedView=false
+    private retentionQueued=false
+    private releaseTimer?:ReturnType<typeof setTimeout>
+    setFileContentRetained(retained:boolean):void {
+        this.retainFileContent=retained
+        if(retained&&this.releaseTimer!==undefined){
+            clearTimeout(this.releaseTimer)
+            this.releaseTimer=undefined
+            this.retentionQueued=false
+        }
+        this.scheduleFileRetention()
+    }
+    private scheduleFileRetention():void {
+        if(this.retentionQueued||this.loading||this.saving||this.reconnecting||this.recoveryController.signal.aborted||
+            this.initialContent!==undefined||this.dirty||this.saveIssue||
+            this.retainFileContent!==this.fileContentReleased)return
+        this.retentionQueued=true
+        const reconcile=()=>{
+            this.releaseTimer=undefined
+            this.retentionQueued=false
+            if(this.loading||this.saving||this.reconnecting||this.recoveryController.signal.aborted||
+                this.dirty||this.saveIssue||this.retainFileContent!==this.fileContentReleased)return
+            if(this.retainFileContent){void this.restoreFileContent();return}
+            this.fileContentReleased=true
+            this.restoreRenderedView=this.markdownPreview
+            this.clearRenderedPreview()
+            this.resetPages();this.needsFileVersion=false
+            this.content='';this.original='';this.hash=undefined
+            this.binaryBytes=undefined;this.binaryPage=0;this.diff=undefined
+            this.search.changed()
+        }
+        if(this.retainFileContent)queueMicrotask(reconcile)
+        else this.releaseTimer=setTimeout(reconcile,filePaneReleaseDelayMs)
+    }
+    private async restoreFileContent():Promise<void>{
+        this.fileContentReleased=false
+        this.loading=true;this.error=''
+        try{
+            if(this.isDiff)this.updateDiff(this.diffPatch!)
+            else {
+                await this.readFile()
+                this.original=this.content
+                if(this.search.visible)this.search.changed()
+            }
+        }catch(error){
+            if(!this.recoveryController.signal.aborted){this.error=String(error);this.readonly=true}
+        }finally{this.loading=false}
+        if(this.restoreRenderedView&&!this.error&&this.retainFileContent)void this.toggleMarkdown()
+        this.scheduleFileRetention()
+    }
     get visibleHunks (): DiffHunk[] { return this.activeHunk < 0 ? this.diff?.hunks ?? [] : this.diff?.hunks.slice(this.activeHunk,this.activeHunk+1) ?? [] }
     nextHunk (): void { if(this.diff?.hunks.length)this.activeHunk=(this.activeHunk+1)%this.diff.hunks.length }
     previousHunk (): void { if(this.diff?.hunks.length)this.activeHunk=(this.activeHunk<0?this.diff.hunks.length-1:(this.activeHunk-1+this.diff.hunks.length)%this.diff.hunks.length) }
     ngDoCheck (): void {
+        this.scheduleFileRetention()
         const title=`${this.dirty||this.saveIssue?'● ':''}${this.isDiff?'Diff':this.readonly?'Read-only':this.waitingForConnection?'Waiting':'Edit'} · ${this.filePath}`
         if(this.title!==title)this.setTitle(title)
     }
@@ -318,6 +371,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const changed=this.diffPatch!==patch
         this.diffPatch=patch;this.readonly=true;this.error=''
         if(changed)this.activeHunk=-1
+        if(this.fileContentReleased)return
         try{this.diff=parseDiff(patch)}
         catch(error){this.diff=undefined;this.error=String(error)}
     }
@@ -356,7 +410,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         }
     }
     async reloadOpenFile (): Promise<void> {
-        if(this.loading||this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue)return
+        if(!this.retainFileContent||this.fileContentReleased||this.loading||this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue)return
         if(this.needsFileVersion){
             this.loading=true
             try{await this.readFile();this.original=this.content;this.error='';if(this.search.visible)this.search.changed()}
@@ -440,7 +494,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         return {type:'arw-editor',workspace,filePath:this.filePath,state}
     }
     ngAfterViewInit (): void { this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error))) }
-    ngOnDestroy (): void { this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.reconnectPool?.dispose();this.unregisterFile?.(); super.ngOnDestroy() }
+    ngOnDestroy (): void { clearTimeout(this.releaseTimer);this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.reconnectPool?.dispose();this.unregisterFile?.(); super.ngOnDestroy() }
     saveKey (event: Event): void { event.preventDefault(); void this.save() }
     private async checkWriteLimit(content?:string):Promise<void>{
         if(content!==undefined)checkFileWriteSize(this.workspace.kind,Buffer.byteLength(content))
