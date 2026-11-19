@@ -12,7 +12,8 @@ import { topLevelItems, moveWorkspaceItem, deleteWorkspaceItem, renamedPath, cre
 import { copyWorkspaceItem, copiedWorkspaceItem, pasteWorkspaceItem, canPasteWorkspaceItem } from './workspace-copy'
 import { t } from '../shared/i18n'
 import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy } from '@angular/core'
-import { AppService, ConfigService, NotificationsService, PlatformService, TabsService } from 'tabby-core'
+import { AppService, ConfigService, NotificationsService, PlatformService, ProfilesService, SplitTabComponent, TabsService } from 'tabby-core'
+import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { Subscription } from 'rxjs'
 import { resolve, posix, relative, isAbsolute, sep } from 'node:path'
 import { WorkspaceFile, Workspace } from './workspace'
@@ -670,7 +671,8 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     constructor (private registry: WorkspaceRegistry, private app: AppService,
         private notifications: NotificationsService, private forwarding: ForwardingService,
         private tasks: GitTasksService, private ai: AiLauncherService, private platform: PlatformService,
-        private projectStore?: ProjectStore, private changeDetector?: ChangeDetectorRef, private config?:ConfigService, private tabs?:TabsService) {
+        private projectStore?: ProjectStore, private changeDetector?: ChangeDetectorRef, private config?:ConfigService, private tabs?:TabsService,
+        private profiles?:ProfilesService) {
         this.subscription = registry.current.subscribe(next => {
             const followReport=this.cwdSetupPending&&this.cwdFollowVersion===this.version&&next?.workspace&&next.pathSource==='terminal'&&next.terminal===this.selection?.terminal
             if(next?.terminal!==this.selection?.terminal||(next?.workspace&&next.pathSource!=='sftp'&&next.pathSource!=='restored')){
@@ -832,25 +834,28 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     switchingWorkspace=false
     workspaceSwitchNotice=''
     private projectSelectionRequest=0
+    private workspaceTerminalBusy=new Set<string>()
     async selectProject (project: ArwProject): Promise<void> {
-        if(this.switchingWorkspace)return
+        if(this.switchingWorkspace||this.workspaceTerminalBusy.has(project.id))return
         const request=++this.projectSelectionRequest,tab=this.activeTab
         const workspace = this.savedWorkspace(project)
         if (!workspace) return
         this.switchingWorkspace=true
+        this.workspaceTerminalBusy.add(project.id)
         this.workspaceSwitchNotice=''
         let terminalChange:Promise<void>|undefined
         try {
-            const terminal=this.selection?.sourceTerminal??this.selection?.terminal
-            if(terminal?.session?.open){
-                terminalChange=changeTerminalDirectory(terminal,workspace.root)
-                try {await terminalChange}
-                catch(error){
-                    terminalChange=undefined
-                    logOperation('切换终端工作目录',{root:workspace.root,error:String(error)})
-                    this.workspaceSwitchNotice=error instanceof Error?error.message:String(error)
-                }
+            let terminal:BaseTerminalTabComponent<any>|undefined
+            try {
+                terminal=await this.openWorkspaceTerminal(project,workspace)
                 if(request!==this.projectSelectionRequest||tab!==this.activeTab)return
+                if(terminal){
+                    await this.waitForTerminalSession(terminal)
+                    if(terminal.session?.open){terminalChange=changeTerminalDirectory(terminal,workspace.root);await terminalChange}
+                }
+            }catch(error){
+                logOperation('打开工作区专属终端',{workspace:project.id,error:String(error)})
+                this.workspaceSwitchNotice=error instanceof Error?error.message:String(error)
             }
             this.mode = 'files'
             this.activeProject = project.id
@@ -861,9 +866,43 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(identity)activateWorkspacePanes(this.app,identity)
         } finally {
             await terminalChange
+            this.workspaceTerminalBusy.delete(project.id)
             this.switchingWorkspace=false
             this.render()
         }
+    }
+    /** Open one terminal per saved workspace, cloned from the active terminal profile. */
+    private async openWorkspaceTerminal(project:ArwProject,workspace:Workspace):Promise<BaseTerminalTabComponent<any>|undefined>{
+        const all=()=> (this.app.tabs??[]).flatMap(top=>{
+            const split=top as SplitTabComponent
+            return typeof split.getAllTabs==='function'?split.getAllTabs():[top]
+        }) as BaseTerminalTabComponent<any>[]
+        let terminal=all().find(item=>(item as any).arwProjectWorkspaceId===project.id||item.profile?.options?.arwProjectWorkspaceId===project.id)
+        if(!terminal){
+            const source=(this.selection?.sourceTerminal??this.selection?.terminal) as BaseTerminalTabComponent<any>|undefined
+            if(!source?.profile||!this.profiles)return
+            const profile={...source.profile,options:{...source.profile.options,arwProjectWorkspaceId:project.id}}
+            const opened=await this.profiles.openNewTabForProfile(profile as any)
+            terminal=opened&&'getFocusedTab' in opened?(opened as any).getFocusedTab():opened as BaseTerminalTabComponent<any>
+            if(!terminal)throw new Error(t('无法创建工作区终端'))
+            ;(terminal as any).arwProjectWorkspaceId=project.id
+            ;(terminal as any).arwWorkspaceIdentity=fileWorkspaceToken(workspace)
+            const sourceSplit=this.app.getParentTab(source) as SplitTabComponent|undefined
+            if(sourceSplit){await sourceSplit.add(terminal,source,'r');this.app.selectTab(sourceSplit);sourceSplit.focus(terminal)}
+        }else{
+            const split=this.app.getParentTab(terminal) as SplitTabComponent|undefined
+            if(split){this.app.selectTab(split);split.focus(terminal)}
+        }
+        return terminal
+    }
+    private waitForTerminalSession(terminal:BaseTerminalTabComponent<any>):Promise<void>{
+        if(terminal.session?.open)return Promise.resolve()
+        return new Promise(resolve=>{
+            let done=false
+            const finish=()=>{if(done)return;done=true;clearTimeout(timer);subscription?.unsubscribe();resolve()}
+            const subscription=terminal.sessionChanged$.subscribe(()=>{if(terminal.session?.open)finish()})
+            const timer=setTimeout(finish,30000)
+        })
     }
     async removeProject (project: ArwProject, event?: Event): Promise<void> {
         event?.stopPropagation()
