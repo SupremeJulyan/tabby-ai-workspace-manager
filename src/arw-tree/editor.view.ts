@@ -14,9 +14,10 @@ export const EDITOR_TEMPLATE = `
 ${TEXT_SEARCH_TEMPLATE}
 <div *ngIf="largeTextReadOnly" class="preview-note" role="status">{{ '文件超过写入上限，只读打开。' | arwTranslate }} · {{editLimitMiB}} MiB</div>
 <div *ngIf="pagedText && !binaryBytes" class="diff-toolbar">
-  <button (click)="changeTextPage(-1)" [disabled]="textPage===0 || loading || saving || reconnecting || !!saveIssue">{{ '上一页' | arwTranslate }}</button>
-  <span role="status">{{ '页码' | arwTranslate }} {{textPage+1}}</span>
-  <button (click)="changeTextPage(1)" [disabled]="!hasMoreText || loading || saving || reconnecting || !!saveIssue">{{ '下一页' | arwTranslate }}</button>
+  <ng-container *ngIf="markdownPreview">
+    <button (click)="changeTextPage(-1)" [disabled]="textPage===0 || loading || saving || reconnecting || !!saveIssue">{{ '上一页' | arwTranslate }}</button>
+    <button (click)="changeTextPage(1)" [disabled]="!hasMoreText || loading || saving || reconnecting || !!saveIssue">{{ '下一页' | arwTranslate }}</button>
+  </ng-container>
   <button *ngIf="search.visible && search.query && !search.matches.length && !search.error" (click)="searchFullText()" [disabled]="loading || saving || reconnecting || !!saveIssue">{{ '未找到匹配，逐段搜索全文' | arwTranslate }}</button>
 </div>
 <div class="error" *ngIf="saveIssue as issue" role="alert">
@@ -65,10 +66,10 @@ ${TEXT_SEARCH_TEMPLATE}
  <div class="preview-toolbar"><button (click)="changeCsvPage(-1)" [disabled]="csvPage<=1" class="file-icon-button" [title]="'上一页' | arwTranslate" [attr.aria-label]="'上一页' | arwTranslate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><span>{{csvPage}} / {{csvPages}} {{ '· 每页 100 行' | arwTranslate }}</span><button (click)="changeCsvPage(1)" [disabled]="csvPage>=csvPages" class="file-icon-button" [title]="'下一页' | arwTranslate" [attr.aria-label]="'下一页' | arwTranslate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button></div>
 </ng-container>
 <ng-container *ngIf="binaryBytes && !loading && !error">
- <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span><span class="toolbar-spacer"></span><button (click)="changeBinaryPage(-1)" [disabled]="binaryPage===0">{{ '上一页' | arwTranslate }}</button><span>{{binaryPage+1}} / {{binaryPages}}</span><button (click)="changeBinaryPage(1)" [disabled]="binaryPage+1>=binaryPages">{{ '下一页' | arwTranslate }}</button></div>
- <pre class="binary-content" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
+ <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span></div>
+ <pre class="binary-content" tabindex="0" (scroll)="scrollBinaryWindow($event)" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
 </ng-container>
-<textarea #textEditor *ngIf="!isDiff && !markdownPreview && !binaryBytes" [readOnly]="readonly || viewOnly || loading || saving || reconnecting" [(ngModel)]="content" (ngModelChange)="search.visible && search.changed()" (keydown)="insertTab($event)" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
+<textarea #textEditor *ngIf="!isDiff && !markdownPreview && !binaryBytes" [readOnly]="readonly || viewOnly || loading || saving || reconnecting" [(ngModel)]="editorText" (ngModelChange)="search.visible && search.changed()" (scroll)="scrollTextWindow($event)" (wheel)="scrollTextWindow($event)" (keydown)="insertTab($event)" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" spellcheck="false" wrap="off" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
 `
 
 export const EDITOR_STYLES = scaleTypography(`

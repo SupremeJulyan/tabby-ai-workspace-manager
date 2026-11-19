@@ -7,12 +7,36 @@ import { collapsedAiPanes, orderedAiPanes } from './collapsed-panes'
 import { orderedFilePanes } from './collapsed-panes'
 import { isAiPane, isFilePane } from '../shared/pane-kind'
 import type { AppService, BaseTabComponent, SplitContainer, SplitTabComponent } from 'tabby-core'
+import type { BaseTerminalTabComponent } from 'tabby-terminal'
+import { take, takeUntil } from 'rxjs'
+import { logOperation } from '../services/operation-log'
 
 const terminalStackStyles=new WeakSet<Document>()
+const pendingTerminalPaint=new WeakSet<BaseTabComponent>()
 
 function terminalHost(tab:BaseTabComponent):HTMLElement|undefined {
     const view=tab.viewContainerEmbeddedRef??tab.hostView as {rootNodes?:HTMLElement[]}
     return view?.rootNodes?.find((node:HTMLElement)=>node.nodeType===1) as HTMLElement|undefined
+}
+
+function refreshSelectedTerminal(app:AppService,split:SplitTabComponent,tab:BaseTabComponent):void {
+    const terminal=tab as BaseTerminalTabComponent<any>
+    const host=terminalHost(tab),window=host?.ownerDocument.defaultView
+    if(!host||!window||pendingTerminalPaint.has(tab))return
+    pendingTerminalPaint.add(tab)
+    window.requestAnimationFrame(()=>{
+        pendingTerminalPaint.delete(tab)
+        if(app.activeTab!==split||!host.isConnected||workspaceHiddenPanes.has(tab))return
+        if(!host.clientWidth||!host.clientHeight)return
+        const frontend=terminal.frontend
+        if(!frontend)return
+        const xtermFrontend=frontend as unknown as {resizeHandler?:()=>void}
+        try{
+            // Tabby's xterm frontend uses this handler to fit and repaint without input.
+            if(xtermFrontend.resizeHandler)xtermFrontend.resizeHandler()
+            else frontend.configure(terminal.profile)
+        }catch(error){logOperation('刷新工作区终端显示',{error:String(error)})}
+    })
 }
 
 function updateStackedTerminalHost(tab:BaseTabComponent,hidden:boolean,bounds?:CSSStyleDeclaration):void {
@@ -112,7 +136,15 @@ export function tileWorkspacePanes(app:AppService,target?:SplitTabComponent,allo
     for(const tab of hidden){
         if(!isAiPane(tab)&&!isFilePane(tab))updateStackedTerminalHost(tab,true,bounds)
     }
-    if(focusTarget&&app.activeTab===split)split.focus(focusTarget)
+    if(focusTarget&&app.activeTab===split){
+        split.focus(focusTarget)
+        refreshSelectedTerminal(app,split,focusTarget)
+        const terminal=focusTarget as BaseTerminalTabComponent<any>
+        if(!terminal.frontendIsReady&&terminal.frontendReady$){
+            terminal.frontendReady$.pipe(take(1),takeUntil(terminal.destroyed$))
+                .subscribe(()=>refreshSelectedTerminal(app,split,focusTarget))
+        }
+    }
     else if(focused&&(app.activeTab===split||app.activeTab===focused)){
         const replacement=isFilePane(focused)?files.find(tab=>!collapsedAiPanes.has(tab)):isAiPane(focused)?ai.find(tab=>!collapsedAiPanes.has(tab)):focused
         const stackedReplacement=isFilePane(focused)?selectedStackedPane(split,'file',files):isAiPane(focused)?selectedStackedPane(split,'ai',ai):focused

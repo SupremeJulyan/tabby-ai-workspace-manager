@@ -60,13 +60,39 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private pages:EditorPage[]=[]
     private pageCache=new Map<number,PageText>()
     private pageEdits=new Map<number,PageEdit>()
+    private textScrollAdjusting=false
+    private textWindowCache?:{parts:string[];text:string}
+    private hexWindowCache?:{bytes:Uint8Array;page:number;text:string}
     textPage=0
     get pagedText():boolean{return this.pages.length>0}
     private needsFileVersion=false
     hasMoreText=false
     get binaryPages():number {return Math.max(1,Math.ceil((this.binaryBytes?.length??0)/binaryPageBytes))}
-    get binaryContent():string {return this.binaryBytes?formatHexPage(this.binaryBytes,this.binaryPage):''}
-    changeBinaryPage(delta:number):void {this.binaryPage=Math.max(0,Math.min(this.binaryPages-1,this.binaryPage+delta))}
+    get binaryContent():string {
+        if(!this.binaryBytes){this.hexWindowCache=undefined;return ''}
+        if(this.hexWindowCache?.bytes===this.binaryBytes&&this.hexWindowCache.page===this.binaryPage)return this.hexWindowCache.text
+        const pages:string[]=[]
+        for(let index=Math.max(0,this.binaryPage-1);index<=Math.min(this.binaryPages-1,this.binaryPage+1);index++){
+            pages.push(formatHexPage(this.binaryBytes,index))
+        }
+        const text=pages.join('\n')
+        this.hexWindowCache={bytes:this.binaryBytes,page:this.binaryPage,text}
+        return text
+    }
+    scrollBinaryWindow(event:Event):void {
+        if(this.textScrollAdjusting||!this.binaryBytes)return
+        const view=event.currentTarget as HTMLElement
+        const down=view.scrollHeight-view.scrollTop-view.clientHeight<view.clientHeight
+        const oldFirst=Math.max(0,this.binaryPage-1)
+        const next=this.binaryPage+(down?1:view.scrollTop<view.clientHeight?-1:0)
+        if(next===this.binaryPage||next<0||next>=this.binaryPages||
+            (down&&this.binaryPage+1>=this.binaryPages-1)||(!down&&oldFirst===0))return
+        const lineHeight=parseFloat(getComputedStyle(view).lineHeight)||16
+        const scrollTop=view.scrollTop-(Math.max(0,next-1)-oldFirst)*(binaryPageBytes/16)*lineHeight
+        this.textScrollAdjusting=true
+        this.binaryPage=next
+        requestAnimationFrame(()=>{view.scrollTop=Math.max(0,scrollTop);this.textScrollAdjusting=false})
+    }
     private async readFile():Promise<void> {
         const signal=this.recoveryController.signal
         const size=await this.workspace.fileSize?.(this.filePath,signal)??0
@@ -105,6 +131,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     private resetPages():void {
         this.pages=[];this.pageCache.clear();this.pageEdits.clear()
+        this.textWindowCache=undefined
         this.textPage=0;this.hasMoreText=false
     }
     private rememberPageEdit():void {
@@ -136,6 +163,94 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const edit=this.pageEdits.get(start)
         this.original=edit?.original??page.text;this.content=edit?.content??page.text
         this.clearRenderedPreview()
+    }
+    private visibleTextSegments():Array<{index:number;text:string}>{
+        return [...this.pageCache.keys()].filter(index=>Math.abs(index-this.textPage)<=1)
+            .sort((a,b)=>a-b).map(index=>({
+                index,text:index===this.textPage?this.content:
+                    this.pageEdits.get(this.pages[index].start)?.content??this.pageCache.get(index)!.text,
+            }))
+    }
+    get editorText():string {
+        if(!this.pagedText||!this.pageCache.size)return this.content
+        const parts=this.visibleTextSegments().map(segment=>segment.text),cached=this.textWindowCache
+        if(cached&&cached.parts.length===parts.length&&parts.every((part,index)=>part===cached.parts[index]))return cached.text
+        const text=parts.join('')
+        this.textWindowCache={parts,text}
+        return text
+    }
+    set editorText(value:string){
+        if(!this.pagedText||!this.pageCache.size){this.content=value;return}
+        const segments=this.visibleTextSegments().map(segment=>({...segment,normalized:segment.text.replace(/\r\n?/g,'\n')}))
+        const previous=segments.map(segment=>segment.normalized).join('')
+        if(previous===value)return
+        let start=0,end=previous.length,newEnd=value.length
+        while(start<end&&start<newEnd&&previous[start]===value[start])start++
+        while(end>start&&newEnd>start&&previous[end-1]===value[newEnd-1]){end--;newEnd--}
+        const replacement=value.slice(start,newEnd)
+        let offset=0
+        for(const [position,segment] of segments.entries()){
+            const limit=offset+segment.normalized.length
+            const insert=start>=offset&&(start<limit||position===segments.length-1)
+            if(insert||start<limit&&end>offset){
+                // Map the textarea's normalized offsets back to the original line endings.
+                const originalOffset=(index:number)=>{
+                    if(segment.normalized===segment.text)return index
+                    let result=index
+                    for(let pair=segment.text.indexOf('\r\n');pair>=0&&pair<result;pair=segment.text.indexOf('\r\n',pair+2))result++
+                    return result
+                }
+                const localStart=originalOffset(Math.max(0,start-offset))
+                const localEnd=originalOffset(Math.min(segment.normalized.length,end-offset))
+                const content=segment.text.slice(0,localStart)+(insert?replacement:'')+segment.text.slice(localEnd)
+                if(segment.index===this.textPage)this.content=content
+                else {
+                    const {start}=this.pages[segment.index],original=this.pageCache.get(segment.index)!.text
+                    if(content===original)this.pageEdits.delete(start)
+                    else this.pageEdits.set(start,{start,original,content})
+                }
+            }
+            offset=limit
+        }
+    }
+    async scrollTextWindow(event:Event):Promise<void>{
+        if(!this.pagedText||this.textScrollAdjusting||this.loading||this.saving||this.reconnecting||this.saveIssue||this.error)return
+        const editor=event.currentTarget as HTMLTextAreaElement
+        const wheel=event.type==='wheel'?event as WheelEvent:undefined
+        if(wheel&&(wheel.ctrlKey||wheel.shiftKey||Math.abs(wheel.deltaX)>Math.abs(wheel.deltaY)||editor.scrollHeight>editor.clientHeight))return
+        const segments=this.visibleTextSegments()
+        if(!segments.length)return
+        const first=segments[0].index,last=segments[segments.length-1].index
+        const down=wheel?wheel.deltaY>0:editor.scrollHeight-editor.scrollTop-editor.clientHeight<editor.clientHeight
+        const index=down?last+1:editor.scrollTop<editor.clientHeight?first-1:-1
+        if(!this.pages[index])return
+        this.rememberPageEdit()
+        this.loading=true
+        try{
+            const page=await this.fetchPage(index)
+            if(this.recoveryController.signal.aborted||this.textEditor?.nativeElement!==editor)return
+            const oldTop=editor.scrollTop,oldLeft=editor.scrollLeft
+            const lineHeight=parseFloat(getComputedStyle(editor).lineHeight)||16
+            const selectionStart=editor.selectionStart,selectionEnd=editor.selectionEnd
+            // Keep the overlapping text as the scroll anchor while moving the window.
+            const center=down?Math.max(this.textPage,index-1):Math.min(this.textPage,index+1)
+            this.pageCache.set(index,page)
+            this.showPage(center,this.pageCache.get(center)!)
+            if(this.search.visible)this.search.changed(0,false)
+            const next=this.visibleTextSegments(),nextFirst=next[0].index
+            const shifted=(nextFirst>first?segments.filter(segment=>segment.index<nextFirst):
+                next.filter(segment=>segment.index<first)).map(segment=>segment.text).join('').replace(/\r\n?/g,'\n')
+            const direction=nextFirst>first?-1:1
+            this.textScrollAdjusting=true
+            requestAnimationFrame(()=>{
+                this.textScrollAdjusting=false
+                if(this.textEditor?.nativeElement!==editor)return
+                editor.setSelectionRange(Math.max(0,selectionStart+direction*shifted.length),Math.max(0,selectionEnd+direction*shifted.length))
+                editor.scrollTop=Math.max(0,oldTop+direction*(shifted.split('\n').length-1)*lineHeight)
+                editor.scrollLeft=oldLeft
+            })
+        }catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+        finally{this.loading=false}
     }
     async changeTextPage(delta:number):Promise<void>{
         const index=this.textPage+delta
@@ -214,14 +329,14 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     initialFind?:FindState
     @ViewChild('textEditor') textEditor?:ElementRef<HTMLTextAreaElement>
     @ViewChild('findInput') findInput?:ElementRef<HTMLInputElement>
-    readonly search=new TextSearch(()=>this.content,text=>{this.content=text},()=>this.textEditor?.nativeElement,
+    readonly search=new TextSearch(()=>this.editorText,text=>{this.editorText=text},()=>this.textEditor?.nativeElement,
         ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.viewOnly&&!this.loading&&!this.saving&&!this.reconnecting&&!this.isDiff&&!this.saveIssue,
         ()=>this.clearRenderedPreview())
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff&&!this.binaryBytes)this.search.key(event)}
     insertTab(event:KeyboardEvent):void{
         if(event.key!=='Tab'||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||this.readonly||this.viewOnly||this.loading||this.saving||this.reconnecting||this.isDiff||this.binaryBytes)return
         const editor=event.currentTarget as HTMLTextAreaElement,start=editor.selectionStart,end=editor.selectionEnd;event.preventDefault()
-        this.content=this.content.slice(0,start)+'\t'+this.content.slice(end)
+        this.editorText=editor.value.slice(0,start)+'\t'+editor.value.slice(end)
         queueMicrotask(()=>{editor.setSelectionRange(start+1,start+1);this.search.visible&&this.search.changed()})
     }
     constructor (private injector: Injector) {
@@ -337,7 +452,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             this.clearRenderedPreview()
             this.resetPages();this.needsFileVersion=false
             this.content='';this.original='';this.hash=undefined
-            this.binaryBytes=undefined;this.binaryPage=0;this.diff=undefined
+            this.binaryBytes=undefined;this.binaryPage=0;this.hexWindowCache=undefined;this.diff=undefined
             this.search.changed()
         }
         if(this.retainFileContent)queueMicrotask(reconcile)

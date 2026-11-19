@@ -37,7 +37,7 @@ export class TextSearch {
         const pattern=this.regex?this.query:this.query.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
         return new RegExp(pattern,this.matchCase?'gu':'giu')
     }
-    changed(anchor=0):void {
+    changed(anchor=0,selectMatch=true):void {
         this.matches=[];this.current=-1;this.error='';this.limited=false
         if(!this.query)return
         try{
@@ -51,7 +51,7 @@ export class TextSearch {
                 }
                 if(!match[0].length)expression.lastIndex+=(text.codePointAt(expression.lastIndex)??0)>0xffff?2:1
             }
-            if(this.matches.length){this.current=this.matches.findIndex(match=>match.start>=anchor);if(this.current<0)this.current=0;this.select(false)}
+            if(this.matches.length){this.current=this.matches.findIndex(match=>match.start>=anchor);if(this.current<0)this.current=0;if(selectMatch)this.select(false)}
         }catch{this.error=t('无效的正则表达式')}
     }
     navigate(direction:number):void {

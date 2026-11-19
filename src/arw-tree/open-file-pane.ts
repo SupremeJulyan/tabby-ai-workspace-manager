@@ -10,6 +10,8 @@ import type { AppService, BaseTabComponent, SplitTabComponent, TabsService } fro
 import type { NewTabParameters } from 'tabby-core/typings/services/tabs.service'
 import { tileWorkspacePanes } from '../arw-ai-cli/tiling'
 
+const pendingOpens=new WeakMap<AppService,Promise<unknown>>()
+
 function topLevelFor (app:AppService,tab:BaseTabComponent|null|undefined):BaseTabComponent|undefined {
     if(!tab||!app.tabs?.length)return
     const visited=new Set<BaseTabComponent>()
@@ -67,10 +69,20 @@ function selectFileWorkspace(split:SplitTabComponent,pane:BaseTabComponent):void
 }
 
 /** Open a file inside the current split instead of creating another top-level tab. */
-export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='stacked',tabs?:Pick<TabsService,'create'>):Promise<T> {
+export async function openFilePane<T extends BaseTabComponent> (app:AppService,params:NewTabParameters<T>,source?:BaseTabComponent|null,layout='stacked',tabs?:Pick<TabsService,'create'>):Promise<T|undefined> {
+    const task=(pendingOpens.get(app)??Promise.resolve()).catch(()=>{}).then(()=>openFile(app,params,source,layout,tabs))
+    pendingOpens.set(app,task)
+    try{return await task}
+    finally{if(pendingOpens.get(app)===task)pendingOpens.delete(app)}
+}
+
+async function openFile<T extends BaseTabComponent>(app:AppService,params:NewTabParameters<T>,source:BaseTabComponent|null|undefined,layout:string,tabs?:Pick<TabsService,'create'>):Promise<T|undefined>{
     const anchor=topLevelFor(app,source??app.activeTab)
     rememberRemoteFiles(app)
-    if(!anchor||app.tabs.length===0){const file=await app.openNewTab(params);await enforceRemoteFileLimit(app);return file}
+    if(!anchor||app.tabs.length===0){
+        if(!await enforceRemoteFileLimit(app,1,true))return
+        return app.openNewTab(params)
+    }
     const split=('getAllTabs' in anchor?anchor:app.getParentTab(anchor)??app.wrapAndAddTab(anchor)) as SplitTabComponent
     if(anchor!==split&&app.tabs.includes(anchor))app.removeTab(anchor)
     const existing=split.getAllTabs().find(pane=>sameFile(pane,params.inputs,params.type)) as T|undefined
@@ -89,6 +101,8 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
         return existing
     }
     if(!tabs)throw new Error('File panes require Tabby TabsService')
+    if(!await enforceRemoteFileLimit(app,1,true))return
+    if(!app.tabs.includes(split))return app.openNewTab(params)
     const file=tabs.create({...params,inputs:{...params.inputs,arwPaneLayout:paneLayout(layout)}})
     try{
         await split.add(file,null,'b')
@@ -101,6 +115,5 @@ export async function openFilePane<T extends BaseTabComponent> (app:AppService,p
     selectStackedPane(split,'file',file,orderedFilePanes(split,split.getAllTabs().filter(isFilePane)))
     split.focus(file)
     tileWorkspacePanes(app,split,true)
-    await enforceRemoteFileLimit(app)
     return file
 }

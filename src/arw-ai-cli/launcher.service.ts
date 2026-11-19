@@ -39,12 +39,14 @@ import { resumeArguments } from './recovery'
 export class AiLauncherService {
     private openingAiTerminals=0
 
-    private async openAiTerminal(profile:Parameters<ProfilesService['openNewTabForProfile']>[0]) {
+    private hasAiTerminalSlot():boolean {
         const panes=(this.app?.tabs??[]).flatMap(tab=>'getAllTabs' in tab
             ? (tab as {getAllTabs():object[]}).getAllTabs() : [tab])
-        if(new Set(panes.filter(isAiPane)).size+this.openingAiTerminals>=9){
-            throw new Error(t('最多打开 9 个 AI 终端，请先关闭一个再试。'))
-        }
+        return new Set(panes.filter(isAiPane)).size+this.openingAiTerminals<9
+    }
+
+    private async openAiTerminal(profile:Parameters<ProfilesService['openNewTabForProfile']>[0]) {
+        if(!this.hasAiTerminalSlot())return
         this.openingAiTerminals++
         try {
             return await this.profiles.openNewTabForProfile(profile)
@@ -86,6 +88,7 @@ export class AiLauncherService {
     }
     /** Launch the command configured under Settings → ARW → AI CLI. */
     async launchConfigured (selection: WorkspaceSelection, agentId?:string): Promise<void> {
+        if(!this.hasAiTerminalSlot())return
         const agents=configuredAiCommands(this.config.store.omw)
         const configured=agentId?agents.find(agent=>agent.id===agentId):agents[0]
         if(!configured){
@@ -230,7 +233,8 @@ export class AiLauncherService {
             const opened = await this.openAiTerminal({ type: 'local', name: shellCommandLine(launch),
                 options: { command: launch.command, args: launch.args, cwd: agentCwd, env: launch.env,
                     shellType: launch.shellType, pauseAfterExit: true } })
-            if (!opened) throw new Error(t('无法创建 AI 终端'))
+            if(opened===undefined){await cleanup();return}
+            if(!opened)throw new Error(t('无法创建 AI 终端'))
             const tab = opened && 'getFocusedTab' in opened ? (opened as any).getFocusedTab() as BaseTerminalTabComponent<any> : opened as BaseTerminalTabComponent<any>
             titleAiTabs([...(this.app?.tabs??[]).flatMap(value=>{
                 const split=value as {getAllTabs?:()=>unknown[]}

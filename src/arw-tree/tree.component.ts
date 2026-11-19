@@ -1383,13 +1383,15 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             }
             this.rememberBrowsing()
             const kind=previewKind(node.path)
-            if(kind==='image'||kind==='pdf'){
-                const paths=workspacePath(workspace.kind),parent=paths.dirname(node.path)
-                const imagePaths=this.nodes.filter(entry=>!entry.directory&&previewKind(entry.path)==='image'&&paths.dirname(entry.path)===parent).map(entry=>entry.path)
-                await openFilePane(this.app,{type:ArwPreviewComponent,inputs:{workspace,filePath:node.path,imagePaths}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
-            }else await openFilePane(this.app,{type:ArwEditorComponent,inputs:{
-                workspace,filePath:node.path,viewOnly:true,renderOnOpen:kind==='markdown'||kind==='csv',
-            }},this.source,this.config?.store.omw?.fileLayout,this.tabs)
+            try{
+                if(kind==='image'||kind==='pdf'){
+                    const paths=workspacePath(workspace.kind),parent=paths.dirname(node.path)
+                    const imagePaths=this.nodes.filter(entry=>!entry.directory&&previewKind(entry.path)==='image'&&paths.dirname(entry.path)===parent).map(entry=>entry.path)
+                    await openFilePane(this.app,{type:ArwPreviewComponent,inputs:{workspace,filePath:node.path,imagePaths}},this.source,this.config?.store.omw?.fileLayout,this.tabs)
+                }else await openFilePane(this.app,{type:ArwEditorComponent,inputs:{
+                    workspace,filePath:node.path,viewOnly:true,renderOnOpen:kind==='markdown'||kind==='csv',
+                }},this.source,this.config?.store.omw?.fileLayout,this.tabs)
+            }catch(error){this.error=redactSensitiveText(error instanceof Error?error.message:String(error));this.render()}
             return
         }
         await this.enter(node)

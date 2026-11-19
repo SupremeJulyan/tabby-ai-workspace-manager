@@ -74,7 +74,8 @@ test "${offset}" -le "$size" || exit 1
 printf 'ARW_RANGE:%s\\n' "$version"
 tail -c +$(( ${offset} + 1 )) -- ${quoted} | head -c ${length} | base64 || exit $?
 test "$(stat -c '%s:%y' -- ${quoted})" = "$version" || exit 1`
-    const result=await transport.run(command,signal??AbortSignal.timeout(30000),{maxBytes:Math.ceil(length/3)*4+2048})
+    const encodedLength=Math.ceil(length/3)*4
+    const result=await transport.run(command,signal??AbortSignal.timeout(30000),{maxBytes:encodedLength+Math.ceil(encodedLength/76)+2048})
     signal?.throwIfAborted();if(result.exitCode!==0)throw new Error(result.stderr.trim()||t('无法读取远端文件片段'))
     const newline=result.stdout.indexOf('\n'),header=result.stdout.slice(0,newline);if(newline<0||!/^ARW_RANGE:\d+:.+$/.test(header))throw new Error(t('无法读取远端文件的修改时间或大小'))
     const encoded=result.stdout.slice(newline+1).replace(/[\r\n\t ]/g,'');const bytes=Buffer.from(encoded,'base64'),size=Number(header.slice('ARW_RANGE:'.length).split(':')[0])
