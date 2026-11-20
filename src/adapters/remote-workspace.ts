@@ -289,7 +289,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             if(!requestSignal?.aborted&&session.open&&session.ssh===connection){
                 try{
                     const current=await workspace.read(input,AbortSignal.timeout(5000))
-                    if(current.content===content){notifyWorkspaceChange(workspace);return current}
+                    if(current.content===content.replace(/^\ufeff/,'')){notifyWorkspaceChange(workspace);return current}
                 }catch{/* Return the original write failure with recovery guidance. */}
             }
             throw new Error(`CLI_WRITE_UNCONFIRMED: Remote contents may be incomplete. Read the file and retry with its current expectedHash; no editor unlock is required. ${String(error)}`,{cause:error})

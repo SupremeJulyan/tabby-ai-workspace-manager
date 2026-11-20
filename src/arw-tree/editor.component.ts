@@ -21,7 +21,7 @@ import { isFileConflict, isFileMissing } from '../shared/file-conflict'
 import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
 
 const editorChunkBytes=256*1024
-interface EditorPage {offset:number;start:number}
+interface EditorPage {offset:number;start:number;line?:number}
 interface PageText {text:string;length:number;more:boolean}
 interface PageEdit {start:number;original:string;content:string}
 
@@ -64,6 +64,23 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private textWindowCache?:{parts:string[];text:string}
     private hexWindowCache?:{bytes:Uint8Array;page:number;text:string}
     textPage=0
+    softWrap=false
+    lineEnding:'LF'|'CRLF'='LF'
+    textEncoding:'UTF-8'|'UTF-8 BOM'='UTF-8'
+    private savedLineEnding:'LF'|'CRLF'='LF'
+    private savedTextEncoding:'UTF-8'|'UTF-8 BOM'='UTF-8'
+    caretLine=1
+    caretColumn=1
+    lineJumpVisible=false
+    lineJumpInput='1'
+    multiCursorCount=0
+    @ViewChild('lineGutter') lineGutter?:ElementRef<HTMLElement>
+    @ViewChild('editorOverlay') editorOverlay?:ElementRef<HTMLElement>
+    @ViewChild('lineJumpInputElement') lineJumpInputElement?:ElementRef<HTMLInputElement>
+    private multiSelections:Array<{start:number;end:number}>=[]
+    private multiUndo:Array<{text:string;start:number;end:number}>=[]
+    private multiRedo:Array<{text:string;start:number;end:number}>=[]
+    private columnDragAnchor?:{line:number;column:number}
     get pagedText():boolean{return this.pages.length>0}
     private needsFileVersion=false
     hasMoreText=false
@@ -95,6 +112,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     private async readFile():Promise<void> {
         const signal=this.recoveryController.signal
+        let rawFormatRead=false
         const size=await this.workspace.fileSize?.(this.filePath,signal)??0
         checkFileReadSize(this.workspace.kind,size)
         this.largeTextReadOnly=size>fileWriteLimit(this.workspace.kind)
@@ -102,25 +120,36 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         try {
             if(this.workspace.readByteRange){
                 const bytes=await this.workspace.readByteRange(this.filePath,0,editorChunkBytes+1,this.recoveryController.signal,true)
+                this.setTextFormat(bytes.subarray(0,Math.min(bytes.length,editorChunkBytes)))
+                rawFormatRead=true
                 if(bytes.length>editorChunkBytes&&!bytes.includes(0)){
                     try{
                         const chunk=this.decodeEditorChunk(bytes,0)
                         this.resetPages()
-                        this.pages=[{offset:0,start:0}]
+                        this.pages=[{offset:0,start:0,line:1}]
                         this.showPage(0,{...chunk,more:true})
                         this.needsFileVersion=true;this.hash=undefined
+                        this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
                         return
                     }catch(error){if(!(error instanceof TypeError))throw error}
                 }
             }
             const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
-            this.content=file.content;this.hash=file.hash
+            if(!rawFormatRead)this.setTextFormat(new TextEncoder().encode(file.content))
+            this.content=file.content.replace(/\r\n?/g,'\n');this.hash=file.hash
         }catch(error){
             if(!isBinaryFileError(error)||!this.workspace.readBytes)throw error
             this.binaryBytes=await this.workspace.readBytes(this.filePath,fileReadLimit(this.workspace.kind),this.recoveryController.signal)
             this.binaryPage=0;this.readonly=true;this.content='';this.hash=undefined
         }
         this.resetPages();this.needsFileVersion=false
+        this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
+    }
+    private setTextFormat(bytes:Uint8Array):void{
+        this.textEncoding=bytes[0]===0xef&&bytes[1]===0xbb&&bytes[2]===0xbf?'UTF-8 BOM':'UTF-8'
+        const sample=new TextDecoder().decode(bytes)
+        const crlf=(sample.match(/\r\n/g)??[]).length,lf=(sample.match(/(?<!\r)\n/g)??[]).length
+        this.lineEnding=crlf>lf?'CRLF':'LF'
     }
     private decodeEditorChunk(bytes:Uint8Array,offset:number):{text:string;length:number}{
         let length=Math.min(bytes.length,editorChunkBytes)
@@ -151,13 +180,17 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         if(next&&(!more||next.offset!==offset+chunk.length||next.start!==start+chunk.text.length)){
             throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
         }
-        if(more&&!next)this.pages[index+1]={offset:offset+chunk.length,start:start+chunk.text.length}
+        const line=(this.pages[index].line??1)+(chunk.text.match(/\n/g)?.length??0)
+        if(more&&!next)this.pages[index+1]={offset:offset+chunk.length,start:start+chunk.text.length,line}
+        else if(next&&next.line===undefined)next.line=line
+        else if(next&&next.line!==line)throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
         return {...chunk,more}
     }
     private showPage(index:number,page:PageText):void {
         const {offset,start}=this.pages[index]
-        if(page.more&&!this.pages[index+1])this.pages[index+1]={offset:offset+page.length,start:start+page.text.length}
+        if(page.more&&!this.pages[index+1])this.pages[index+1]={offset:offset+page.length,start:start+page.text.length,line:(this.pages[index].line??1)+(page.text.match(/\n/g)?.length??0)}
         this.textPage=index;this.hasMoreText=page.more
+        this.multiSelections=[];this.multiCursorCount=0
         this.pageCache.set(index,page)
         for(const cached of this.pageCache.keys())if(Math.abs(cached-index)>1)this.pageCache.delete(cached)
         const edit=this.pageEdits.get(start)
@@ -171,11 +204,63 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                     this.pageEdits.get(this.pages[index].start)?.content??this.pageCache.get(index)!.text,
             }))
     }
+    private lineStart(index:number):number{
+        let line=this.pages[index]?.line??1
+        for(const edit of this.pageEdits.values()){
+            const pageIndex=this.pages.findIndex(page=>page.start===edit.start)
+            if(pageIndex>=0&&pageIndex<index)line+=(edit.content.match(/\n/g)?.length??0)-(edit.original.match(/\n/g)?.length??0)
+        }
+        return line
+    }
+    get editorLineNumbers():string{
+        const source=this.editorText.split('\n'),first=this.visibleTextSegments()[0]?.index??this.textPage
+        const start=this.pagedText?this.lineStart(first):1
+        const editor=this.textEditor?.nativeElement
+        let columns=Number.POSITIVE_INFINITY
+        if(this.softWrap&&editor){
+            const style=getComputedStyle(editor),fontSize=parseFloat(style.fontSize)||12,charWidth=fontSize*.6
+            columns=Math.max(1,Math.floor((editor.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)-12)/charWidth))
+        }
+        const visual:string[]=[]
+        source.forEach((line,index)=>{
+            let width=0
+            for(const character of line)width+=character==='\t'?4-width%4:/[^\x00-\xff]/.test(character)?2:1
+            const rows=Math.max(1,Math.ceil(width/columns))
+            visual.push(String(start+index),...Array.from({length:rows-1},()=>''))
+        })
+        return visual.join('\n')
+    }
+    get multiCursorMarkup():string{
+        const text=this.editorText,ranges=[...this.multiSelections].sort((a,b)=>a.start-b.start),escape=(value:string)=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        let offset=0,markup=''
+        for(const range of ranges){
+            if(range.start<offset)continue
+            markup+=escape(text.slice(offset,range.start))
+            if(range.start===range.end)markup+='<span class="multi-cursor">&#8203;</span>'
+            else markup+=`<span class="multi-selection">${escape(text.slice(range.start,range.end))}</span>`
+            offset=range.end
+        }
+        return markup+escape(text.slice(offset))
+    }
+    updateCaretPosition():void{
+        const editor=this.textEditor?.nativeElement
+        if(!editor)return
+        const before=this.editorText.slice(0,editor.selectionStart),first=this.visibleTextSegments()[0]?.index??this.textPage
+        const start=this.pagedText?this.lineStart(first):1
+        this.caretLine=start+(before.match(/\n/g)?.length??0)
+        this.caretColumn=before.length-(before.lastIndexOf('\n')+1)+1
+        this.lineJumpInput=String(this.caretLine)
+    }
+    private formattedText(text:string):string{
+        const normalized=text.replace(/\r\n?/g,'\n'),eol=this.lineEnding==='CRLF'?'\r\n':'\n'
+        return (this.textEncoding==='UTF-8 BOM'?'\ufeff':'')+normalized.replace(/\n/g,eol)
+    }
+    private displayText(text:string):string{return text.replace(/^\ufeff/,'')}
     get editorText():string {
-        if(!this.pagedText||!this.pageCache.size)return this.content
+        if(!this.pagedText||!this.pageCache.size)return this.content.replace(/\r\n?/g,'\n')
         const parts=this.visibleTextSegments().map(segment=>segment.text),cached=this.textWindowCache
         if(cached&&cached.parts.length===parts.length&&parts.every((part,index)=>part===cached.parts[index]))return cached.text
-        const text=parts.join('')
+        const text=parts.join('').replace(/\r\n?/g,'\n')
         this.textWindowCache={parts,text}
         return text
     }
@@ -332,12 +417,236 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     readonly search=new TextSearch(()=>this.editorText,text=>{this.editorText=text},()=>this.textEditor?.nativeElement,
         ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.viewOnly&&!this.loading&&!this.saving&&!this.reconnecting&&!this.isDiff&&!this.saveIssue,
         ()=>this.clearRenderedPreview())
-    @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {if(!this.isDiff&&!this.binaryBytes)this.search.key(event)}
+    @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {
+        if(this.isDiff||this.binaryBytes)return
+        const editor=this.textEditor?.nativeElement,command=event.ctrlKey||event.metaKey
+        if(event.target===editor&&command&&event.key.toLowerCase()==='g'){
+            event.preventDefault();event.stopPropagation();this.openLineJump();return
+        }
+        const redo=event.key.toLowerCase()==='y'||event.key.toLowerCase()==='z'&&event.shiftKey
+        if(event.target===editor&&command&&(event.key.toLowerCase()==='z'||event.key.toLowerCase()==='y')&&
+            (redo?this.multiRedo:this.multiUndo).length){
+            event.preventDefault();event.stopPropagation();this.undoMulti(redo);return
+        }
+        if(event.target===editor&&command&&event.key.toLowerCase()==='d'){
+            event.preventDefault();event.stopPropagation();this.addNextOccurrence();return
+        }
+        this.search.key(event)
+    }
     insertTab(event:KeyboardEvent):void{
         if(event.key!=='Tab'||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||this.readonly||this.viewOnly||this.loading||this.saving||this.reconnecting||this.isDiff||this.binaryBytes)return
         const editor=event.currentTarget as HTMLTextAreaElement,start=editor.selectionStart,end=editor.selectionEnd;event.preventDefault()
         this.editorText=editor.value.slice(0,start)+'\t'+editor.value.slice(end)
-        queueMicrotask(()=>{editor.setSelectionRange(start+1,start+1);this.search.visible&&this.search.changed()})
+        this.multiSelections=[];this.multiCursorCount=0
+        this.multiUndo=[];this.multiRedo=[]
+        queueMicrotask(()=>{editor.setSelectionRange(start+1,start+1);this.search.visible&&this.search.changed();this.updateCaretPosition()})
+    }
+    editorKeydown(event:KeyboardEvent):void{
+        const editor=event.currentTarget as HTMLTextAreaElement
+        if(editor.readOnly||this.loading||this.saving||this.reconnecting)return
+        const addCursor=event.altKey&&event.shiftKey&&(event.key==='ArrowUp'||event.key==='ArrowDown')
+        const editAll=this.multiSelections.length>1&&(event.key==='Enter'||event.key==='Tab'||event.key.length===1&&!event.ctrlKey&&!event.metaKey&&!event.altKey)
+        if(this.multiSelections.length&&!addCursor&&!editAll&&!((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='d')){
+            this.multiSelections=[];this.multiCursorCount=0
+        }
+        if(addCursor){
+            event.preventDefault();this.addVerticalCursor(event.key==='ArrowUp'?-1:1);return
+        }
+        if(event.key==='Enter'&&this.multiSelections.length>1){event.preventDefault();this.applyMultiText('\n');return}
+        if(event.key==='Tab'&&this.multiSelections.length>1){event.preventDefault();this.applyMultiText('\t');return}
+        if(event.key==='Enter'){event.preventDefault();this.insertIndentedLine(editor);return}
+        if(event.key==='Tab'){this.insertTab(event);return}
+        if(event.ctrlKey||event.metaKey||event.altKey||event.key.length!==1)return
+        const pairs:Record<string,string>={'(':')','[':']','{':'}','"':'"',"'":"'"}
+        if(this.multiSelections.length>1&&pairs[event.key]){event.preventDefault();this.applyMultiText(event.key+pairs[event.key],1);return}
+        if((event.key==='"'||event.key==="'")&&editor.value[editor.selectionStart]===event.key&&editor.selectionStart===editor.selectionEnd){
+            event.preventDefault();editor.setSelectionRange(editor.selectionStart+1,editor.selectionStart+1);this.updateCaretPosition();return
+        }
+        if(')]}'.includes(event.key)&&editor.value[editor.selectionStart]===event.key&&editor.selectionStart===editor.selectionEnd){
+            event.preventDefault();editor.setSelectionRange(editor.selectionStart+1,editor.selectionStart+1);this.updateCaretPosition();return
+        }
+        if(!pairs[event.key])return
+        event.preventDefault()
+        const start=editor.selectionStart,end=editor.selectionEnd,source=this.editorText
+        this.editorText=source.slice(0,start)+event.key+source.slice(start,end)+pairs[event.key]+source.slice(end)
+        this.multiSelections=[];this.multiCursorCount=0
+        this.multiUndo=[];this.multiRedo=[]
+        queueMicrotask(()=>{editor.setSelectionRange(start+1,start+1+end-start);this.updateCaretPosition()})
+    }
+    private insertIndentedLine(editor:HTMLTextAreaElement):void{
+        const text=this.editorText,start=editor.selectionStart,end=editor.selectionEnd,lineStart=text.lastIndexOf('\n',start-1)+1
+        const indent=text.slice(lineStart,start).match(/^[\t ]*/)?.[0]??''
+        const before=text.slice(lineStart,start).trimEnd(),after=text.slice(end).trimStart()
+        const widths=text.split('\n').map(line=>line.match(/^[\t ]*/)?.[0]??'').filter(value=>value.length)
+        const unit=indent.includes('\t')||widths.some(value=>value.includes('\t'))?'\t':' '.repeat(Math.min(...widths.map(value=>value.length),4)||4)
+        const opens=/[({\[]$/.test(before),closes=/^[)}\]]/.test(after)
+        const inner=opens?indent+unit:closes?indent.slice(0,Math.max(0,indent.length-unit.length)):indent
+        let insertion=`\n${inner}`,caret=start+insertion.length
+        if(opens&&closes){insertion=`\n${indent+unit}\n${indent}`;caret=start+indent.length+unit.length+1}
+        this.editorText=text.slice(0,start)+insertion+text.slice(end)
+        this.multiSelections=[];this.multiCursorCount=0
+        this.multiUndo=[];this.multiRedo=[]
+        queueMicrotask(()=>{editor.setSelectionRange(caret,caret);this.updateCaretPosition()})
+    }
+    private addNextOccurrence():void{
+        const editor=this.textEditor?.nativeElement
+        if(!editor)return
+        const text=this.editorText,selected=text.slice(editor.selectionStart,editor.selectionEnd)
+        const after=text.slice(editor.selectionStart).match(/^[\p{L}\p{N}_$]+/u)?.[0]
+        const before=text.slice(0,editor.selectionStart).match(/[\p{L}\p{N}_$]+$/u)?.[0]
+        const word=selected||after||before
+        if(!word)return
+        if(!this.multiSelections.length){
+            const start=editor.selectionStart===editor.selectionEnd?after?editor.selectionStart:editor.selectionStart-word.length:editor.selectionStart
+            const end=editor.selectionStart===editor.selectionEnd?start+word.length:editor.selectionEnd
+            this.multiSelections=[{start,end}];this.multiCursorCount=1
+            editor.setSelectionRange(start,end);this.updateCaretPosition();return
+        }
+        let next=text.indexOf(word,this.multiSelections[this.multiSelections.length-1].end)
+        if(next<0)next=text.indexOf(word,0)
+        while(next>=0&&this.multiSelections.some(range=>range.start===next))next=text.indexOf(word,next+word.length)
+        if(next<0)return
+        this.multiSelections.push({start:next,end:next+word.length});this.multiCursorCount=this.multiSelections.length
+        editor.setSelectionRange(next,next+word.length);this.updateCaretPosition()
+    }
+    private addVerticalCursor(direction:number):void{
+        const editor=this.textEditor?.nativeElement
+        if(!editor)return
+        const text=this.editorText,offset=editor.selectionStart,lineStart=text.lastIndexOf('\n',offset-1)+1,column=offset-lineStart
+        const previousStart=lineStart?text.lastIndexOf('\n',lineStart-2)+1:-1
+        const newline=text.indexOf('\n',lineStart),nextStart=newline<0?-1:newline+1
+        const targetStart=direction<0?previousStart:nextStart
+        if(targetStart<0||targetStart>=text.length)return
+        const lineEnd=text.indexOf('\n',targetStart),target=Math.min(targetStart+column,lineEnd<0?text.length:lineEnd)
+        if(!this.multiSelections.length)this.multiSelections=[{start:editor.selectionStart,end:editor.selectionEnd}]
+        if(this.multiSelections.some(range=>range.start===target))return
+        this.multiSelections.push({start:target,end:target});this.multiCursorCount=this.multiSelections.length
+        editor.setSelectionRange(target,target);this.updateCaretPosition()
+    }
+    private textareaPoint(event:PointerEvent):{line:number;column:number}|undefined{
+        const editor=this.textEditor?.nativeElement
+        if(!editor||this.softWrap)return
+        const rect=editor.getBoundingClientRect(),style=getComputedStyle(editor),fontSize=parseFloat(style.fontSize)||12
+        const rowHeight=parseFloat(style.lineHeight)||fontSize*1.65,charWidth=fontSize*.6
+        const line=Math.max(0,Math.min(this.editorText.split('\n').length-1,Math.floor((event.clientY-rect.top-parseFloat(style.paddingTop)+editor.scrollTop)/rowHeight)))
+        const column=Math.max(0,Math.floor((event.clientX-rect.left-parseFloat(style.paddingLeft)+editor.scrollLeft)/charWidth))
+        return {line,column}
+    }
+    columnPointerDown(event:PointerEvent):void{
+        if(!event.altKey||!event.shiftKey||this.readonly||this.viewOnly||this.loading||this.saving)return
+        const point=this.textareaPoint(event),editor=event.currentTarget as HTMLTextAreaElement
+        if(!point)return
+        event.preventDefault();editor.focus();editor.setPointerCapture(event.pointerId)
+        this.columnDragAnchor=point;this.setColumnSelection(point)
+    }
+    columnPointerMove(event:PointerEvent):void{
+        if(!this.columnDragAnchor)return
+        const point=this.textareaPoint(event)
+        if(point)this.setColumnSelection(point)
+    }
+    columnPointerUp():void{this.columnDragAnchor=undefined}
+    private setColumnSelection(point:{line:number;column:number}):void{
+        const editor=this.textEditor?.nativeElement
+        if(!editor||!this.columnDragAnchor)return
+        const lines=this.editorText.split('\n'),starts:number[]=[];let offset=0
+        for(const line of lines){starts.push(offset);offset+=line.length+1}
+        const anchor=this.columnDragAnchor,first=Math.min(anchor.line,point.line),last=Math.max(anchor.line,point.line)
+        const left=Math.min(anchor.column,point.column),right=Math.max(anchor.column,point.column)
+        this.multiSelections=[]
+        for(let line=first;line<=last;line++){
+            const start=starts[line]+Math.min(left,lines[line].length),end=starts[line]+Math.min(right,lines[line].length)
+            this.multiSelections.push({start,end})
+        }
+        this.multiCursorCount=this.multiSelections.length
+        const active=this.multiSelections[this.multiSelections.length-1]
+        editor.setSelectionRange(active.start,active.end);this.updateCaretPosition()
+    }
+    handleMultiInput(event:InputEvent):void{
+        if(this.multiSelections.length<2){this.multiSelections=[];this.multiCursorCount=0;return}
+        const editor=event.currentTarget as HTMLTextAreaElement
+        let replacement=event.data
+        if(event.inputType==='insertFromPaste')replacement=event.dataTransfer?.getData('text/plain')??''
+        const ranges=[...this.multiSelections]
+        if(event.inputType==='deleteContentBackward'||event.inputType==='deleteContentForward'){
+            for(const range of ranges)if(range.start===range.end){
+                if(event.inputType==='deleteContentBackward')range.start=Math.max(0,range.start-1)
+                else range.end++
+            }
+            replacement=''
+        }else if(event.inputType==='insertLineBreak'||event.inputType==='insertParagraph')replacement='\n'
+        else if(!event.inputType.startsWith('insert'))return
+        event.preventDefault()
+        this.applyMultiText(replacement??'')
+    }
+    pasteMulti(event:ClipboardEvent):void{
+        if(this.multiSelections.length<2)return
+        event.preventDefault();this.applyMultiText(event.clipboardData?.getData('text/plain')??'')
+    }
+    copyMulti(event:ClipboardEvent):void{
+        if(this.multiSelections.length<2)return
+        const text=this.editorText
+        event.clipboardData?.setData('text/plain',this.multiSelections.map(range=>text.slice(range.start,range.end)).join('\n'))
+        event.preventDefault()
+    }
+    cutMulti(event:ClipboardEvent):void{
+        if(this.multiSelections.length<2)return
+        this.copyMulti(event);this.applyMultiText('')
+    }
+    private applyMultiText(replacement:string,caretOffset=replacement.length):void{
+        const editor=this.textEditor?.nativeElement,ranges=[...this.multiSelections]
+        if(!editor||ranges.length<2)return
+        const text=this.editorText,active=ranges[ranges.length-1]
+        this.multiUndo.push({text,start:editor.selectionStart,end:editor.selectionEnd});this.multiRedo=[]
+        let next=text
+        for(const range of [...ranges].sort((a,b)=>b.start-a.start))next=next.slice(0,range.start)+replacement+next.slice(range.end)
+        const shift=ranges.filter(range=>range.start<active.start).reduce((sum,range)=>sum+replacement.length-(range.end-range.start),0)
+        const caret=active.start+shift+caretOffset
+        this.editorText=next;this.multiSelections=[];this.multiCursorCount=0
+        queueMicrotask(()=>{editor.setSelectionRange(caret,caret);this.updateCaretPosition()})
+    }
+    editorInput():void{
+        this.updateCaretPosition()
+        if(!this.multiSelections.length){this.multiUndo=[];this.multiRedo=[]}
+    }
+    private undoMulti(redo:boolean):void{
+        const editor=this.textEditor?.nativeElement,from=redo?this.multiRedo:this.multiUndo,to=redo?this.multiUndo:this.multiRedo
+        const previous=from.pop()
+        if(!editor||!previous)return
+        to.push({text:this.editorText,start:editor.selectionStart,end:editor.selectionEnd})
+        this.editorText=previous.text;editor.setSelectionRange(previous.start,previous.end);this.multiSelections=[];this.multiCursorCount=0
+        this.updateCaretPosition()
+    }
+    syncEditorScroll(event:Event):void{
+        const editor=event.currentTarget as HTMLTextAreaElement
+        if(this.lineGutter)this.lineGutter.nativeElement.scrollTop=editor.scrollTop
+        if(this.editorOverlay){this.editorOverlay.nativeElement.scrollTop=editor.scrollTop;this.editorOverlay.nativeElement.scrollLeft=editor.scrollLeft}
+        this.updateCaretPosition();void this.scrollTextWindow(event)
+    }
+    openLineJump():void{this.lineJumpVisible=true;setTimeout(()=>this.lineJumpInputElement?.nativeElement.focus(),0)}
+    async jumpToLine():Promise<void>{
+        const target=Math.max(1,Math.floor(Number(this.lineJumpInput)||1));this.lineJumpVisible=false
+        if(this.loading||this.saving)return
+        if(!this.pagedText){
+            const lines=this.content.split('\n');let offset=0
+            for(let i=0;i<Math.min(target-1,lines.length-1);i++)offset+=lines[i].length+1
+            this.textEditor?.nativeElement.setSelectionRange(offset,offset);this.updateCaretPosition();this.textEditor?.nativeElement.focus();return
+        }
+        this.rememberPageEdit();this.loading=true
+        try{
+            let index=0,page:PageText|undefined
+            while(index<this.pages.length){
+                page=await this.fetchPage(index)
+                const content=this.pageEdits.get(this.pages[index].start)?.content??page.text
+                const end=this.lineStart(index)+(content.match(/\n/g)?.length??0)
+                if(target<=end||!page.more)break
+                index++
+            }
+            if(!page)return
+            this.showPage(index,page)
+            const lines=this.content.split('\n');let local=0
+            for(let i=0;i<Math.min(target-this.lineStart(index)-1,lines.length-1);i++)local+=lines[i].length+1
+            requestAnimationFrame(()=>{const editor=this.textEditor?.nativeElement;if(editor){const prefix=this.visibleTextSegments().filter(segment=>segment.index<index).reduce((sum,segment)=>sum+segment.text.length,0);editor.setSelectionRange(prefix+local,prefix+local);editor.focus();this.updateCaretPosition()}})
+        }catch(error){this.error=String(error)}finally{this.loading=false}
     }
     constructor (private injector: Injector) {
         super(injector)
@@ -347,7 +656,8 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     get dirty (): boolean {
         return !this.readonly&&(this.content!==this.original||
-            [...this.pageEdits.keys()].some(start=>start!==this.pages[this.textPage]?.start))
+            [...this.pageEdits.keys()].some(start=>start!==this.pages[this.textPage]?.start)||
+            this.lineEnding!==this.savedLineEnding||this.textEncoding!==this.savedTextEncoding)
     }
     get saveIssue (): {message:string;busy:boolean}|undefined {return this.workspace?.saveIssue?.(this.filePath)}
     get isDiff (): boolean { return this.diffPatch !== undefined }
@@ -605,7 +915,8 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         if(!workspace)return null
         const state:Record<string,unknown>={arwPaneLayout:this.arwPaneLayout,readonly:this.readonly,initialContent:this.initialContent,diffPatch:this.diffPatch,
             diffLabel:this.diffLabel,diffDescription:this.diffDescription,diffStaged:this.diffStaged,diffMode:this.diffMode,
-            viewOnly:this.viewOnly,renderOnOpen:this.markdownPreview}
+            viewOnly:this.viewOnly,renderOnOpen:this.markdownPreview,softWrap:this.softWrap,lineEnding:this.lineEnding,
+            textEncoding:this.textEncoding,savedLineEnding:this.savedLineEnding,savedTextEncoding:this.savedTextEncoding}
         if(options?.includeState!==false&&this.dirty){
             if(this.pagedText){
                 this.rememberPageEdit()
@@ -615,7 +926,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         if(this.saveIssue){state.initialContent=this.content;delete state.recoveredEdit}
         return {type:'arw-editor',workspace,filePath:this.filePath,state}
     }
-    ngAfterViewInit (): void { this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error))) }
+    ngAfterViewInit (): void { this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error)));this.updateCaretPosition() }
     ngOnDestroy (): void { clearTimeout(this.releaseTimer);this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.reconnectPool?.dispose();this.unregisterFile?.(); super.ngOnDestroy() }
     saveKey (event: Event): void { event.preventDefault(); void this.save() }
     private async checkWriteLimit(content?:string):Promise<void>{
@@ -630,9 +941,10 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             await this.checkWriteLimit()
             if(this.pagedText){
                 const merged=await this.mergeText()
-                checkFileWriteSize(this.workspace.kind,Buffer.byteLength(merged.content))
+                const formatted=this.formattedText(merged.content)
+                checkFileWriteSize(this.workspace.kind,Buffer.byteLength(formatted))
                 try{
-                    await this.workspace.write(this.filePath,merged.content,merged.hash)
+                    await this.workspace.write(this.filePath,formatted,merged.hash)
                 }catch(error){
                     if(this.saveIssue){
                         // An uncertain remote write needs the exact payload for an explicit retry.
@@ -649,7 +961,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 return
             }
             if(this.needsFileVersion){Object.assign(this,await this.mergeText());this.needsFileVersion=false;this.hasMoreText=false}
-            const content = this.content
+            const content = this.formattedText(this.content)
             checkFileWriteSize(this.workspace.kind,Buffer.byteLength(content))
             let file
             try { file=await this.workspace.write(this.filePath,content,this.hash) }
@@ -670,7 +982,8 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 }
                 file=await this.workspace.write(this.filePath,content)
             }
-            this.hash=file.hash;this.original=content
+            this.hash=file.hash;this.content=this.displayText(content).replace(/\r\n?/g,'\n');this.original=this.content
+            this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
         }
         catch (error) {
             if(this.workspace.kind==='remote'&&isFileMissing(error)){await this.closeMissingFile();return}
@@ -704,11 +1017,12 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const confirmation=await this.platform.showMessageBox({type:'warning',message:t('再次保存将用本地内容覆盖远端文件，是否继续？'),buttons:[t('取消'),t('再次保存')],defaultId:0,cancelId:0})
         if(confirmation.response!==1)return
         this.saving=true;this.error=''
-        const content=this.content
+        const content=this.formattedText(this.content)
         try {
             await this.checkWriteLimit(content)
             const file=await this.workspace.retrySave(this.filePath,content)
-            this.hash=file.hash;this.original=content
+            this.hash=file.hash;this.content=this.displayText(content).replace(/\r\n?/g,'\n');this.original=this.content
+            this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
         }catch(error){this.error=String(error)}
         finally{this.saving=false}
     }

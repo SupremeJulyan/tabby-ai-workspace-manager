@@ -150,7 +150,8 @@ export function localWorkspace(root: string, id: string = randomUUID()): Workspa
           if(after.uid!==before.uid||after.gid!==before.gid||(after.mode&0o1777)!==(before.mode&0o1777))throw new Error('File permissions changed during save.');
         }
       }finally{await file.close()}
-      return { content, hash: textHash(content) };
+      const savedContent=decodeText(Buffer.from(content,'utf8'))
+      return { content:savedContent, hash: textHash(savedContent) };
     },
     run(command, signal, options) {
       return executeCaptured({ command: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',
