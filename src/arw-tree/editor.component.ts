@@ -1,11 +1,11 @@
 import { optionalSftp } from '../adapters/optional-sftp'
-import { checkFileReadSize, checkFileWriteSize, fileReadLimit, fileWriteLimit } from '../shared/file-size-policy'
+import { checkFileReadSize, checkFileWriteSize, fileWriteLimit } from '../shared/file-size-policy'
 import { posix } from 'node:path'
 import { shellQuote } from '../shared/shell-quote'
 import { FileSessionPool } from '../services/file-session-pool'
 import { remoteWorkspace } from '../adapters/remote-workspace'
 import { isSshTab } from '../adapters/ssh-compat'
-import { isBinaryFileError, formatHexPage } from '../shared/binary-file'
+import { isBinaryFileError } from '../shared/binary-file'
 import { filePaneReleaseDelayMs, type PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { AfterViewInit, Component, Injector, ElementRef, HostListener, ViewChild } from '@angular/core'
@@ -22,7 +22,6 @@ import { isFileConflict, isFileMissing } from '../shared/file-conflict'
 import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
 
 class ReadRestarted extends Error {}
-const binaryPreviewLimit=256*1024
 
 @Component({
     selector: 'arw-editor',
@@ -54,7 +53,6 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     loading = true
     saving = false
     error = ''
-    binaryBytes?:Uint8Array
     largeTextFile=false
     softWrap=false
     lineEnding:'LF'|'CRLF'='LF'
@@ -65,6 +63,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private editorTextValue=''
     private lineCountSource?:string
     private lineCountValue=1
+    lineGutterStart=0
     get editorText():string{
         if(this.editorTextSource!==this.content){this.editorTextSource=this.content;this.editorTextValue=this.content.replace(/\r\n?/g,'\n')}
         return this.editorTextValue
@@ -91,16 +90,6 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private multiUndo:Array<{text:string;start:number;end:number}>=[]
     private multiRedo:Array<{text:string;start:number;end:number}>=[]
     private columnDragAnchor?:{line:number;column:number}
-    get binaryContent():string {
-        if(!this.binaryBytes)return ''
-        const preview=this.binaryBytes.subarray(0,Math.min(binaryPreviewLimit,this.binaryBytes.length))
-        const pages:string[]=[]
-        for(let index=0;index<Math.ceil(preview.length/4096);index++){
-            pages.push(formatHexPage(preview,index))
-        }
-        return pages.join('\n')
-    }
-    get binaryPreviewTruncated():boolean{return (this.binaryBytes?.length??0)>binaryPreviewLimit}
     private async readFile():Promise<void>{
         let attempt=0
         while(true){
@@ -108,7 +97,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             catch(error){
                 if(!this.isRemoteReadRace(error)||this.dirty||this.recoveryController.signal.aborted)throw error
                 logFileRecovery('editor-read-retry',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),attempt:++attempt,error:String(error)})
-                this.binaryBytes=undefined;this.content='';this.original=''
+                this.content='';this.original=''
                 await new Promise(resolve=>setTimeout(resolve,Math.min(50*attempt,500)))
             }
         }
@@ -120,7 +109,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     private async refreshAfterReadRace():Promise<never>{
         logFileRecovery('editor-read-restart',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),reason:'remote-file-changed'})
-        this.binaryBytes=undefined;this.content='';this.original='';this.error=''
+        this.content='';this.original='';this.error=''
         await this.readFile()
         this.original=this.content
         if(this.search.visible)this.search.changed()
@@ -138,6 +127,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             logStep('file-size-complete',stepStarted,{size})
             checkFileReadSize(this.workspace.kind,size)
             this.largeTextFile=size>=1024*1024
+            if(this.largeTextFile){this.softWrap=false;this.lineGutterStart=0}
             this.largeTextReadOnly=size>fileWriteLimit(this.workspace.kind)
             this.readonly=this.largeTextReadOnly
             stepStarted=performance.now()
@@ -149,12 +139,8 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             logStep('full-content-ready',stepStarted,{characters:this.content.length})
         }catch(error){
             outcome='error'
-            if(!isBinaryFileError(error)||!this.workspace.readBytes)throw error
-            const stepStarted=performance.now()
-            this.binaryBytes=await this.workspace.readBytes(this.filePath,fileReadLimit(this.workspace.kind),this.recoveryController.signal)
-            this.readonly=true;this.content='';this.hash=undefined
-            outcome='binary'
-            logStep('binary-content-ready',stepStarted,{bytes:this.binaryBytes.length})
+            if(isBinaryFileError(error))throw new Error(t('暂不支持二进制文件'))
+            throw error
         }finally{
             logFileRecovery('editor-file-read-complete',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),durationMs:Math.round((performance.now()-readStarted)*100)/100,size,outcome,mode:'full'})
         }
@@ -170,7 +156,13 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         this.lineEnding=crlf>lf?'CRLF':'LF'
     }
     get editorLineNumbers():string{
-        if(this.largeTextFile)return ''
+        if(this.largeTextFile){
+            const editor=this.textEditor?.nativeElement,lineHeight=parseFloat(editor?getComputedStyle(editor).lineHeight:'')||20
+            const first=editor?Math.max(0,Math.floor(editor.scrollTop/lineHeight)):0
+            this.lineGutterStart=first
+            const visible=Math.ceil((editor?.clientHeight||600)/lineHeight)+3
+            return Array.from({length:visible},(_,index)=>String(first+index+1)).join('\n')
+        }
         const source=this.editorText.split('\n'),start=1
         const editor=this.textEditor?.nativeElement
         let columns=Number.POSITIVE_INFINITY
@@ -237,7 +229,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         ()=>this.findInput?.nativeElement,()=>!this.readonly&&!this.viewOnly&&!this.loading&&!this.saving&&!this.reconnecting&&!this.isDiff&&!this.saveIssue,
         ()=>this.clearRenderedPreview())
     @HostListener('keydown',['$event']) searchKey(event:KeyboardEvent):void {
-        if(this.isDiff||this.binaryBytes)return
+        if(this.isDiff)return
         const editor=this.textEditor?.nativeElement,command=event.ctrlKey||event.metaKey
         if(event.target===editor&&command&&event.key.toLowerCase()==='g'){
             event.preventDefault();event.stopPropagation();this.openLineJump();return
@@ -248,12 +240,13 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             event.preventDefault();event.stopPropagation();this.undoMulti(redo);return
         }
         if(event.target===editor&&command&&event.key.toLowerCase()==='d'){
+            if(this.largeTextFile){event.preventDefault();event.stopPropagation();return}
             event.preventDefault();event.stopPropagation();this.addNextOccurrence();return
         }
         this.search.key(event)
     }
     insertTab(event:KeyboardEvent):void{
-        if(event.key!=='Tab'||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||this.readonly||this.viewOnly||this.loading||this.saving||this.reconnecting||this.isDiff||this.binaryBytes)return
+        if(event.key!=='Tab'||event.shiftKey||event.ctrlKey||event.metaKey||event.altKey||this.readonly||this.viewOnly||this.loading||this.saving||this.reconnecting||this.isDiff)return
         const editor=event.currentTarget as HTMLTextAreaElement,start=editor.selectionStart,end=editor.selectionEnd;event.preventDefault()
         this.editorText=editor.value.slice(0,start)+'\t'+editor.value.slice(end)
         this.multiSelections=[];this.multiCursorCount=0
@@ -263,7 +256,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     editorKeydown(event:KeyboardEvent):void{
         const editor=event.currentTarget as HTMLTextAreaElement
         if(editor.readOnly||this.loading||this.saving||this.reconnecting)return
-        const addCursor=event.altKey&&event.shiftKey&&(event.key==='ArrowUp'||event.key==='ArrowDown')
+        const addCursor=!this.largeTextFile&&event.altKey&&event.shiftKey&&(event.key==='ArrowUp'||event.key==='ArrowDown')
         const editAll=this.multiSelections.length>1&&(event.key==='Enter'||event.key==='Tab'||event.key.length===1&&!event.ctrlKey&&!event.metaKey&&!event.altKey)
         if(this.multiSelections.length&&!addCursor&&!editAll&&!((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='d')){
             this.multiSelections=[];this.multiCursorCount=0
@@ -439,6 +432,11 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     syncEditorScroll(event:Event):void{
         const editor=event.currentTarget as HTMLTextAreaElement
+        if(this.largeTextFile){
+            const lineHeight=parseFloat(getComputedStyle(editor).lineHeight)||20
+            const next=Math.max(0,Math.floor(editor.scrollTop/lineHeight))
+            if(next!==this.lineGutterStart)this.lineGutterStart=next
+        }
         if(this.lineGutter)this.lineGutter.nativeElement.scrollTop=editor.scrollTop
         if(this.editorOverlay){this.editorOverlay.nativeElement.scrollTop=editor.scrollTop;this.editorOverlay.nativeElement.scrollLeft=editor.scrollLeft}
         this.updateCaretPosition()
@@ -466,9 +464,9 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     get saveIssue (): {message:string;busy:boolean}|undefined {return this.workspace?.saveIssue?.(this.filePath)}
     get isDiff (): boolean { return this.diffPatch !== undefined }
-    get isMarkdown():boolean {return !this.isDiff&&!this.binaryBytes&&previewKind(this.filePath)==='markdown'}
-    get isCsv():boolean {return !this.isDiff&&!this.binaryBytes&&previewKind(this.filePath)==='csv'}
-    get canToggleContentMode():boolean{return !this.isDiff&&!this.binaryBytes&&!this.readonly&&this.initialContent===undefined}
+    get isMarkdown():boolean {return !this.isDiff&&previewKind(this.filePath)==='markdown'}
+    get isCsv():boolean {return !this.isDiff&&previewKind(this.filePath)==='csv'}
+    get canToggleContentMode():boolean{return !this.isDiff&&!this.readonly&&this.initialContent===undefined}
     async toggleContentMode(event?:MouseEvent):Promise<void>{
         event?.preventDefault();event?.stopPropagation()
         if(!this.canToggleContentMode||this.loading||this.saving||this.reconnecting)return
@@ -573,7 +571,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             this.restoreRenderedView=this.markdownPreview
             this.clearRenderedPreview()
             this.content='';this.original='';this.hash=undefined
-            this.binaryBytes=undefined;this.diff=undefined
+            this.diff=undefined
             this.search.changed()
         }
         if(this.retainFileContent)queueMicrotask(reconcile)
@@ -687,10 +685,9 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             if(this.recoveryController.signal.aborted)return
             this.workspace=replacement
             if(!preserve){
-                this.binaryBytes=undefined
                 await this.readFile()
                 this.original=this.content
-                if(!this.binaryBytes)this.readonly=this.largeTextReadOnly
+                this.readonly=this.largeTextReadOnly
                 this.markdownPreview=false;this.markdownVersion++
             }
             this.unregisterFile?.()

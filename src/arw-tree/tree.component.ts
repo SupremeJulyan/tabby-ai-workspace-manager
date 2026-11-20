@@ -676,7 +676,18 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             }
             const sameRemote=this.selection?.remote===next.remote
             if(!tabChanged&&this.browserWorkspace&&this.selection?.workspace&&sameRemote){
+                const workspaceChanged=this.selection.workspace!==next.workspace
                 if(this.selection.terminal!==next.terminal||this.selection.pathSource==='restored')this.selection=next
+                else if(workspaceChanged)this.selection=next
+                if(workspaceChanged&&next.workspace&&next.remote){
+                    const previous=this.browserWorkspace
+                    this.browserWorkspace={...remoteWorkspace(next.remote,previous.root),id:previous.id}
+                    this.error=''
+                    this.disposeWorkspaceWatch();this.watchWorkspace()
+                    if(this.mode==='files')void this.refreshFiles()
+                    if(this.mode==='git')void this.gitStatus()
+                    void refreshOpenedWorkspaceFiles(this.app,next.workspace)
+                }
                 this.restoreProjectForwarding();this.rememberBrowsing();return
             }
             if(!tabChanged&&this.browserWorkspace)this.saveActiveState()

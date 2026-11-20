@@ -253,6 +253,9 @@ export class WorkspaceRegistry {
         const watch = () => {
             sessionSubscriptions.forEach(subscription => subscription.unsubscribe())
             sessionSubscriptions = []
+            // A reconnect can reuse the SSHSession wrapper while replacing its underlying client.
+            // Force inspect() to create a fresh Workspace and transport for the new connection.
+            entry.session = undefined
             const session = terminal.session
             if (session) {
                 sessionSubscriptions.push(session.destroyed$.subscribe(() => {

@@ -4,11 +4,11 @@ const mib=1024*1024
 type FileLocation='local'|'remote'
 
 export function fileReadLimit(kind:FileLocation):number {
-    return (kind==='local'?500:100)*mib
+    return (kind==='local'?500:5)*mib
 }
 
 export function fileWriteLimit(kind:FileLocation):number {
-    return (kind==='local'?100:50)*mib
+    return (kind==='local'?100:2)*mib
 }
 
 export function checkFileReadSize(kind:FileLocation,size:number):void {
