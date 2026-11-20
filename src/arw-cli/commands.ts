@@ -58,8 +58,9 @@ read-only paths may access outside it subject to account permissions.
 `,
   'read': `Usage: arw read PATH --id ID [--offset N --length N | --head N | --tail N | --start-line N --line-count N]
 
-  read without selection returns the whole UTF-8 text file (up to 100 MiB).
-  --offset and --length use UTF-8 bytes, starting at offset 0; default length is 65536.
+  read without selection returns up to 8 KiB and includes nextOffset/truncated.
+  Continue with --offset; each read returns at most 64 KiB.
+  --offset and --length use UTF-8 bytes, starting at offset 0; default length is 8192.
   --start-line is 1-based; default --line-count is 200. --head/--tail count lines.
 Byte reads return nextOffset; continue until truncated is false.
 --workspace aliases --id. --input JSON|- supplies structured fields (camelCase);

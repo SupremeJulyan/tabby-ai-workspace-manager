@@ -18,6 +18,8 @@ export interface ForwardingBackend {
   activityScope?: string;
   workspace: { id: string; root: string; host: string };
   list(path: string, signal: AbortSignal): Promise<unknown>;
+  fileSize?(path:string,signal:AbortSignal):Promise<number>;
+  readRange?(path:string,offset:number,length:number,signal:AbortSignal):Promise<Uint8Array>;
   read(path: string, signal: AbortSignal): Promise<unknown>;
   write(path: string, content: string, signal: AbortSignal, expectedHash?: string): Promise<unknown>;
   run(command: string, signal: AbortSignal, options?: {maxBytes?: number}): Promise<unknown>;

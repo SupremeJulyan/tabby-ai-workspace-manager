@@ -133,6 +133,8 @@ export class ProjectStore {
             git: remote?gitRelayOperation(remote,workspace.root,join(dirname(this.catalogFile??workspaceCatalogPath()),'git-relay')):undefined,
             copy: remote ? sftpCopy(() => remote.openSFTP(), new RemotePathGuard(workspace.root, (command, signal) => workspace.run(command, signal))) : undefined,
             list:async(path,signal)=>{signal.throwIfAborted();return {entries:await cliFiles.list(path)}},
+            fileSize:workspace.fileSize?workspace.fileSize.bind(workspace):undefined,
+            readRange:workspace.readByteRange?((path,offset,length,signal)=>workspace.readByteRange!(path,offset,length,signal)):undefined,
             read:async(path,signal)=>{signal.throwIfAborted();return {path,...await cliFiles.read(path)}},
             write:async(path,content,signal,expectedHash)=>{signal.throwIfAborted();return {path,...await cliFiles.write(path,content,expectedHash,signal)}},
             run:(command,signal,options)=>source&&isTerminalCommandMode(source)?runTerminalCommand(source as BaseTerminalTabComponent<any>,workspace.root,command,signal,options?.maxBytes):workspace.run(command,signal,options),

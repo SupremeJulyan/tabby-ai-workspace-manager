@@ -4,6 +4,8 @@ import { RemotePathGuard } from '../security/remote-path';
 import { shellQuote } from '../shared/shell-quote';
 import type { ForwardingBackend } from './forwarding-server';
 
+const defaultReadLength=8192,maxReadLength=65536
+
 export function integer(value: unknown, fallback: number, min = 0, max = 10 * 1024 * 1024): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) throw new Error(`Expected integer between ${min} and ${max}`);
@@ -55,8 +57,22 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
   };
   switch (name) {
     case 'remote_read': {
-      const result = object(await backend.read(path(), signal));
-      return { path: path(), ...result, ...selectText(text(result.content, 'content'), args) };
+      const input=path(),hasLineSelection=['head','tail','startLine','lineCount'].some(key=>args[key]!==undefined)
+      if(!hasLineSelection&&backend.fileSize&&backend.readRange){
+        const offset=integer(args.offset,0,0,Number.MAX_SAFE_INTEGER),length=integer(args.length,defaultReadLength,4,maxReadLength)
+        const fileSize=await backend.fileSize(input,signal)
+        if(!Number.isSafeInteger(fileSize)||fileSize<0)throw new Error('Invalid file size')
+        if(offset>fileSize)throw new Error('Offset exceeds file size')
+        const bytes=await backend.readRange(input,offset,length,signal)
+        let controls=0
+        for(const value of bytes)if(value===0||value<32&&![8,9,10,12,13].includes(value))controls++
+        if(bytes.includes(0)||bytes.length&&controls/bytes.length>.1)throw new Error('Binary content; use remote_download')
+        const content=new TextDecoder('utf-8',{fatal:true}).decode(bytes,{stream:offset+bytes.length<fileSize})
+        const consumed=Buffer.byteLength(content),nextOffset=offset+consumed
+        return {path:input,content,offset,bytes:consumed,nextOffset,fileSize,truncated:nextOffset<fileSize}
+      }
+      const result = object(await backend.read(input, signal));
+      return { path: input, ...result, ...selectText(text(result.content, 'content'), args) };
     }
     case 'remote_list': {
       const result = object(await backend.list(text(args.path ?? '.', 'path'), signal));
