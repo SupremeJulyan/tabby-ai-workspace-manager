@@ -89,7 +89,7 @@ arw workspaces
 arw list src
 arw read README.md --head 40
 arw search TODO src
-arw exec -- 'git status --short'
+printf '%s' 'git status --short' | arw exec
 arw upload ./local-file path
 arw download -r folder ./local-folder
 arw git-pull

@@ -178,9 +178,11 @@ Cannot move workspaceRoot; source and destination must remain inside it.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'exec': `Usage: arw exec --id ID [--verbose] -- 'COMMAND'
+  'exec': `Usage: printf '%s' 'COMMAND' | arw exec [--id ID] [--verbose]
+       arw exec [--id ID] [--verbose] < command.txt
 
-Quote COMMAND as one argument; place all CLI options before --.
+Exec reads the complete raw command from stdin. Pass commands through a pipe or
+stdin redirection; positional commands and --command are not supported.
 Exec uses its separate command policy; do not bypass policy denials.
 Terminal mode injects into the existing shell and inherits its directory, user and
 environment and shell state; the terminal must be at a shell prompt. Streams are combined.

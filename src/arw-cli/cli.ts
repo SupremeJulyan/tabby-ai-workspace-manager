@@ -11,7 +11,7 @@ import { readWorkspaceBinding } from './workspace-binding';
 declare const ARW_CLI_VERSION: string;
 
 async function main(): Promise<void> {
-  const stringOptions = ['id', 'workspace', 'input', 'file', 'content', 'path', 'query', 'name', 'output-id', 'stream', 'command', 'type', 'mode', 'limit', 'cursor', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count', 'expected-hash'];
+  const stringOptions = ['id', 'workspace', 'input', 'file', 'content', 'path', 'query', 'name', 'output-id', 'stream', 'type', 'mode', 'limit', 'cursor', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count', 'expected-hash'];
   const { values: parsedValues, positionals, tokens } = parseArgs({ allowPositionals: true, tokens:true, options: {
     ...Object.fromEntries(stringOptions.map(key => [key, { type: 'string' as const }])),
     version: { type: 'boolean', short: 'V' }, compact: { type: 'boolean' }, verbose: { type: 'boolean' },
@@ -39,9 +39,12 @@ async function main(): Promise<void> {
   if (verb !== 'workspaces' && !values.id) throw new Error('--id is required: the current directory has no .awm/workspace.json binding; select a workspace from arw workspaces');
   if (verb === 'workspaces' && values.id) throw new Error('workspaces does not accept --id');
   if (values.file !== undefined && !['write', 'create'].includes(verb)) throw new Error('--file requires write or create');
+  if(verb==='exec'&&positional.length)throw new Error('arw exec reads the command from stdin; pipe or redirect it without command arguments');
+  if(verb==='exec'&&values.input!==undefined)throw new Error('arw exec reads raw command text from stdin; --input is for JSON arguments');
   if (values.file === '-' && values.input === '-') throw new Error('--file and --input cannot both read stdin');
   let stdin = '';
-  if (values.file === '-' || values.input === '-') {
+  if(verb==='exec'&&process.stdin.isTTY)throw new Error('arw exec requires command text from stdin; pipe or redirect a command');
+  if (verb==='exec'||values.file === '-' || values.input === '-') {
     process.stdin.setEncoding('utf8');
     for await (const chunk of process.stdin) stdin += chunk;
   }
@@ -53,7 +56,8 @@ async function main(): Promise<void> {
     args[key] = value;
   };
   for (const key of Object.keys(args)) if (!spec.fields.includes(key)) throw new Error(`Unsupported input field: ${key}`);
-  positional.forEach((value, index) => {
+  if(verb==='exec')assign('command',stdin.replace(/\r\n/g,'\n'))
+  else positional.forEach((value, index) => {
     const key = spec.positional?.[index];
     if (!key) throw new Error('Too many arguments; quote the command as one argument');
     assign(key, value);
