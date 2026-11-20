@@ -4,7 +4,7 @@ import { posix } from 'node:path'
 import { shellQuote } from '../shared/shell-quote'
 import { FileSessionPool } from '../services/file-session-pool'
 import { remoteWorkspace } from '../adapters/remote-workspace'
-import { isBinaryFileError, binaryPageBytes, formatHexPage } from '../shared/binary-file'
+import { isBinaryFileError, formatHexPage } from '../shared/binary-file'
 import { filePaneReleaseDelayMs, type PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
 import { AfterViewInit, Component, Injector, ElementRef, HostListener, ViewChild } from '@angular/core'
@@ -20,10 +20,6 @@ import { addFileCloseButton } from '../arw-ai-cli/close-button'
 import { isFileConflict, isFileMissing } from '../shared/file-conflict'
 import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
 
-const editorChunkBytes=256*1024
-interface EditorPage {offset:number;start:number;line?:number}
-interface PageText {text:string;length:number;more:boolean}
-interface PageEdit {start:number;original:string;content:string}
 class ReadRestarted extends Error {}
 
 @Component({
@@ -57,19 +53,13 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     saving = false
     error = ''
     binaryBytes?:Uint8Array
-    binaryPage=0
-    private pages:EditorPage[]=[]
-    private pageCache=new Map<number,PageText>()
-    private pageEdits=new Map<number,PageEdit>()
-    private textScrollAdjusting=false
-    private textWindowCache?:{parts:string[];text:string}
-    private hexWindowCache?:{bytes:Uint8Array;page:number;text:string}
-    textPage=0
     softWrap=false
     lineEnding:'LF'|'CRLF'='LF'
     textEncoding:'UTF-8'|'UTF-8 BOM'='UTF-8'
     private savedLineEnding:'LF'|'CRLF'='LF'
     private savedTextEncoding:'UTF-8'|'UTF-8 BOM'='UTF-8'
+    get editorText():string{return this.content.replace(/\r\n?/g,'\n')}
+    set editorText(value:string){this.content=value}
     caretLine=1
     caretColumn=1
     lineJumpVisible=false
@@ -82,34 +72,13 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private multiUndo:Array<{text:string;start:number;end:number}>=[]
     private multiRedo:Array<{text:string;start:number;end:number}>=[]
     private columnDragAnchor?:{line:number;column:number}
-    get pagedText():boolean{return this.pages.length>0}
-    private needsFileVersion=false
-    hasMoreText=false
-    get binaryPages():number {return Math.max(1,Math.ceil((this.binaryBytes?.length??0)/binaryPageBytes))}
     get binaryContent():string {
-        if(!this.binaryBytes){this.hexWindowCache=undefined;return ''}
-        if(this.hexWindowCache?.bytes===this.binaryBytes&&this.hexWindowCache.page===this.binaryPage)return this.hexWindowCache.text
+        if(!this.binaryBytes)return ''
         const pages:string[]=[]
-        for(let index=Math.max(0,this.binaryPage-1);index<=Math.min(this.binaryPages-1,this.binaryPage+1);index++){
+        for(let index=0;index<Math.ceil(this.binaryBytes.length/4096);index++){
             pages.push(formatHexPage(this.binaryBytes,index))
         }
-        const text=pages.join('\n')
-        this.hexWindowCache={bytes:this.binaryBytes,page:this.binaryPage,text}
-        return text
-    }
-    scrollBinaryWindow(event:Event):void {
-        if(this.textScrollAdjusting||!this.binaryBytes)return
-        const view=event.currentTarget as HTMLElement
-        const down=view.scrollHeight-view.scrollTop-view.clientHeight<view.clientHeight
-        const oldFirst=Math.max(0,this.binaryPage-1)
-        const next=this.binaryPage+(down?1:view.scrollTop<view.clientHeight?-1:0)
-        if(next===this.binaryPage||next<0||next>=this.binaryPages||
-            (down&&this.binaryPage+1>=this.binaryPages-1)||(!down&&oldFirst===0))return
-        const lineHeight=parseFloat(getComputedStyle(view).lineHeight)||16
-        const scrollTop=view.scrollTop-(Math.max(0,next-1)-oldFirst)*(binaryPageBytes/16)*lineHeight
-        this.textScrollAdjusting=true
-        this.binaryPage=next
-        requestAnimationFrame(()=>{view.scrollTop=Math.max(0,scrollTop);this.textScrollAdjusting=false})
+        return pages.join('\n')
     }
     private async readFile():Promise<void>{
         let attempt=0
@@ -118,7 +87,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             catch(error){
                 if(!this.isRemoteReadRace(error)||this.dirty||this.recoveryController.signal.aborted)throw error
                 logFileRecovery('editor-read-retry',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),attempt:++attempt,error:String(error)})
-                this.resetPages();this.binaryBytes=undefined;this.content='';this.original=''
+                this.binaryBytes=undefined;this.content='';this.original=''
                 await new Promise(resolve=>setTimeout(resolve,Math.min(50*attempt,500)))
             }
         }
@@ -130,7 +99,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     private async refreshAfterReadRace():Promise<never>{
         logFileRecovery('editor-read-restart',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),reason:'remote-file-changed'})
-        this.resetPages();this.binaryBytes=undefined;this.content='';this.original='';this.error=''
+        this.binaryBytes=undefined;this.content='';this.original='';this.error=''
         await this.readFile()
         this.original=this.content
         if(this.search.visible)this.search.changed()
@@ -161,13 +130,12 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             if(!isBinaryFileError(error)||!this.workspace.readBytes)throw error
             const stepStarted=performance.now()
             this.binaryBytes=await this.workspace.readBytes(this.filePath,fileReadLimit(this.workspace.kind),this.recoveryController.signal)
-            this.binaryPage=0;this.readonly=true;this.content='';this.hash=undefined
+            this.readonly=true;this.content='';this.hash=undefined
             outcome='binary'
             logStep('binary-content-ready',stepStarted,{bytes:this.binaryBytes.length})
         }finally{
             logFileRecovery('editor-file-read-complete',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),durationMs:Math.round((performance.now()-readStarted)*100)/100,size,outcome,mode:'full'})
         }
-        this.resetPages();this.needsFileVersion=false
         this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
     }
     private setTextFormat(bytes:Uint8Array):void{
@@ -176,75 +144,8 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const crlf=(sample.match(/\r\n/g)??[]).length,lf=(sample.match(/(?<!\r)\n/g)??[]).length
         this.lineEnding=crlf>lf?'CRLF':'LF'
     }
-    private decodeEditorChunk(bytes:Uint8Array,offset:number):{text:string;length:number}{
-        let length=Math.min(bytes.length,editorChunkBytes)
-        while(length>0&&length<bytes.length&&(bytes[length]&0xc0)===0x80)length--
-        if(!length&&bytes.length)throw new TypeError('Invalid UTF-8 boundary')
-        const text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:offset>0}).decode(bytes.subarray(0,length))
-        return {text,length}
-    }
-    private resetPages():void {
-        this.pages=[];this.pageCache.clear();this.pageEdits.clear()
-        this.textWindowCache=undefined
-        this.textPage=0;this.hasMoreText=false
-    }
-    private rememberPageEdit():void {
-        if(!this.pagedText)return
-        const {start}=this.pages[this.textPage]
-        if(this.content===this.original)this.pageEdits.delete(start)
-        else this.pageEdits.set(start,{start,original:this.original,content:this.content})
-    }
-    private async fetchPage(index:number):Promise<PageText>{
-      try{
-        const cached=this.pageCache.get(index)
-        if(cached)return cached
-        const {offset,start}=this.pages[index]
-        const bytes=await this.workspace.readByteRange!(this.filePath,offset,editorChunkBytes+1,this.recoveryController.signal,true)
-        if(bytes.includes(0))throw new Error(t('暂不支持二进制文件'))
-        const chunk=this.decodeEditorChunk(bytes,offset),more=chunk.length<bytes.length
-        const next=this.pages[index+1]
-        if(next&&(!more||next.offset!==offset+chunk.length||next.start!==start+chunk.text.length)){
-            throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
-        }
-        const line=(this.pages[index].line??1)+(chunk.text.match(/\n/g)?.length??0)
-        if(more&&!next)this.pages[index+1]={offset:offset+chunk.length,start:start+chunk.text.length,line}
-        else if(next&&next.line===undefined)next.line=line
-        else if(next&&next.line!==line)throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
-        return {...chunk,more}
-      }catch(error){
-        if(this.isRemoteReadRace(error)&&!this.dirty&&!this.recoveryController.signal.aborted)return this.refreshAfterReadRace()
-        throw error
-      }
-    }
-    private showPage(index:number,page:PageText):void {
-        const {offset,start}=this.pages[index]
-        if(page.more&&!this.pages[index+1])this.pages[index+1]={offset:offset+page.length,start:start+page.text.length,line:(this.pages[index].line??1)+(page.text.match(/\n/g)?.length??0)}
-        this.textPage=index;this.hasMoreText=page.more
-        this.multiSelections=[];this.multiCursorCount=0
-        this.pageCache.set(index,page)
-        for(const cached of this.pageCache.keys())if(Math.abs(cached-index)>1)this.pageCache.delete(cached)
-        const edit=this.pageEdits.get(start)
-        this.original=edit?.original??page.text;this.content=edit?.content??page.text
-        this.clearRenderedPreview()
-    }
-    private visibleTextSegments():Array<{index:number;text:string}>{
-        return [...this.pageCache.keys()].filter(index=>Math.abs(index-this.textPage)<=1)
-            .sort((a,b)=>a-b).map(index=>({
-                index,text:index===this.textPage?this.content:
-                    this.pageEdits.get(this.pages[index].start)?.content??this.pageCache.get(index)!.text,
-            }))
-    }
-    private lineStart(index:number):number{
-        let line=this.pages[index]?.line??1
-        for(const edit of this.pageEdits.values()){
-            const pageIndex=this.pages.findIndex(page=>page.start===edit.start)
-            if(pageIndex>=0&&pageIndex<index)line+=(edit.content.match(/\n/g)?.length??0)-(edit.original.match(/\n/g)?.length??0)
-        }
-        return line
-    }
     get editorLineNumbers():string{
-        const source=this.editorText.split('\n'),first=this.visibleTextSegments()[0]?.index??this.textPage
-        const start=this.pagedText?this.lineStart(first):1
+        const source=this.editorText.split('\n'),start=1
         const editor=this.textEditor?.nativeElement
         let columns=Number.POSITIVE_INFINITY
         if(this.softWrap&&editor){
@@ -275,8 +176,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     updateCaretPosition():void{
         const editor=this.textEditor?.nativeElement
         if(!editor)return
-        const before=this.editorText.slice(0,editor.selectionStart),first=this.visibleTextSegments()[0]?.index??this.textPage
-        const start=this.pagedText?this.lineStart(first):1
+        const before=this.editorText.slice(0,editor.selectionStart),start=1
         this.caretLine=start+(before.match(/\n/g)?.length??0)
         this.caretColumn=before.length-(before.lastIndexOf('\n')+1)+1
         this.lineJumpInput=String(this.caretLine)
@@ -286,146 +186,6 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         return (this.textEncoding==='UTF-8 BOM'?'\ufeff':'')+normalized.replace(/\n/g,eol)
     }
     private displayText(text:string):string{return text.replace(/^\ufeff/,'')}
-    get editorText():string {
-        if(!this.pagedText||!this.pageCache.size)return this.content.replace(/\r\n?/g,'\n')
-        const parts=this.visibleTextSegments().map(segment=>segment.text),cached=this.textWindowCache
-        if(cached&&cached.parts.length===parts.length&&parts.every((part,index)=>part===cached.parts[index]))return cached.text
-        const text=parts.join('').replace(/\r\n?/g,'\n')
-        this.textWindowCache={parts,text}
-        return text
-    }
-    set editorText(value:string){
-        if(!this.pagedText||!this.pageCache.size){this.content=value;return}
-        const segments=this.visibleTextSegments().map(segment=>({...segment,normalized:segment.text.replace(/\r\n?/g,'\n')}))
-        const previous=segments.map(segment=>segment.normalized).join('')
-        if(previous===value)return
-        let start=0,end=previous.length,newEnd=value.length
-        while(start<end&&start<newEnd&&previous[start]===value[start])start++
-        while(end>start&&newEnd>start&&previous[end-1]===value[newEnd-1]){end--;newEnd--}
-        const replacement=value.slice(start,newEnd)
-        let offset=0
-        for(const [position,segment] of segments.entries()){
-            const limit=offset+segment.normalized.length
-            const insert=start>=offset&&(start<limit||position===segments.length-1)
-            if(insert||start<limit&&end>offset){
-                // Map the textarea's normalized offsets back to the original line endings.
-                const originalOffset=(index:number)=>{
-                    if(segment.normalized===segment.text)return index
-                    let result=index
-                    for(let pair=segment.text.indexOf('\r\n');pair>=0&&pair<result;pair=segment.text.indexOf('\r\n',pair+2))result++
-                    return result
-                }
-                const localStart=originalOffset(Math.max(0,start-offset))
-                const localEnd=originalOffset(Math.min(segment.normalized.length,end-offset))
-                const content=segment.text.slice(0,localStart)+(insert?replacement:'')+segment.text.slice(localEnd)
-                if(segment.index===this.textPage)this.content=content
-                else {
-                    const {start}=this.pages[segment.index],original=this.pageCache.get(segment.index)!.text
-                    if(content===original)this.pageEdits.delete(start)
-                    else this.pageEdits.set(start,{start,original,content})
-                }
-            }
-            offset=limit
-        }
-    }
-    async scrollTextWindow(event:Event):Promise<void>{
-        if(!this.pagedText||this.textScrollAdjusting||this.loading||this.saving||this.reconnecting||this.saveIssue||this.error)return
-        const editor=event.currentTarget as HTMLTextAreaElement
-        const wheel=event.type==='wheel'?event as WheelEvent:undefined
-        if(wheel&&(wheel.ctrlKey||wheel.shiftKey||Math.abs(wheel.deltaX)>Math.abs(wheel.deltaY)||editor.scrollHeight>editor.clientHeight))return
-        const segments=this.visibleTextSegments()
-        if(!segments.length)return
-        const first=segments[0].index,last=segments[segments.length-1].index
-        const down=wheel?wheel.deltaY>0:editor.scrollHeight-editor.scrollTop-editor.clientHeight<editor.clientHeight
-        const index=down?last+1:editor.scrollTop<editor.clientHeight?first-1:-1
-        if(!this.pages[index])return
-        this.rememberPageEdit()
-        this.loading=true
-        try{
-            const page=await this.fetchPage(index)
-            if(this.recoveryController.signal.aborted||this.textEditor?.nativeElement!==editor)return
-            const oldTop=editor.scrollTop,oldLeft=editor.scrollLeft
-            const lineHeight=parseFloat(getComputedStyle(editor).lineHeight)||16
-            const selectionStart=editor.selectionStart,selectionEnd=editor.selectionEnd
-            // Keep the overlapping text as the scroll anchor while moving the window.
-            const center=down?Math.max(this.textPage,index-1):Math.min(this.textPage,index+1)
-            this.pageCache.set(index,page)
-            this.showPage(center,this.pageCache.get(center)!)
-            if(this.search.visible)this.search.changed(0,false)
-            const next=this.visibleTextSegments(),nextFirst=next[0].index
-            const shifted=(nextFirst>first?segments.filter(segment=>segment.index<nextFirst):
-                next.filter(segment=>segment.index<first)).map(segment=>segment.text).join('').replace(/\r\n?/g,'\n')
-            const direction=nextFirst>first?-1:1
-            this.textScrollAdjusting=true
-            requestAnimationFrame(()=>{
-                this.textScrollAdjusting=false
-                if(this.textEditor?.nativeElement!==editor)return
-                editor.setSelectionRange(Math.max(0,selectionStart+direction*shifted.length),Math.max(0,selectionEnd+direction*shifted.length))
-                editor.scrollTop=Math.max(0,oldTop+direction*(shifted.split('\n').length-1)*lineHeight)
-                editor.scrollLeft=oldLeft
-            })
-        }catch(error){if(!(error instanceof ReadRestarted)&&!this.recoveryController.signal.aborted)this.error=String(error)}
-        finally{this.loading=false}
-    }
-    async changeTextPage(delta:number):Promise<void>{
-        const index=this.textPage+delta
-        if(!this.pages[index]||this.loading||this.saving||this.reconnecting||this.saveIssue)return
-        const restorePreview=this.markdownPreview
-        this.rememberPageEdit()
-        this.loading=true;this.error=''
-        try{
-            this.showPage(index,await this.fetchPage(index))
-            if(this.search.visible)this.search.changed()
-        }catch(error){if(!(error instanceof ReadRestarted)&&!this.recoveryController.signal.aborted)this.error=String(error)}
-        finally{this.loading=false}
-        if(restorePreview&&!this.error)await this.toggleMarkdown()
-    }
-    private async mergeText():Promise<{content:string;original:string;hash?:string}>{
-        this.rememberPageEdit()
-        const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
-        const edits=this.pagedText?[...this.pageEdits.values()].sort((a,b)=>a.start-b.start):
-            [{start:0,original:this.original,content:this.content}]
-        const parts:string[]=[]
-        let end=0
-        for(const edit of edits){
-            if(edit.start<end||file.content.slice(edit.start,edit.start+edit.original.length)!==edit.original){
-                throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
-            }
-            parts.push(file.content.slice(end,edit.start),edit.content)
-            end=edit.start+edit.original.length
-        }
-        parts.push(file.content.slice(end))
-        return {content:parts.join(''),original:file.content,hash:file.hash}
-    }
-    async searchFullText():Promise<void>{
-        if(this.loading||this.saving||this.reconnecting||this.saveIssue||!this.pagedText)return
-        this.rememberPageEdit()
-        this.loading=true;this.error=''
-        const query=this.search.state
-        let text=''
-        const scan=new TextSearch(()=>text,()=>{},()=>undefined,()=>undefined,()=>false)
-        Object.assign(scan,query)
-        const cached=[...this.pageCache.keys()].filter(index=>index!==this.textPage)
-        const current=()=>this.search.visible&&!this.recoveryController.signal.aborted&&JSON.stringify(this.search.state)===JSON.stringify(query)
-        const searchPage=async(index:number)=>{
-            const page=await this.fetchPage(index)
-            if(!current())return true
-            text=this.pageEdits.get(this.pages[index].start)?.content??page.text
-            scan.changed()
-            if(!scan.matches.length)return false
-            this.showPage(index,page);this.search.changed()
-            return true
-        }
-        try{
-            for(const index of cached)if(await searchPage(index))return
-            for(let index=0;index<this.pages.length&&current();index++){
-                if(index!==this.textPage&&!cached.includes(index)&&await searchPage(index))return
-            }
-            if(current())this.error=t('全文未找到匹配内容')
-        }
-        catch(error){if(!(error instanceof ReadRestarted)&&!this.recoveryController.signal.aborted)this.error=String(error)}
-        finally{scan.destroy();this.loading=false}
-    }
     markdownPreview=false
     markdown=''
     markdownError=''
@@ -439,8 +199,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private reconnectPool?:FileSessionPool
     reconnecting=false
     get canReconnect():boolean {return this.workspace?.kind==='remote'&&!this.isDiff&&this.initialContent===undefined}
-    recoveredEdit?:{content:string;original:string;hash?:string;loadedBytes?:number;hasMoreText?:boolean;needsFileVersion?:boolean}
-    recoveredPages?:{pages:EditorPage[];page:number;edits:PageEdit[]}
+    recoveredEdit?:{content:string;original:string;hash?:string}
     initialFind?:FindState
     @ViewChild('textEditor') textEditor?:ElementRef<HTMLTextAreaElement>
     @ViewChild('findInput') findInput?:ElementRef<HTMLInputElement>
@@ -650,33 +409,15 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const editor=event.currentTarget as HTMLTextAreaElement
         if(this.lineGutter)this.lineGutter.nativeElement.scrollTop=editor.scrollTop
         if(this.editorOverlay){this.editorOverlay.nativeElement.scrollTop=editor.scrollTop;this.editorOverlay.nativeElement.scrollLeft=editor.scrollLeft}
-        this.updateCaretPosition();void this.scrollTextWindow(event)
+        this.updateCaretPosition()
     }
     openLineJump():void{this.lineJumpVisible=true;setTimeout(()=>this.lineJumpInputElement?.nativeElement.focus(),0)}
     async jumpToLine():Promise<void>{
         const target=Math.max(1,Math.floor(Number(this.lineJumpInput)||1));this.lineJumpVisible=false
         if(this.loading||this.saving)return
-        if(!this.pagedText){
-            const lines=this.content.split('\n');let offset=0
-            for(let i=0;i<Math.min(target-1,lines.length-1);i++)offset+=lines[i].length+1
-            this.textEditor?.nativeElement.setSelectionRange(offset,offset);this.updateCaretPosition();this.textEditor?.nativeElement.focus();return
-        }
-        this.rememberPageEdit();this.loading=true
-        try{
-            let index=0,page:PageText|undefined
-            while(index<this.pages.length){
-                page=await this.fetchPage(index)
-                const content=this.pageEdits.get(this.pages[index].start)?.content??page.text
-                const end=this.lineStart(index)+(content.match(/\n/g)?.length??0)
-                if(target<=end||!page.more)break
-                index++
-            }
-            if(!page)return
-            this.showPage(index,page)
-            const lines=this.content.split('\n');let local=0
-            for(let i=0;i<Math.min(target-this.lineStart(index)-1,lines.length-1);i++)local+=lines[i].length+1
-            requestAnimationFrame(()=>{const editor=this.textEditor?.nativeElement;if(editor){const prefix=this.visibleTextSegments().filter(segment=>segment.index<index).reduce((sum,segment)=>sum+segment.text.length,0);editor.setSelectionRange(prefix+local,prefix+local);editor.focus();this.updateCaretPosition()}})
-        }catch(error){if(!(error instanceof ReadRestarted))this.error=String(error)}finally{this.loading=false}
+        const lines=this.content.split('\n');let offset=0
+        for(let i=0;i<Math.min(target-1,lines.length-1);i++)offset+=lines[i].length+1
+        this.textEditor?.nativeElement.setSelectionRange(offset,offset);this.updateCaretPosition();this.textEditor?.nativeElement.focus()
     }
     constructor (private injector: Injector) {
         super(injector)
@@ -685,9 +426,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         this.notifications = injector.get(NotificationsService)
     }
     get dirty (): boolean {
-        return !this.readonly&&(this.content!==this.original||
-            [...this.pageEdits.keys()].some(start=>start!==this.pages[this.textPage]?.start)||
-            this.lineEnding!==this.savedLineEnding||this.textEncoding!==this.savedTextEncoding)
+        return !this.readonly&&(this.content!==this.original||this.lineEnding!==this.savedLineEnding||this.textEncoding!==this.savedTextEncoding)
     }
     get saveIssue (): {message:string;busy:boolean}|undefined {return this.workspace?.saveIssue?.(this.filePath)}
     get isDiff (): boolean { return this.diffPatch !== undefined }
@@ -767,7 +506,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 if(heading.id===id){heading.scrollIntoView();break}
         }
     }
-    get waitingForConnection (): boolean { return !this.recoveredEdit && !this.recoveredPages && !this.isDiff && this.initialContent===undefined && Boolean(this.workspace?.waitForConnection) }
+    get waitingForConnection (): boolean { return !this.recoveredEdit && !this.isDiff && this.initialContent===undefined && Boolean(this.workspace?.waitForConnection) }
     get connectionStatus (): string|undefined { return this.workspace?.connectionStatus }
     private retainFileContent=true
     private fileContentReleased=false
@@ -797,9 +536,8 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             this.fileContentReleased=true
             this.restoreRenderedView=this.markdownPreview
             this.clearRenderedPreview()
-            this.resetPages();this.needsFileVersion=false
             this.content='';this.original='';this.hash=undefined
-            this.binaryBytes=undefined;this.binaryPage=0;this.hexWindowCache=undefined;this.diff=undefined
+            this.binaryBytes=undefined;this.diff=undefined
             this.search.changed()
         }
         if(this.retainFileContent)queueMicrotask(reconcile)
@@ -842,20 +580,6 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         try {
             if (this.isDiff) { this.updateDiff(this.diffPatch!); return }
             this.workspace=await resolveFileWorkspace(this.workspace,this.recoveryController.signal)
-            if(this.recoveredPages){
-                const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
-                let content=file.content,end=0
-                const edits=[...this.recoveredPages.edits].sort((a,b)=>a.start-b.start)
-                for(const edit of edits){
-                    if(edit.start<end||file.content.slice(edit.start,edit.start+edit.original.length)!==edit.original)throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
-                    content=content.slice(0,edit.start)+edit.content+content.slice(edit.start+edit.original.length)
-                    end=edit.start+edit.original.length
-                }
-                this.setTextFormat(new TextEncoder().encode(file.content))
-                this.content=content.replace(/\r\n?/g,'\n');this.hash=file.hash;this.original=file.content.replace(/\r\n?/g,'\n')
-                this.recoveredPages=undefined
-                return
-            }
             if(this.recoveredEdit){Object.assign(this,this.recoveredEdit);return}
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }
             else {
@@ -879,19 +603,11 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     }
     async reloadOpenFile (): Promise<void> {
         if(!this.retainFileContent||this.fileContentReleased||this.loading||this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue)return
-        if(this.needsFileVersion){
-            this.loading=true
-            try{await this.readFile();this.original=this.content;this.error='';if(this.search.visible)this.search.changed()}
-            catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
-            finally{this.loading=false}
-            return
-        }
         const original=this.original
         try {
             const file=await this.workspace.read(this.filePath)
             if(this.loading||this.saving||(this.readonly&&!this.error)||this.dirty||this.saveIssue||this.original!==original)return
             this.content=file.content;this.original=file.content;this.hash=file.hash
-            this.hasMoreText=false;this.needsFileVersion=false
             this.error='';this.readonly=false
             if(this.markdownPreview){this.markdownPreview=false;await this.toggleMarkdown()}
         } catch(error) {this.error=String(error)}
@@ -934,7 +650,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             if(this.recoveryController.signal.aborted)return
             this.workspace=replacement
             if(!preserve){
-                this.binaryBytes=undefined;this.binaryPage=0
+                this.binaryBytes=undefined
                 await this.readFile()
                 this.original=this.content
                 if(!this.binaryBytes)this.readonly=this.largeTextReadOnly
@@ -953,12 +669,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             diffLabel:this.diffLabel,diffDescription:this.diffDescription,diffStaged:this.diffStaged,diffMode:this.diffMode,
             viewOnly:this.viewOnly,renderOnOpen:this.markdownPreview,softWrap:this.softWrap,lineEnding:this.lineEnding,
             textEncoding:this.textEncoding,savedLineEnding:this.savedLineEnding,savedTextEncoding:this.savedTextEncoding}
-        if(options?.includeState!==false&&this.dirty){
-            if(this.pagedText){
-                this.rememberPageEdit()
-                state.recoveredPages={pages:this.pages,page:this.textPage,edits:[...this.pageEdits.values()]}
-            }else state.recoveredEdit={content:this.content,original:this.original,hash:this.hash,...(this.needsFileVersion&&this.recoveredEdit)}
-        }
+        if(options?.includeState!==false&&this.dirty)state.recoveredEdit={content:this.content,original:this.original,hash:this.hash}
         if(this.saveIssue){state.initialContent=this.content;delete state.recoveredEdit}
         return {type:'arw-editor',workspace,filePath:this.filePath,state}
     }
@@ -975,28 +686,6 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         this.saving = true; this.error = ''
         try {
             await this.checkWriteLimit()
-            if(this.pagedText){
-                const merged=await this.mergeText()
-                const formatted=this.formattedText(merged.content)
-                checkFileWriteSize(this.workspace.kind,Buffer.byteLength(formatted))
-                try{
-                    await this.workspace.write(this.filePath,formatted,merged.hash)
-                }catch(error){
-                    if(this.saveIssue){
-                        // An uncertain remote write needs the exact payload for an explicit retry.
-                        Object.assign(this,merged)
-                        this.resetPages();this.needsFileVersion=false
-                    }
-                    if(this.workspace.kind==='remote'&&isFileMissing(error)){await this.closeMissingFile();return}
-                    throw error
-                }
-                this.resetPages();this.needsFileVersion=false
-                this.content='';this.original=''
-                await this.readFile();this.original=this.content
-                if(this.search.visible)this.search.changed()
-                return
-            }
-            if(this.needsFileVersion){Object.assign(this,await this.mergeText());this.needsFileVersion=false;this.hasMoreText=false}
             const content = this.formattedText(this.content)
             checkFileWriteSize(this.workspace.kind,Buffer.byteLength(content))
             let file

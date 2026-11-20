@@ -11,13 +11,6 @@ export const EDITOR_TEMPLATE = `
 </header>
 ${TEXT_SEARCH_TEMPLATE}
 <div *ngIf="largeTextReadOnly" class="preview-note" role="status">{{ '文件超过写入上限，只读打开。' | arwTranslate }} · {{editLimitMiB}} MiB</div>
-<div *ngIf="pagedText && !binaryBytes" class="diff-toolbar">
-  <ng-container *ngIf="markdownPreview">
-    <button (click)="changeTextPage(-1)" [disabled]="textPage===0 || loading || saving || reconnecting || !!saveIssue">{{ '上一页' | arwTranslate }}</button>
-    <button (click)="changeTextPage(1)" [disabled]="!hasMoreText || loading || saving || reconnecting || !!saveIssue">{{ '下一页' | arwTranslate }}</button>
-  </ng-container>
-  <button *ngIf="search.visible && search.query && !search.matches.length && !search.error" (click)="searchFullText()" [disabled]="loading || saving || reconnecting || !!saveIssue">{{ '未找到匹配，逐段搜索全文' | arwTranslate }}</button>
-</div>
 <div class="error" *ngIf="saveIssue as issue" role="alert">
   {{issue.message}}
   <button class="btn btn-sm btn-secondary" [disabled]="saving || loading || issue.busy" (click)="verifySave()">{{'核对远端文件' | arwTranslate}}</button>
@@ -55,7 +48,6 @@ ${TEXT_SEARCH_TEMPLATE}
   </div>
 </ng-container>
 <div *ngIf="markdownPreview && markdownError" class="error" role="alert">{{markdownError}}</div>
-<div *ngIf="markdownPreview && pagedText" class="preview-note" role="status">{{ '仅渲染当前文本页' | arwTranslate }}</div>
 <article *ngIf="markdownPreview && isMarkdown" class="markdown-preview" tabindex="0" [innerHTML]="markdown" (click)="markdownClick($event)" (dblclick)="toggleContentMode($event)"></article>
 <ng-container *ngIf="isCsv && markdownPreview && !loading">
  <div class="preview-toolbar"><label>{{ '分隔符' | arwTranslate }} <select [(ngModel)]="csvDelimiter" (ngModelChange)="parseTable()"><option value="auto">{{ '自动' | arwTranslate }}</option><option value=",">{{ '逗号' | arwTranslate }}</option><option value=";">{{ '分号' | arwTranslate }}</option><option [value]="'	'">Tab</option><option value="|">{{ '竖线' | arwTranslate }}</option></select></label><label><input type="checkbox" [(ngModel)]="csvHeader" (ngModelChange)="filterTable()"/> {{ '首行表头' | arwTranslate }}</label><input class="csv-filter" [(ngModel)]="csvQuery" (ngModelChange)="filterTable()" [placeholder]="'筛选表格内容' | arwTranslate" [attr.aria-label]="'筛选 CSV' | arwTranslate"/><span>{{csvFiltered.length}} {{ '行 ·' | arwTranslate }} {{csv.columns}} {{ '列' | arwTranslate }}</span></div>
@@ -65,7 +57,7 @@ ${TEXT_SEARCH_TEMPLATE}
 </ng-container>
 <ng-container *ngIf="binaryBytes && !loading && !error">
  <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span></div>
- <pre class="binary-content" tabindex="0" (scroll)="scrollBinaryWindow($event)" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
+ <pre class="binary-content" tabindex="0" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
 </ng-container>
 <div *ngIf="!isDiff && !markdownPreview && !binaryBytes" class="editor-surface" [class.soft-wrap]="softWrap" [class.has-multi-cursors]="multiCursorCount>1">
  <pre #lineGutter class="line-gutter" aria-hidden="true">{{editorLineNumbers}}</pre>
@@ -78,7 +70,7 @@ ${TEXT_SEARCH_TEMPLATE}
  <button type="button" (click)="softWrap=!softWrap">{{softWrap ? ('软换行' | arwTranslate) : ('不换行' | arwTranslate)}}</button>
  <label>{{'编码' | arwTranslate}} <select [(ngModel)]="textEncoding" [disabled]="readonly"><option>UTF-8</option><option>UTF-8 BOM</option></select></label>
  <label>{{'换行符' | arwTranslate}} <select [(ngModel)]="lineEnding" [disabled]="readonly"><option>LF</option><option>CRLF</option></select></label>
- <ng-container *ngIf="lineJumpVisible"><input #lineJumpInputElement type="number" min="1" [max]="pagedText ? undefined : (content.split('\n').length)" [(ngModel)]="lineJumpInput" (keydown.enter)="jumpToLine()" (keydown.escape)="lineJumpVisible=false" [attr.aria-label]="'跳转到行' | arwTranslate"/><button type="button" (click)="jumpToLine()">{{'跳转' | arwTranslate}}</button></ng-container>
+ <ng-container *ngIf="lineJumpVisible"><input #lineJumpInputElement type="number" min="1" [max]="content.split('\n').length" [(ngModel)]="lineJumpInput" (keydown.enter)="jumpToLine()" (keydown.escape)="lineJumpVisible=false" [attr.aria-label]="'跳转到行' | arwTranslate"/><button type="button" (click)="jumpToLine()">{{'跳转' | arwTranslate}}</button></ng-container>
  <button type="button" *ngIf="!lineJumpVisible" (click)="openLineJump()">{{'跳转到行' | arwTranslate}}</button>
 </footer>
 `
