@@ -17,6 +17,7 @@ import { textFileLimit } from '../arw-tree/workspace'
 import { executeChannel } from '../shared/exec-channel'
 import { shellQuote } from '../shared/shell-quote'
 import { SaveConfirmation, SaveConfirmationState } from './save-confirmation'
+import { logFileRecovery } from '../services/file-recovery-log'
 import { leafName } from '../shared/workspace-name'
 import { saveRemoteText } from './remote-save'
 import { readSftpText, saveSftpText, sftpPermissions } from './sftp-text'
@@ -62,6 +63,11 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
         saveConfirmations.set(session,confirmations)
     }
     const saves=confirmations
+    const timedReadStep=async<T>(input:string,stage:string,action:()=>Promise<T>,details:Record<string,unknown>={}):Promise<T>=>{
+        const started=performance.now()
+        try{const value=await action();logFileRecovery('remote-file-read-step',{stage,filePath:input,root,host:session.profile.options.host,durationMs:Math.round((performance.now()-started)*100)/100,...details});return value}
+        catch(error){logFileRecovery('remote-file-read-step',{stage,filePath:input,root,host:session.profile.options.host,durationMs:Math.round((performance.now()-started)*100)/100,error:String(error),...details});throw error}
+    }
     const saveKey=(input:string)=>posix.resolve(root,input)
     const permissions=(metadata:string)=>{
         const [mode,uid,gid]=metadata.split(':').slice(3,6)
@@ -217,15 +223,15 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
         async fileSize(input,signal){
             signal?.throwIfAborted()
             if(!session.open)throw new Error(t('SSH 已断开'))
-            const sftp=await optionalSftp(session)
+            const sftp=await timedReadStep(input,'sftp-ready',()=>optionalSftp(session))
             if(sftp){
-                const info=await sftp.stat(posix.resolve(root,input))
+                const info=await timedReadStep(input,'file-size-stat',()=>sftp.stat(posix.resolve(root,input)))
                 if(info.isDirectory)throw new Error(t('只能预览普通文件'))
                 return info.size
             }
             const target=await guard.resolveRead(input,signal)
             const quoted=shellQuote(target)
-            const result=await transport.run(`test -f ${quoted} && stat -c '%s' -- ${quoted}`,signal,{maxBytes:1024})
+            const result=await timedReadStep(input,'shell-file-size-stat',()=>transport.run(`test -f ${quoted} && stat -c '%s' -- ${quoted}`,signal,{maxBytes:1024}))
             const size=result.stdout.trim()
             if(result.exitCode!==0||!/^\d+$/.test(size)||!Number.isSafeInteger(Number(size))){
                 throw new Error(t('无法读取远端文件的修改时间或大小'))
@@ -235,19 +241,19 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
         async readByteRange(input,offset,maxBytes,signal){
             previewLimit(maxBytes);if(!Number.isSafeInteger(offset)||offset<0)throw new Error('Invalid preview offset');signal?.throwIfAborted()
             if(!session.open)throw new Error(t('SSH 已断开'))
-            const sftp=offset===0?await optionalSftp(session):undefined
+            const sftp=offset===0?await timedReadStep(input,'sftp-ready',()=>optionalSftp(session),{offset}):undefined
             if(!sftp){
-                const target=await guard.resolveRead(input,signal)
-                return readShellByteRange(transport,target,offset,maxBytes,signal)
+                const target=await timedReadStep(input,'resolve-range-path',()=>guard.resolveRead(input,signal),{offset})
+                return timedReadStep(input,'shell-range-read',()=>readShellByteRange(transport,target,offset,maxBytes,signal),{offset,maxBytes})
             }
-            const target=posix.resolve(root,input),before=await sftp.stat(target);if(before.isDirectory)throw new Error(t('只能预览普通文件'))
+            const target=posix.resolve(root,input),before=await timedReadStep(input,'range-stat-before',()=>sftp.stat(target),{offset});if(before.isDirectory)throw new Error(t('只能预览普通文件'))
             checkFileReadSize('remote',before.size)
             if(offset>before.size)throw new Error(t('远程文件在读取时发生变化，请重新打开'))
-            const length=Math.min(maxBytes,before.size-offset),file=await sftp.open(target,OPEN_READ)
-            try{const bytes=await readSftpPrefix(file,length,signal),after=await sftp.stat(target)
+            const length=Math.min(maxBytes,before.size-offset),file=await timedReadStep(input,'range-open',()=>sftp.open(target,OPEN_READ),{offset,bytesRequested:length})
+            try{const bytes=await timedReadStep(input,'range-data-read',()=>readSftpPrefix(file,length,signal),{offset,bytesRequested:length}),after=await timedReadStep(input,'range-stat-after',()=>sftp.stat(target),{offset})
                 if(before.size!==after.size||String(before.modified)!==String(after.modified))throw new Error(t('远程文件在读取时发生变化，请重新打开'))
                 return bytes
-            }finally{await file.close()}
+            }finally{await timedReadStep(input,'range-close',()=>file.close(),{offset})}
         },
         write,
         writeCli,

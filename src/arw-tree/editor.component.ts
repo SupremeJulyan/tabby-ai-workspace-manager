@@ -24,6 +24,7 @@ const editorChunkBytes=256*1024
 interface EditorPage {offset:number;start:number;line?:number}
 interface PageText {text:string;length:number;more:boolean}
 interface PageEdit {start:number;original:string;content:string}
+class ReadRestarted extends Error {}
 
 @Component({
     selector: 'arw-editor',
@@ -110,37 +111,84 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         this.binaryPage=next
         requestAnimationFrame(()=>{view.scrollTop=Math.max(0,scrollTop);this.textScrollAdjusting=false})
     }
-    private async readFile():Promise<void> {
+    private async readFile():Promise<void>{
+        let attempt=0
+        while(true){
+            try{await this.readFileOnce();return}
+            catch(error){
+                if(!this.isRemoteReadRace(error)||this.dirty||this.recoveryController.signal.aborted)throw error
+                logFileRecovery('editor-read-retry',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),attempt:++attempt,error:String(error)})
+                this.resetPages();this.binaryBytes=undefined;this.content='';this.original=''
+                await new Promise(resolve=>setTimeout(resolve,Math.min(50*attempt,500)))
+            }
+        }
+    }
+    private isRemoteReadRace(error:unknown):boolean{
+        if(this.workspace?.kind!=='remote')return false
+        const message=String(error)
+        return message.includes('在读取时发生变化')||message.includes('已在外部修改，无法合并尚未加载的内容')
+    }
+    private async refreshAfterReadRace():Promise<never>{
+        logFileRecovery('editor-read-restart',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),reason:'remote-file-changed'})
+        this.resetPages();this.binaryBytes=undefined;this.content='';this.original='';this.error=''
+        await this.readFile()
+        this.original=this.content
+        if(this.search.visible)this.search.changed()
+        throw new ReadRestarted()
+    }
+    private async readFileOnce():Promise<void> {
         const signal=this.recoveryController.signal
+        const readStarted=performance.now(),logStep=(stage:string,started:number,details:Record<string,unknown>={})=>logFileRecovery('editor-file-read-step',{
+            stage,filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),durationMs:Math.round((performance.now()-started)*100)/100,...details,
+        })
         let rawFormatRead=false
-        const size=await this.workspace.fileSize?.(this.filePath,signal)??0
-        checkFileReadSize(this.workspace.kind,size)
-        this.largeTextReadOnly=size>fileWriteLimit(this.workspace.kind)
-        this.readonly=this.largeTextReadOnly
+        let size=0,outcome='ready'
         try {
+            let stepStarted=performance.now()
+            size=await this.workspace.fileSize?.(this.filePath,signal)??0
+            logStep('file-size-complete',stepStarted,{size})
+            checkFileReadSize(this.workspace.kind,size)
+            this.largeTextReadOnly=size>fileWriteLimit(this.workspace.kind)
+            this.readonly=this.largeTextReadOnly
             if(this.workspace.readByteRange){
+                stepStarted=performance.now()
                 const bytes=await this.workspace.readByteRange(this.filePath,0,editorChunkBytes+1,this.recoveryController.signal,true)
+                logStep('first-range-complete',stepStarted,{bytes:bytes.length,requestedBytes:editorChunkBytes+1})
+                stepStarted=performance.now()
                 this.setTextFormat(bytes.subarray(0,Math.min(bytes.length,editorChunkBytes)))
                 rawFormatRead=true
+                logStep('first-range-format',stepStarted,{bytes:Math.min(bytes.length,editorChunkBytes)})
                 if(bytes.length>editorChunkBytes&&!bytes.includes(0)){
                     try{
+                        stepStarted=performance.now()
                         const chunk=this.decodeEditorChunk(bytes,0)
                         this.resetPages()
                         this.pages=[{offset:0,start:0,line:1}]
                         this.showPage(0,{...chunk,more:true})
                         this.needsFileVersion=true;this.hash=undefined
                         this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
+                        logStep('first-page-ready',stepStarted,{bytes:chunk.length,characters:chunk.text.length,more:true})
                         return
                     }catch(error){if(!(error instanceof TypeError))throw error}
                 }
             }
+            stepStarted=performance.now()
             const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
+            logStep('full-file-read-complete',stepStarted,{characters:file.content.length})
+            stepStarted=performance.now()
             if(!rawFormatRead)this.setTextFormat(new TextEncoder().encode(file.content))
             this.content=file.content.replace(/\r\n?/g,'\n');this.hash=file.hash
+            logStep('full-content-ready',stepStarted,{characters:this.content.length})
         }catch(error){
+            outcome='error'
             if(!isBinaryFileError(error)||!this.workspace.readBytes)throw error
+            const stepStarted=performance.now()
             this.binaryBytes=await this.workspace.readBytes(this.filePath,fileReadLimit(this.workspace.kind),this.recoveryController.signal)
             this.binaryPage=0;this.readonly=true;this.content='';this.hash=undefined
+            outcome='binary'
+            logStep('binary-content-ready',stepStarted,{bytes:this.binaryBytes.length})
+        }finally{
+            logFileRecovery('editor-file-read-complete',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),durationMs:Math.round((performance.now()-readStarted)*100)/100,size,outcome,mode:this.pages.length?'segmented':'full'})
         }
         this.resetPages();this.needsFileVersion=false
         this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
@@ -170,6 +218,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         else this.pageEdits.set(start,{start,original:this.original,content:this.content})
     }
     private async fetchPage(index:number):Promise<PageText>{
+      try{
         const cached=this.pageCache.get(index)
         if(cached)return cached
         const {offset,start}=this.pages[index]
@@ -185,6 +234,10 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         else if(next&&next.line===undefined)next.line=line
         else if(next&&next.line!==line)throw new Error(t('文件内容已在外部修改，无法合并尚未加载的内容。'))
         return {...chunk,more}
+      }catch(error){
+        if(this.isRemoteReadRace(error)&&!this.dirty&&!this.recoveryController.signal.aborted)return this.refreshAfterReadRace()
+        throw error
+      }
     }
     private showPage(index:number,page:PageText):void {
         const {offset,start}=this.pages[index]
@@ -334,7 +387,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 editor.scrollTop=Math.max(0,oldTop+direction*(shifted.split('\n').length-1)*lineHeight)
                 editor.scrollLeft=oldLeft
             })
-        }catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+        }catch(error){if(!(error instanceof ReadRestarted)&&!this.recoveryController.signal.aborted)this.error=String(error)}
         finally{this.loading=false}
     }
     async changeTextPage(delta:number):Promise<void>{
@@ -346,7 +399,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         try{
             this.showPage(index,await this.fetchPage(index))
             if(this.search.visible)this.search.changed()
-        }catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+        }catch(error){if(!(error instanceof ReadRestarted)&&!this.recoveryController.signal.aborted)this.error=String(error)}
         finally{this.loading=false}
         if(restorePreview&&!this.error)await this.toggleMarkdown()
     }
@@ -393,7 +446,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             }
             if(current())this.error=t('全文未找到匹配内容')
         }
-        catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
+        catch(error){if(!(error instanceof ReadRestarted)&&!this.recoveryController.signal.aborted)this.error=String(error)}
         finally{scan.destroy();this.loading=false}
     }
     markdownPreview=false
@@ -646,7 +699,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             const lines=this.content.split('\n');let local=0
             for(let i=0;i<Math.min(target-this.lineStart(index)-1,lines.length-1);i++)local+=lines[i].length+1
             requestAnimationFrame(()=>{const editor=this.textEditor?.nativeElement;if(editor){const prefix=this.visibleTextSegments().filter(segment=>segment.index<index).reduce((sum,segment)=>sum+segment.text.length,0);editor.setSelectionRange(prefix+local,prefix+local);editor.focus();this.updateCaretPosition()}})
-        }catch(error){this.error=String(error)}finally{this.loading=false}
+        }catch(error){if(!(error instanceof ReadRestarted))this.error=String(error)}finally{this.loading=false}
     }
     constructor (private injector: Injector) {
         super(injector)
@@ -825,12 +878,14 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             if(this.recoveredEdit){Object.assign(this,this.recoveredEdit);return}
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }
             else {
+                const readStarted=performance.now()
                 logFileRecovery('editor-read-start',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace)})
                 await this.readFile()
-                logFileRecovery('editor-read-ready',{filePath:this.filePath})
+                logFileRecovery('editor-read-ready',{filePath:this.filePath,elapsedMs:Math.round((performance.now()-readStarted)*100)/100,mode:this.pages.length?'segmented':'full'})
             }
             this.original = this.content
         } catch (error) {
+            if(error instanceof ReadRestarted){this.original=this.content;return}
             logFileRecovery('editor-load-error',{filePath:this.filePath,cancelled:this.recoveryController.signal.aborted,error:String(error)})
             this.error = String(error); this.readonly = true
         }
