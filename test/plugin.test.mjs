@@ -3541,7 +3541,7 @@ test('manual cd into a remote placeholder keeps an ordinary terminal local',asyn
 })
 
 
-test('binary files open as paginated read-only hex and cannot overwrite the original',async()=>{
+test('binary files open as full read-only hex and cannot overwrite the original',async()=>{
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const root=await fs.mkdtemp(join(tmpdir(),'arw-binary-editor-'))
     const plugin=load(),{localWorkspace}=require('../.build/arw-tree/workspace.js')
@@ -3552,8 +3552,10 @@ test('binary files open as paginated read-only hex and cannot overwrite the orig
     try{
         await editor.ngOnInit()
         assert.equal(editor.error,'');assert.equal(editor.readonly,true);assert.equal(editor.dirty,false)
-        assert.equal(editor.binaryPages,2);assert.match(editor.binaryContent,/00000000  00 ff 41/)
-        assert.match(editor.binaryContent,/00001000  41 41 41 41/,'the adjacent hex page continues directly below the first')
+        assert.equal(editor.binaryBytes.length,bytes.length)
+        assert.equal(editor.binaryContent.split('\n').length,Math.ceil(bytes.length/16))
+        assert.match(editor.binaryContent,/00000000  00 ff 41/)
+        assert.match(editor.binaryContent,/00001000  41 41 41 41/,'the final hex rows continue directly after the first')
         editor.content='overwrite';await editor.save()
         assert.deepEqual(await fs.readFile(join(root,'data.bin')),bytes)
     }finally{editor.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
