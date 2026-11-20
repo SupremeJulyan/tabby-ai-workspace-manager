@@ -3601,6 +3601,29 @@ test('explicit file reconnect authenticates a closed terminal and preserves unsa
     assert.equal(references,0)
 })
 
+test('SSH terminal reconnect automatically rebinds matching open file editors',async()=>{
+    const {Subject}=await import('rxjs'),plugin=load(),terminal=new SSHTabComponent(),changed=new Subject()
+    const profile={id:'auto-reconnect-profile',options:{host:'auto.example.test',port:2222,user:'alice'}}
+    let references=0,checkedPath
+    const makeSession=open=>({open,authUsername:'alice',profile,willDestroy$:new Subject(),ref(){references++},unref(){references--},
+        async openSFTP(){return {async stat(path){checkedPath=path;return {}}}}})
+    const disconnected=makeSession(false),connected=makeSession(true)
+    terminal.profile=profile;terminal.sshSession=disconnected;terminal.sessionChanged$=changed;terminal.frontendIsReady=true
+    const app={tabs:[terminal]},injector={get:()=>app},provider=new plugin.FileRecoveryProvider(injector)
+    const params=await provider.recover({type:'arw-editor',workspace:{kind:'remote',root:'/project',host:'auto.example.test',port:2222,user:'alice',profileId:profile.id},filePath:'job.sh'})
+    const editor=new params.type(injector);Object.assign(editor,params.inputs);editor.setTitle=()=>{};editor.loading=false
+    editor.content='edited';editor.original='original';editor.hash='old-hash';editor.error='UnexpectedBehavior("session closed")'
+    editor.watchSshReconnects()
+    try{
+        terminal.sshSession=connected;changed.next()
+        await new Promise(resolve=>setTimeout(resolve,450))
+        assert.equal(editor.error,'')
+        assert.equal(editor.content,'edited');assert.equal(editor.original,'original');assert.equal(editor.hash,'old-hash')
+        assert.equal(editor.dirty,true);assert.equal(checkedPath,'/project/job.sh')
+    }finally{editor.ngOnDestroy();provider.ngOnDestroy()}
+    assert.equal(references,0)
+})
+
 
 test('saving a deleted remote file notifies and closes without offering overwrite',async()=>{
     const plugin=load(),notices=[],prompts=[],closed=[]

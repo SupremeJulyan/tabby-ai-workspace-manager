@@ -4,6 +4,7 @@ import { posix } from 'node:path'
 import { shellQuote } from '../shared/shell-quote'
 import { FileSessionPool } from '../services/file-session-pool'
 import { remoteWorkspace } from '../adapters/remote-workspace'
+import { isSshTab } from '../adapters/ssh-compat'
 import { isBinaryFileError, formatHexPage } from '../shared/binary-file'
 import { filePaneReleaseDelayMs, type PaneLayout } from '../shared/pane-layout'
 import { t } from '../shared/i18n'
@@ -195,6 +196,8 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private notifications: NotificationsService
     private removePaneHeader?:()=>void
     private unregisterFile?:()=>void
+    private sshReconnectSubscriptions:Array<{unsubscribe():void}>=[]
+    private sshReconnectTimers=new Map<object,ReturnType<typeof setTimeout>>()
     private recoveryController=new AbortController()
     private reconnectPool?:FileSessionPool
     reconnecting=false
@@ -580,6 +583,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         try {
             if (this.isDiff) { this.updateDiff(this.diffPatch!); return }
             this.workspace=await resolveFileWorkspace(this.workspace,this.recoveryController.signal)
+            this.watchSshReconnects()
             if(this.recoveredEdit){Object.assign(this,this.recoveredEdit);return}
             else if (this.initialContent !== undefined) { this.content = this.initialContent; this.readonly = true }
             else {
@@ -662,6 +666,30 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         }catch(error){if(!this.recoveryController.signal.aborted)this.error=String(error)}
         finally{this.reconnecting=false}
     }
+    private watchSshReconnects():void{
+        if(this.workspace?.kind!=='remote')return
+        const token=fileWorkspaceToken(this.workspace)
+        if(!token)return
+        for(const top of this.app.tabs??[]){
+            const tabs='getAllTabs' in top?(top as any).getAllTabs():[top]
+            for(const tab of tabs){
+                if(!isSshTab(tab)||!tab.sessionChanged$)continue
+                const profile=tab.sshSession?.profile??tab.profile
+                if(!profile||profile.options.host!==token.host||(profile.options.port??22)!==(token.port??22)||
+                    (token.profileId&&profile.id!==token.profileId)||
+                    (tab.sshSession?.authUsername??profile.options.user)!==token.user)continue
+                this.sshReconnectSubscriptions.push(tab.sessionChanged$.subscribe(()=>{
+                    const key=tab as object,old=this.sshReconnectTimers.get(key)
+                    if(old)clearTimeout(old)
+                    const timer=setTimeout(()=>{
+                        this.sshReconnectTimers.delete(key)
+                        if(tab.sshSession?.open&&!this.recoveryController.signal.aborted)void this.reconnectFile()
+                    },300)
+                    this.sshReconnectTimers.set(key,timer)
+                }))
+            }
+        }
+    }
     async getRecoveryToken(options?:GetRecoveryTokenOptions):Promise<RecoveryToken|null> {
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
         if(!workspace)return null
@@ -674,7 +702,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         return {type:'arw-editor',workspace,filePath:this.filePath,state}
     }
     ngAfterViewInit (): void { this.removePaneHeader=addFileCloseButton(this,this.app,error=>this.notifications.error(t('关闭文件失败'),String(error)));this.updateCaretPosition() }
-    ngOnDestroy (): void { clearTimeout(this.releaseTimer);this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.reconnectPool?.dispose();this.unregisterFile?.(); super.ngOnDestroy() }
+    ngOnDestroy (): void { clearTimeout(this.releaseTimer);for(const timer of this.sshReconnectTimers.values())clearTimeout(timer);this.sshReconnectTimers.clear();this.sshReconnectSubscriptions.forEach(subscription=>subscription.unsubscribe());this.sshReconnectSubscriptions=[];this.removePaneHeader?.();this.search.destroy();this.recoveryController.abort();this.reconnectPool?.dispose();this.unregisterFile?.(); super.ngOnDestroy() }
     saveKey (event: Event): void { event.preventDefault(); void this.save() }
     private async checkWriteLimit(content?:string):Promise<void>{
         if(content!==undefined)checkFileWriteSize(this.workspace.kind,Buffer.byteLength(content))
