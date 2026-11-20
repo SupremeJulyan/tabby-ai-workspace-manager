@@ -21,7 +21,6 @@ import { isFileConflict, isFileMissing } from '../shared/file-conflict'
 import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
 
 const editorChunkBytes=256*1024
-const binaryReadChunkBytes=editorChunkBytes
 interface EditorPage {offset:number;start:number;line?:number}
 interface PageText {text:string;length:number;more:boolean}
 interface PageEdit {start:number;original:string;content:string}
@@ -59,9 +58,6 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     error = ''
     binaryBytes?:Uint8Array
     binaryPage=0
-    binaryOffset=0
-    binaryFileSize=0
-    private binaryLoading=false
     private pages:EditorPage[]=[]
     private pageCache=new Map<number,PageText>()
     private pageEdits=new Map<number,PageEdit>()
@@ -89,42 +85,26 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     get pagedText():boolean{return this.pages.length>0}
     private needsFileVersion=false
     hasMoreText=false
-    get binaryPages():number {return Math.max(1,Math.ceil(this.binaryFileSize/binaryPageBytes))}
+    get binaryPages():number {return Math.max(1,Math.ceil((this.binaryBytes?.length??0)/binaryPageBytes))}
     get binaryContent():string {
         if(!this.binaryBytes){this.hexWindowCache=undefined;return ''}
         if(this.hexWindowCache?.bytes===this.binaryBytes&&this.hexWindowCache.page===this.binaryPage)return this.hexWindowCache.text
         const pages:string[]=[]
-        const firstLoaded=Math.floor(this.binaryOffset/binaryPageBytes),lastLoaded=Math.max(firstLoaded,Math.ceil((this.binaryOffset+this.binaryBytes.length)/binaryPageBytes)-1)
-        for(let index=Math.max(firstLoaded,this.binaryPage-1);index<=Math.min(lastLoaded,this.binaryPage+1,this.binaryPages-1);index++){
-            pages.push(formatHexPage(this.binaryBytes,index-firstLoaded,this.binaryOffset))
+        for(let index=Math.max(0,this.binaryPage-1);index<=Math.min(this.binaryPages-1,this.binaryPage+1);index++){
+            pages.push(formatHexPage(this.binaryBytes,index))
         }
         const text=pages.join('\n')
         this.hexWindowCache={bytes:this.binaryBytes,page:this.binaryPage,text}
         return text
     }
-    async scrollBinaryWindow(event:Event):Promise<void> {
-        if(this.textScrollAdjusting||this.binaryLoading||!this.binaryBytes)return
+    scrollBinaryWindow(event:Event):void {
+        if(this.textScrollAdjusting||!this.binaryBytes)return
         const view=event.currentTarget as HTMLElement
         const down=view.scrollHeight-view.scrollTop-view.clientHeight<view.clientHeight
-        const next=this.binaryPage+(down?1:view.scrollTop<view.clientHeight?-1:0)
-        if(next===this.binaryPage||next<0||next>=this.binaryPages)return
-        const firstLoaded=Math.floor(this.binaryOffset/binaryPageBytes),lastLoaded=Math.max(firstLoaded,Math.ceil((this.binaryOffset+this.binaryBytes.length)/binaryPageBytes)-1)
-        const targetEnd=Math.min((next+1)*binaryPageBytes,this.binaryFileSize)
-        if(next<firstLoaded||targetEnd>this.binaryOffset+this.binaryBytes.length){
-            const offset=Math.max(0,Math.floor(next*binaryPageBytes/binaryReadChunkBytes)*binaryReadChunkBytes-binaryPageBytes)
-            this.binaryLoading=true
-            try{
-                const length=Math.min(binaryReadChunkBytes+binaryPageBytes,this.binaryFileSize-offset)
-                const bytes=await this.workspace.readByteRange!(this.filePath,offset,length,this.recoveryController.signal,true)
-                this.binaryOffset=offset;this.binaryBytes=bytes;this.hexWindowCache=undefined
-            }catch(error){
-                if(this.isRemoteReadRace(error)&&!this.dirty&&!this.recoveryController.signal.aborted){
-                    try{await this.readFile();this.original=this.content}catch(retryError){this.error=String(retryError)}
-                }else if(!this.recoveryController.signal.aborted)this.error=String(error)
-                return
-            }finally{this.binaryLoading=false}
-        }
         const oldFirst=Math.max(0,this.binaryPage-1)
+        const next=this.binaryPage+(down?1:view.scrollTop<view.clientHeight?-1:0)
+        if(next===this.binaryPage||next<0||next>=this.binaryPages||
+            (down&&this.binaryPage+1>=this.binaryPages-1)||(!down&&oldFirst===0))return
         const lineHeight=parseFloat(getComputedStyle(view).lineHeight)||16
         const scrollTop=view.scrollTop-(Math.max(0,next-1)-oldFirst)*(binaryPageBytes/16)*lineHeight
         this.textScrollAdjusting=true
@@ -178,14 +158,6 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
                 this.setTextFormat(bytes.subarray(0,Math.min(bytes.length,editorChunkBytes)))
                 rawFormatRead=true
                 logStep('first-range-format',stepStarted,{bytes:Math.min(bytes.length,editorChunkBytes)})
-                if(bytes.includes(0)){
-                    this.resetPages();this.binaryOffset=0;this.binaryFileSize=size;this.binaryBytes=bytes.subarray(0,Math.min(bytes.length,binaryReadChunkBytes))
-                    this.hexWindowCache=undefined;this.binaryPage=0;this.readonly=true;this.content='';this.hash=undefined
-                    this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
-                    logStep('binary-first-range-ready',stepStarted,{bytes:this.binaryBytes.length,totalBytes:size})
-                    outcome='binary-segmented'
-                    return
-                }
                 if(bytes.length>editorChunkBytes&&!bytes.includes(0)){
                     try{
                         stepStarted=performance.now()
@@ -212,11 +184,11 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             if(!isBinaryFileError(error)||!this.workspace.readBytes)throw error
             const stepStarted=performance.now()
             this.binaryBytes=await this.workspace.readBytes(this.filePath,fileReadLimit(this.workspace.kind),this.recoveryController.signal)
-            this.binaryPage=0;this.binaryOffset=0;this.binaryFileSize=this.binaryBytes.length;this.readonly=true;this.content='';this.hash=undefined
+            this.binaryPage=0;this.readonly=true;this.content='';this.hash=undefined
             outcome='binary'
             logStep('binary-content-ready',stepStarted,{bytes:this.binaryBytes.length})
         }finally{
-            logFileRecovery('editor-file-read-complete',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),durationMs:Math.round((performance.now()-readStarted)*100)/100,size,outcome,mode:outcome==='binary-segmented'?'segmented':this.pages.length?'segmented':'full'})
+            logFileRecovery('editor-file-read-complete',{filePath:this.filePath,workspace:fileWorkspaceToken(this.workspace),durationMs:Math.round((performance.now()-readStarted)*100)/100,size,outcome,mode:this.pages.length?'segmented':'full'})
         }
         this.resetPages();this.needsFileVersion=false
         this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding

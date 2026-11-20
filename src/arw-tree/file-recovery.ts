@@ -131,7 +131,6 @@ export function restoredFileWorkspace(token:FileWorkspaceToken,app:AppService,po
         get connectionStatus(){return findRemoteSession(app,token)?undefined:t`正在等待 SSH 连接到 ${token.host}…`},
         list:async(path,signal)=>(await resolve(signal)).list(path,signal),
         read:async(path,signal)=>(await resolve(signal)).read(path,signal),
-        fileSize:async(path,signal)=>(await resolve(signal)).fileSize!(path,signal),
         readBytes:async(path,maxBytes,signal)=>(await resolve(signal)).readBytes!(path,maxBytes,signal),
         readByteRange:async(path,offset,maxBytes,signal)=>(await resolve(signal)).readByteRange!(path,offset,maxBytes,signal),
         write:async(path,content,hash)=>(await resolve()).write(path,content,hash),

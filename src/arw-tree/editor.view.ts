@@ -64,7 +64,7 @@ ${TEXT_SEARCH_TEMPLATE}
  <div class="preview-toolbar"><button (click)="changeCsvPage(-1)" [disabled]="csvPage<=1" class="file-icon-button" [title]="'上一页' | arwTranslate" [attr.aria-label]="'上一页' | arwTranslate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><span>{{csvPage}} / {{csvPages}} {{ '· 每页 100 行' | arwTranslate }}</span><button (click)="changeCsvPage(1)" [disabled]="csvPage>=csvPages" class="file-icon-button" [title]="'下一页' | arwTranslate" [attr.aria-label]="'下一页' | arwTranslate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button></div>
 </ng-container>
 <ng-container *ngIf="binaryBytes && !loading && !error">
- <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryFileSize | number}} {{ '字节' | arwTranslate }} · {{binaryPage+1}} / {{binaryPages}}</span></div>
+ <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span></div>
  <pre class="binary-content" tabindex="0" (scroll)="scrollBinaryWindow($event)" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
 </ng-container>
 <div *ngIf="!isDiff && !markdownPreview && !binaryBytes" class="editor-surface" [class.soft-wrap]="softWrap" [class.has-multi-cursors]="multiCursorCount>1">
