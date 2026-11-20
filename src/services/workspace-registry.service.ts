@@ -125,6 +125,7 @@ export class WorkspaceRegistry {
                             const backend=remoteWorkspace(remote,pinned.workspace.root)
                             const selection={...pinned,remote,sourceTerminal:source,workspace:{...backend,sourceWorkspace:backend,id:pinned.workspace.id}}
                             entry.selection=selection;this.pinnedSelections.set(terminal,selection)
+                            this.selectionChanged.next({terminal,selection})
                         }else entry.selection={terminal,sourceTerminal:source,hint:t('等待来源终端重新连接 SSH…')}
                         if(this.current.value?.terminal===terminal)this.emit(entry.selection)
                     }
