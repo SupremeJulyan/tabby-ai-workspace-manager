@@ -64,8 +64,9 @@ export class TextSearch {
         if(!match||!target)return
         if(focus)target.focus({preventScroll:true})
         target.setSelectionRange(match.start,match.end)
-        const text=this.read(),line=text.slice(0,match.start).split('\n').length-1
-        const lineHeight=target.scrollHeight/Math.max(1,text.split('\n').length)
+        const text=this.read();let line=0
+        for(let index=0;index<match.start;index++)if(text.charCodeAt(index)===10)line++
+        const lineHeight=parseFloat(getComputedStyle(target).lineHeight)||16
         target.scrollTop=Math.max(0,line*lineHeight-target.clientHeight/2)
     }
     private substitute(match:TextMatch,text:string):string {

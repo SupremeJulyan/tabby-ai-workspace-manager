@@ -57,10 +57,11 @@ ${TEXT_SEARCH_TEMPLATE}
 </ng-container>
 <ng-container *ngIf="binaryBytes && !loading && !error">
  <div class="diff-toolbar"><span>{{ '二进制文件（只读）' | arwTranslate }} · {{binaryBytes.length | number}} {{ '字节' | arwTranslate }}</span></div>
+ <div *ngIf="binaryPreviewTruncated" class="preview-note" role="status">{{ '十六进制视图仅显示前 256 KiB；文件已完整读取。' | arwTranslate }}</div>
  <pre class="binary-content" tabindex="0" [attr.aria-label]="'十六进制内容' | arwTranslate">{{binaryContent}}</pre>
 </ng-container>
 <div *ngIf="!isDiff && !markdownPreview && !binaryBytes" class="editor-surface" [class.soft-wrap]="softWrap" [class.has-multi-cursors]="multiCursorCount>1">
- <pre #lineGutter class="line-gutter" aria-hidden="true">{{editorLineNumbers}}</pre>
+ <pre *ngIf="!largeTextFile" #lineGutter class="line-gutter" aria-hidden="true">{{editorLineNumbers}}</pre>
  <pre #editorOverlay *ngIf="multiCursorCount>1" class="editor-overlay" aria-hidden="true" [innerHTML]="multiCursorMarkup"></pre>
  <textarea #textEditor [readOnly]="readonly || viewOnly || loading || saving || reconnecting" [(ngModel)]="editorText" (ngModelChange)="search.visible && search.changed()" (scroll)="syncEditorScroll($event)" (wheel)="syncEditorScroll($event)" (keydown)="editorKeydown($event)" (beforeinput)="handleMultiInput($event)" (copy)="copyMulti($event)" (cut)="cutMulti($event)" (paste)="pasteMulti($event)" (keyup)="updateCaretPosition()" (click)="updateCaretPosition()" (input)="editorInput()" (pointerdown)="columnPointerDown($event)" (pointermove)="columnPointerMove($event)" (pointerup)="columnPointerUp()" (pointercancel)="columnPointerUp()" (keydown.control.s)="saveKey($event)" (keydown.meta.s)="saveKey($event)" (dblclick)="toggleContentMode($event)" spellcheck="false" [attr.wrap]="softWrap ? 'soft' : 'off'" [attr.aria-label]="'文件内容' | arwTranslate"></textarea>
 </div>
@@ -70,7 +71,7 @@ ${TEXT_SEARCH_TEMPLATE}
  <button type="button" (click)="softWrap=!softWrap">{{softWrap ? ('软换行' | arwTranslate) : ('不换行' | arwTranslate)}}</button>
  <label>{{'编码' | arwTranslate}} <select [(ngModel)]="textEncoding" [disabled]="readonly"><option>UTF-8</option><option>UTF-8 BOM</option></select></label>
  <label>{{'换行符' | arwTranslate}} <select [(ngModel)]="lineEnding" [disabled]="readonly"><option>LF</option><option>CRLF</option></select></label>
- <ng-container *ngIf="lineJumpVisible"><input #lineJumpInputElement type="number" min="1" [max]="content.split('\n').length" [(ngModel)]="lineJumpInput" (keydown.enter)="jumpToLine()" (keydown.escape)="lineJumpVisible=false" [attr.aria-label]="'跳转到行' | arwTranslate"/><button type="button" (click)="jumpToLine()">{{'跳转' | arwTranslate}}</button></ng-container>
+ <ng-container *ngIf="lineJumpVisible"><input #lineJumpInputElement type="number" min="1" [max]="lineCount" [(ngModel)]="lineJumpInput" (keydown.enter)="jumpToLine()" (keydown.escape)="lineJumpVisible=false" [attr.aria-label]="'跳转到行' | arwTranslate"/><button type="button" (click)="jumpToLine()">{{'跳转' | arwTranslate}}</button></ng-container>
  <button type="button" *ngIf="!lineJumpVisible" (click)="openLineJump()">{{'跳转到行' | arwTranslate}}</button>
 </footer>
 `

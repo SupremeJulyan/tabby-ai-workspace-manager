@@ -22,6 +22,7 @@ import { isFileConflict, isFileMissing } from '../shared/file-conflict'
 import { previewKind, renderMarkdown, markdownImages, relativePreviewAsset, imageMime, parseCsv, detectDelimiter, type CsvPreview } from './preview/model'
 
 class ReadRestarted extends Error {}
+const binaryPreviewLimit=256*1024
 
 @Component({
     selector: 'arw-editor',
@@ -54,13 +55,30 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     saving = false
     error = ''
     binaryBytes?:Uint8Array
+    largeTextFile=false
     softWrap=false
     lineEnding:'LF'|'CRLF'='LF'
     textEncoding:'UTF-8'|'UTF-8 BOM'='UTF-8'
     private savedLineEnding:'LF'|'CRLF'='LF'
     private savedTextEncoding:'UTF-8'|'UTF-8 BOM'='UTF-8'
-    get editorText():string{return this.content.replace(/\r\n?/g,'\n')}
+    private editorTextSource?:string
+    private editorTextValue=''
+    private lineCountSource?:string
+    private lineCountValue=1
+    get editorText():string{
+        if(this.editorTextSource!==this.content){this.editorTextSource=this.content;this.editorTextValue=this.content.replace(/\r\n?/g,'\n')}
+        return this.editorTextValue
+    }
     set editorText(value:string){this.content=value}
+    get lineCount():number{
+        if(this.lineCountSource!==this.content){
+            this.lineCountSource=this.content
+            let count=1
+            for(let index=0;index<this.content.length;index++)if(this.content.charCodeAt(index)===10)count++
+            this.lineCountValue=count
+        }
+        return this.lineCountValue
+    }
     caretLine=1
     caretColumn=1
     lineJumpVisible=false
@@ -75,12 +93,14 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private columnDragAnchor?:{line:number;column:number}
     get binaryContent():string {
         if(!this.binaryBytes)return ''
+        const preview=this.binaryBytes.subarray(0,Math.min(binaryPreviewLimit,this.binaryBytes.length))
         const pages:string[]=[]
-        for(let index=0;index<Math.ceil(this.binaryBytes.length/4096);index++){
-            pages.push(formatHexPage(this.binaryBytes,index))
+        for(let index=0;index<Math.ceil(preview.length/4096);index++){
+            pages.push(formatHexPage(preview,index))
         }
         return pages.join('\n')
     }
+    get binaryPreviewTruncated():boolean{return (this.binaryBytes?.length??0)>binaryPreviewLimit}
     private async readFile():Promise<void>{
         let attempt=0
         while(true){
@@ -117,13 +137,14 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
             size=await this.workspace.fileSize?.(this.filePath,signal)??0
             logStep('file-size-complete',stepStarted,{size})
             checkFileReadSize(this.workspace.kind,size)
+            this.largeTextFile=size>=1024*1024
             this.largeTextReadOnly=size>fileWriteLimit(this.workspace.kind)
             this.readonly=this.largeTextReadOnly
             stepStarted=performance.now()
             const file=await this.workspace.read(this.filePath,this.recoveryController.signal)
             logStep('full-file-read-complete',stepStarted,{characters:file.content.length})
             stepStarted=performance.now()
-            this.setTextFormat(new TextEncoder().encode(file.content))
+            this.setTextFormat(file.content)
             this.content=file.content.replace(/\r\n?/g,'\n');this.hash=file.hash
             logStep('full-content-ready',stepStarted,{characters:this.content.length})
         }catch(error){
@@ -139,13 +160,17 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         }
         this.savedLineEnding=this.lineEnding;this.savedTextEncoding=this.textEncoding
     }
-    private setTextFormat(bytes:Uint8Array):void{
-        this.textEncoding=bytes[0]===0xef&&bytes[1]===0xbb&&bytes[2]===0xbf?'UTF-8 BOM':'UTF-8'
-        const sample=new TextDecoder().decode(bytes)
-        const crlf=(sample.match(/\r\n/g)??[]).length,lf=(sample.match(/(?<!\r)\n/g)??[]).length
+    private setTextFormat(sample:string):void{
+        this.textEncoding=sample.charCodeAt(0)===0xfeff?'UTF-8 BOM':'UTF-8'
+        let crlf=0,lf=0
+        for(let index=0;index<sample.length;index++)if(sample.charCodeAt(index)===10){
+            if(index>0&&sample.charCodeAt(index-1)===13)crlf++
+            else lf++
+        }
         this.lineEnding=crlf>lf?'CRLF':'LF'
     }
     get editorLineNumbers():string{
+        if(this.largeTextFile)return ''
         const source=this.editorText.split('\n'),start=1
         const editor=this.textEditor?.nativeElement
         let columns=Number.POSITIVE_INFINITY
@@ -177,9 +202,11 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     updateCaretPosition():void{
         const editor=this.textEditor?.nativeElement
         if(!editor)return
-        const before=this.editorText.slice(0,editor.selectionStart),start=1
-        this.caretLine=start+(before.match(/\n/g)?.length??0)
-        this.caretColumn=before.length-(before.lastIndexOf('\n')+1)+1
+        const text=this.editorText,offset=editor.selectionStart
+        let lines=1,lastNewline=-1
+        for(let index=0;index<offset;index++)if(text.charCodeAt(index)===10){lines++;lastNewline=index}
+        this.caretLine=lines
+        this.caretColumn=offset-lastNewline
         this.lineJumpInput=String(this.caretLine)
     }
     private formattedText(text:string):string{
@@ -269,7 +296,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const text=this.editorText,start=editor.selectionStart,end=editor.selectionEnd,lineStart=text.lastIndexOf('\n',start-1)+1
         const indent=text.slice(lineStart,start).match(/^[\t ]*/)?.[0]??''
         const before=text.slice(lineStart,start).trimEnd(),after=text.slice(end).trimStart()
-        const widths=text.split('\n').map(line=>line.match(/^[\t ]*/)?.[0]??'').filter(value=>value.length)
+        const widths=this.largeTextFile?[]:text.split('\n').map(line=>line.match(/^[\t ]*/)?.[0]??'').filter(value=>value.length)
         const unit=indent.includes('\t')||widths.some(value=>value.includes('\t'))?'\t':' '.repeat(Math.min(...widths.map(value=>value.length),4)||4)
         const opens=/[({\[]$/.test(before),closes=/^[)}\]]/.test(after)
         const inner=opens?indent+unit:closes?indent.slice(0,Math.max(0,indent.length-unit.length)):indent
@@ -320,12 +347,13 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         if(!editor||this.softWrap)return
         const rect=editor.getBoundingClientRect(),style=getComputedStyle(editor),fontSize=parseFloat(style.fontSize)||12
         const rowHeight=parseFloat(style.lineHeight)||fontSize*1.65,charWidth=fontSize*.6
-        const line=Math.max(0,Math.min(this.editorText.split('\n').length-1,Math.floor((event.clientY-rect.top-parseFloat(style.paddingTop)+editor.scrollTop)/rowHeight)))
+        if(this.largeTextFile)return
+        const line=Math.max(0,Math.min(this.lineCount-1,Math.floor((event.clientY-rect.top-parseFloat(style.paddingTop)+editor.scrollTop)/rowHeight)))
         const column=Math.max(0,Math.floor((event.clientX-rect.left-parseFloat(style.paddingLeft)+editor.scrollLeft)/charWidth))
         return {line,column}
     }
     columnPointerDown(event:PointerEvent):void{
-        if(!event.altKey||!event.shiftKey||this.readonly||this.viewOnly||this.loading||this.saving)return
+        if(this.largeTextFile||!event.altKey||!event.shiftKey||this.readonly||this.viewOnly||this.loading||this.saving)return
         const point=this.textareaPoint(event),editor=event.currentTarget as HTMLTextAreaElement
         if(!point)return
         event.preventDefault();editor.focus();editor.setPointerCapture(event.pointerId)
@@ -340,6 +368,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     private setColumnSelection(point:{line:number;column:number}):void{
         const editor=this.textEditor?.nativeElement
         if(!editor||!this.columnDragAnchor)return
+        if(this.largeTextFile)return
         const lines=this.editorText.split('\n'),starts:number[]=[];let offset=0
         for(const line of lines){starts.push(offset);offset+=line.length+1}
         const anchor=this.columnDragAnchor,first=Math.min(anchor.line,point.line),last=Math.max(anchor.line,point.line)
@@ -418,8 +447,12 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     async jumpToLine():Promise<void>{
         const target=Math.max(1,Math.floor(Number(this.lineJumpInput)||1));this.lineJumpVisible=false
         if(this.loading||this.saving)return
-        const lines=this.content.split('\n');let offset=0
-        for(let i=0;i<Math.min(target-1,lines.length-1);i++)offset+=lines[i].length+1
+        let offset=0
+        for(let line=1;line<target&&offset<this.content.length;line++){
+            const newline=this.content.indexOf('\n',offset)
+            if(newline<0)break
+            offset=newline+1
+        }
         this.textEditor?.nativeElement.setSelectionRange(offset,offset);this.updateCaretPosition();this.textEditor?.nativeElement.focus()
     }
     constructor (private injector: Injector) {
