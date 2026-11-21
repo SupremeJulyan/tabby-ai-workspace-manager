@@ -804,7 +804,7 @@ test('saved workspace forwarding routes CLI by ID, survives other entries, and c
         await store.open(project,backend,remote);await store.open(project,backend,remote)
         assert.equal(refs,1)
         const remoteConfig=store.connection(project.id),remoteConnection=JSON.parse(await readFile(remoteConfig,'utf8'))
-        assert.equal((await cli('exec','--id',project.id,'--','pwd')).stdout,'remote')
+        assert.equal(JSON.parse((await cli('exec','--id',project.id,'--','pwd')).stdout).stdout,'remote')
         remote.open=false;closed.next()
         for(let index=0;index<100&&refs;index++)await new Promise(resolve=>setTimeout(resolve,5))
         await store.syncCatalog()
