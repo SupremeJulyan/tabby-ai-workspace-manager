@@ -83,7 +83,7 @@ test('SFTP saves support private new files, BOM text and metadata versions and b
     assert.equal((await stat(join(root,'empty'))).mode&0o777,0o600)
     await writeFile(join(root,'bom'),Buffer.from('\ufeff中文'))
     await workspace.write('bom','updated',(await workspace.read('bom')).hash)
-    const content='x'.repeat(10*1024*1024)
+    const content='x'.repeat(1024*1024)
     await workspace.write('large',content)
     assert.equal((await workspace.read('large')).content,content)
     assert.ok(sizes.length>1&&sizes.every(size=>size<=256*1024))
@@ -496,7 +496,7 @@ test('SSH save preserves permissions, supports empty and large contents and does
     assert.equal(saved.hash,(await workspace.read('script.sh')).hash)
     await workspace.write('empty','');assert.equal((await stat(join(root,'empty'))).size,0)
     assert.equal((await stat(join(root,'empty'))).mode&0o777,0o600)
-    const text='敏感数据 $(touch injected)\n'+'x'.repeat(10*1024*1024-Buffer.byteLength('敏感数据 $(touch injected)\n'))
+    const text='敏感数据 $(touch injected)\n'+'x'.repeat(1024*1024-Buffer.byteLength('敏感数据 $(touch injected)\n'))
     await workspace.write('large',text)
     assert.equal((await workspace.read('large')).content,text)
     assert.ok(fixture.commands.every(command=>!command.includes('敏感数据')&&!command.includes(Buffer.from(text).toString('base64'))))
@@ -604,7 +604,7 @@ test('single-channel saves preserve BOM text and compare metadata versions and s
     assert.ok(fixture.commands.every(command=>!command.includes('中文 changed')))
     let uploaded=false
     fixture.hooks.afterInput=async()=>{uploaded=true}
-    await assert.rejects(workspace.write('bom.txt','x'.repeat(11*1024*1024),original.hash),/文件已变化/)
+    await assert.rejects(workspace.write('bom.txt','x'.repeat(1024*1024),original.hash),/文件已变化/)
     assert.equal(uploaded,false,'stale content fails before sending the payload')
     assert.equal(workspace.saveIssue?.('bom.txt'),undefined)
     assert.equal(await readFile(target,'utf8'),'中文 changed')

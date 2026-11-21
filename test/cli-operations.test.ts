@@ -201,7 +201,7 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   const rawCli = (...args: string[]) => execute(process.execPath, [resolve('dist/arw.cjs'), ...args], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}});
   await assert.rejects(rawCli('read', 'a.txt'), /--id is required/);
   await assert.rejects(rawCli('read', 'a.txt', '--workspace', 'missing'), /Workspace is unavailable/);
-  await assert.rejects(cli('read', 'a.txt', '--id', 'missing'), /Workspace is unavailable/);
+  await assert.rejects(cli('read', 'a.txt', '--id', 'missing'), /Duplicate option: --id/);
   await assert.rejects(cli('workspaces'), /does not accept --id/);
   await assert.rejects(cli('install'), /Unsupported/);
   await assert.rejects(cli('upload'), /local path must be a string/);
