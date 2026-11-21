@@ -4,9 +4,89 @@ import { shellQuote } from '../shared/shell-quote';
 
 type Run = (command: string) => Promise<unknown>;
 
+const materializeScript = String.raw`
+def materialize(repo, snapshot, destination):
+    def blob(name):
+        return 'refs/arw/snapshots/' + snapshot + ':' + name
+    command = ['git', '--git-dir', str(repo), 'cat-file', 'blob']
+    metadata = json.loads(subprocess.check_output(command + [blob('manifest.json')]))
+    reference = metadata.get('gitReference')
+    if reference:
+        path = Path(destination) / reference['path']
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('xb') as output:
+            subprocess.run(['git', '--git-dir', reference['gitDir'], 'cat-file', 'blob', reference['oid']],
+                           stdout=output, check=True, env=dict(os.environ, GIT_ALLOW_PROTOCOL=''))
+        if path.stat().st_gid != reference['gid']:
+            os.chown(path, -1, reference['gid'])
+        os.chmod(path, reference['mode'])
+        os.utime(path, ns=(reference['mtime'], reference['mtime']))
+    else:
+        with tempfile.TemporaryFile() as archive:
+            subprocess.run(command + [blob('files.tar')], stdout=archive, check=True)
+            archive.seek(0)
+            subprocess.run(['tar', '-xpf', '-', '-C', str(destination), '--no-same-owner'],
+                           stdin=archive, check=True)
+`;
+
+const reuseScript = String.raw`
+import json, os, stat, subprocess, sys
+from pathlib import Path
+repo, manifest, snapshot, root = sys.argv[1:]
+os.environ['GIT_NO_LAZY_FETCH'] = '1'
+os.environ['GIT_ALLOW_PROTOCOL'] = ''
+metadata = json.loads(manifest)
+paths = metadata['paths']
+root = Path(root)
+if any((root / p).resolve() != root / p for p in paths):
+    sys.exit(1)
+present = [p for p in paths if os.path.lexists(root / p)]
+if len(present) != 1:
+    sys.exit(1)
+target = root / present[0]
+def project(*args):
+    return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(target.parent), *args],
+                                   stderr=subprocess.DEVNULL).rstrip(b'\n')
+try:
+    initial = target.lstat()
+    if (not stat.S_ISREG(initial.st_mode) or initial.st_uid != os.geteuid()
+        or initial.st_gid != os.getegid() or initial.st_nlink != 1
+        or initial.st_mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX)
+        or os.listxattr(target, follow_symlinks=False)):
+        sys.exit(1)
+    top = Path(os.fsdecode(project('rev-parse', '--show-toplevel')))
+    gitdir = os.fsdecode(project('rev-parse', '--absolute-git-dir'))
+    relative = target.relative_to(top).as_posix()
+    oid = project('rev-parse', '--verify', 'HEAD:' + relative).decode('ascii')
+    if project('cat-file', '-t', oid) != b'blob':
+        sys.exit(1)
+    mode = project('ls-tree', '--full-tree', 'HEAD', '--', ':(literal)' + relative).split(b' ', 1)[0]
+    if mode not in (b'100644', b'100755'):
+        sys.exit(1)
+    if project('hash-object', '--no-filters', '--', str(target)).decode('ascii') != oid:
+        sys.exit(1)
+    current = target.lstat()
+    if (current.st_dev, current.st_ino, current.st_ctime_ns) != (initial.st_dev, initial.st_ino, initial.st_ctime_ns):
+        sys.exit(1)
+    project('update-ref', 'refs/arw/snapshots/' + snapshot, oid)
+except (OSError, ValueError, subprocess.CalledProcessError):
+    sys.exit(1)
+metadata['gitReference'] = dict(gitDir=gitdir, oid=oid, path=present[0], mode=stat.S_IMODE(initial.st_mode),
+                                gid=initial.st_gid, mtime=initial.st_mtime_ns)
+try:
+    git = ['git', '--git-dir', repo]
+    manifest_oid = subprocess.check_output(git + ['hash-object', '-w', '--stdin'], input=json.dumps(metadata).encode()).strip()
+    tree = subprocess.check_output(git + ['mktree'], input=b'100644 blob ' + manifest_oid + b'\tmanifest.json\n').strip()
+    subprocess.run(git + ['update-ref', 'refs/arw/snapshots/' + snapshot, tree.decode()], check=True)
+except (OSError, subprocess.CalledProcessError):
+    project('update-ref', '-d', 'refs/arw/snapshots/' + snapshot, oid)
+    sys.exit(1)
+`;
+
 const restoreScript = String.raw`
 import json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
+` + materializeScript + String.raw`
 
 root, key, before, after = sys.argv[1:]
 root = Path(root)
@@ -50,10 +130,7 @@ keep = False
 try:
     original = stage / 'original'
     original.mkdir()
-    with (stage / 'before.tar').open('wb') as archive:
-        subprocess.run(['git', '--git-dir', str(repo), 'cat-file', 'blob', ref(before, 'files.tar')],
-                       stdout=archive, check=True)
-    subprocess.run(['tar', '-xpf', str(stage / 'before.tar'), '-C', str(original), '--no-same-owner'], check=True)
+    materialize(repo, before, original)
     validate()
     for index, p in enumerate(paths):
         target = root / p
@@ -105,10 +182,7 @@ export function remoteSnapshotDiffCommand(root: string, before: string): string 
     'trap \'rm -rf -- "$scratch"\' EXIT',
     'cd -- "$scratch"',
     'mkdir before current',
-    `git --git-dir="$repo" cat-file blob refs/arw/snapshots/${before}:files.tar > before.tar`,
-    'tar --extract --file=before.tar --directory=before --no-same-owner --no-same-permissions',
-    `git --git-dir="$repo" cat-file blob refs/arw/snapshots/${before}:manifest.json > manifest.json`,
-    `python3 -c ${shellQuote(liveArchiveScript)} ${shellQuote(root)}`,
+    `python3 -c ${shellQuote(liveArchiveScript)} ${shellQuote(root)} "$repo" ${shellQuote(before)}`,
     'tar --extract --file=current.tar --directory=current --no-same-owner --no-same-permissions',
     'status=0',
     'git --no-pager diff --no-index --no-ext-diff --no-textconv -- before current || status=$?',
@@ -118,12 +192,15 @@ export function remoteSnapshotDiffCommand(root: string, before: string): string 
 }
 
 const liveArchiveScript = String.raw`
-import json, os, subprocess, sys
+import json, os, subprocess, sys, tempfile
 from pathlib import Path
+` + materializeScript + String.raw`
 
 root = Path(sys.argv[1])
-with open('manifest.json', encoding='utf-8') as manifest:
-    paths = json.load(manifest)['paths']
+repo, snapshot = sys.argv[2:]
+materialize(repo, snapshot, 'before')
+paths = json.loads(subprocess.check_output(['git', '--git-dir', repo, 'cat-file', 'blob',
+    'refs/arw/snapshots/' + snapshot + ':manifest.json']))['paths']
 present = []
 for p in dict.fromkeys(paths):
     relative = Path(p)
@@ -138,7 +215,7 @@ with open('current.tar', 'wb') as archive:
 `;
 
 /** Store exact file bytes and metadata without using the project's Git index. */
-export async function saveRemoteSnapshot(run: Run, root: string, operation: string, targets: string[]): Promise<string> {
+export async function saveRemoteSnapshot(run: Run, root: string, operation: string, targets: string[], reuseGit = false): Promise<string> {
   const snapshotId = randomUUID();
   const workspaceKey = createHash('sha256').update(root).digest('hex');
   const paths = [...new Set(targets)].map(target => posix.relative(root, target));
@@ -159,6 +236,9 @@ export async function saveRemoteSnapshot(run: Run, root: string, operation: stri
     `repo="$base/${workspaceKey}.git"`,
     'test ! -L "$repo"',
     'if test ! -f "$repo/HEAD"; then git init --quiet --bare "$repo"; fi',
+    ...(reuseGit ? [
+      `if command -v python3 >/dev/null && python3 -c ${shellQuote(reuseScript)} "$repo" ${shellQuote(manifest)} ${shellQuote(snapshotId)} ${shellQuote(root)}; then exit 0; fi`,
+    ] : []),
     'scratch=$(mktemp -d "$base/.snapshot.XXXXXXXX")',
     'trap \'rm -rf -- "$scratch"\' EXIT',
     `set -- ${paths.map(shellQuote).join(' ')}`,

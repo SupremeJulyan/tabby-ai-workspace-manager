@@ -63,10 +63,10 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
     return target;
   };
   const mutable = async (input: string, missing = false) => shellQuote(await resolveMutable(input, missing));
-  const snapshot = async (...targets: string[]) =>
-    saveRemoteSnapshot(run, await guard.resolve('.', false, signal), name, targets);
+  const snapshot = async (targets: string[], reuseGit = true) =>
+    saveRemoteSnapshot(run, await guard.resolve('.', false, signal), name, targets, reuseGit);
   const afterSnapshot = async (...targets: string[]) => {
-    try { return { afterSnapshotId: await snapshot(...targets) }; }
+    try { return { afterSnapshotId: await snapshot(targets, false) }; }
     catch { return { diffUnavailable: true }; }
   };
   switch (name) {
@@ -117,7 +117,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       const size = Number(text(existing.stdout, 'file size').trim());
       if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid file size');
       assertArwTextSize(size);
-      const snapshotId = await snapshot(target);
+      const snapshotId = await snapshot([target]);
       return { ...object(await backend.write(input, content, signal, expectedHash)), snapshotId, ...await afterSnapshot(target) };
     }
     case 'remote_edit': {
@@ -136,7 +136,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       }
       if (typeof original.hash !== 'string') throw new Error('Backend does not support conflict-safe edits');
       const target = await resolveMutable(input);
-      const snapshotId = await snapshot(target);
+      const snapshotId = await snapshot([target]);
       return { ...object(await backend.write(input, content, signal, original.hash)), snapshotId, ...await afterSnapshot(target) };
     }
     case 'remote_create': {
@@ -163,7 +163,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       if (args.recursive !== undefined && typeof args.recursive !== 'boolean') throw new Error('recursive must be boolean');
       const resolved = await resolveMutable(path());
       const target = shellQuote(resolved);
-      const snapshotId = await snapshot(resolved);
+      const snapshotId = await snapshot([resolved]);
       await run(args.recursive ? `rm -r -- ${target}` : `if test -d ${target}; then rmdir -- ${target}; else rm -- ${target}; fi`);
       return { deleted: true, path: path(), snapshotId };
     }
@@ -179,7 +179,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       const resolvedTarget = await resolveMutable(text(args.targetPath, 'targetPath'), true);
       const source = shellQuote(resolvedSource);
       const target = shellQuote(resolvedTarget);
-      const snapshotId = await snapshot(resolvedSource, resolvedTarget);
+      const snapshotId = await snapshot([resolvedSource, resolvedTarget]);
       // -T prevents accidentally moving into an existing directory; -n preserves existing files.
       await run(args.overwrite ? `mv -fT -- ${source} ${target}` : `if test -e ${target} || test -L ${target}; then exit 1; fi; mv -nT -- ${source} ${target}; test ! -e ${source}`);
       return { moved: true, snapshotId, ...await afterSnapshot(resolvedSource, resolvedTarget) };
