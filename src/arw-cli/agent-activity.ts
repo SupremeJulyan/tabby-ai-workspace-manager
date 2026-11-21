@@ -20,6 +20,8 @@ export interface AgentActivity {
     durationMs?: number
     exitCode?: number
     error?: string
+    loadDiff?: () => Promise<string>
+    diffUnavailable?: boolean
 }
 
 function safeText (text: string): string {
@@ -49,11 +51,13 @@ export class AgentActivityStore {
         this.emit()
         return event.id
     }
-    finish (id: number, result?: unknown, error?: unknown, denied = false): void {
+    finish (id: number, result?: unknown, error?: unknown, denied = false, loadDiff?: () => Promise<string>): void {
         const event = this.events.find(candidate => candidate.id === id)
         if (!event || event.status !== 'running') return
         const value = result && typeof result === 'object' ? result as Record<string, unknown> : {}
         event.exitCode = typeof value.exitCode === 'number' ? value.exitCode : undefined
+        event.loadDiff = loadDiff
+        event.diffUnavailable = value.diffUnavailable === true
         event.status = denied ? 'denied' : error !== undefined || value.status === 'error' || (Array.isArray(value.results) && value.results.some(result => result?.ok === false)) || (event.exitCode !== undefined && event.exitCode !== 0) ? 'error' : 'success'
         event.durationMs = Math.max(0, this.now() - event.startedAt)
         if (error !== undefined) event.error = safeText(error instanceof Error ? error.message : String(error))

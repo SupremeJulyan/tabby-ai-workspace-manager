@@ -13,7 +13,10 @@ const endpoint = (input: unknown,remote:boolean): Endpoint => {
 
 /** Streaming upload/download; only bounded chunks cross the authenticated bridge. */
 export async function transfer(direction:'upload'|'download',args: Record<string, unknown>, invoke: Invoke): Promise<Record<string, unknown>> {
-  const source=endpoint(args.source,direction==='download'),target=endpoint(args.target,direction==='upload');
+  // The public CLI uses direction-specific path names; retain source/target for
+  // internal callers that use this transfer helper directly.
+  const source=endpoint(direction==='upload'?(args.localPath??args.source):(args.remotePath??args.source),direction==='download');
+  const target=endpoint(direction==='upload'?(args.remotePath??args.target):(args.localPath??args.target),direction==='upload');
   if (args.recursive !== undefined && typeof args.recursive !== 'boolean') throw new Error('recursive must be boolean');
   const control = (args: Record<string, unknown>) => invoke(direction==='upload'?'remote_upload':'remote_download', args);
   const stat = async (entry: Endpoint): Promise<{exists: boolean; directory?: boolean}> => {
@@ -101,5 +104,5 @@ export async function transfer(direction:'upload'|'download',args: Record<string
     files++;
   };
   await visit(source, destination);
-  return {copied: true, files, bytes};
+  return {copied: true, files, bytes, destination: destination.path};
 }

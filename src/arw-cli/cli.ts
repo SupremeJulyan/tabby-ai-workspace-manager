@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { assertArwTextSize } from './text-limit';
 import { parseArgs } from 'node:util';
 import { readWorkspaceCatalog } from './workspace-catalog';
 import { describeNetworkError } from './network-error';
@@ -11,26 +12,26 @@ import { readWorkspaceBinding } from './workspace-binding';
 declare const ARW_CLI_VERSION: string;
 
 async function main(): Promise<void> {
-  const stringOptions = ['id', 'workspace', 'input', 'file', 'content', 'path', 'query', 'name', 'output-id', 'stream', 'type', 'mode', 'limit', 'cursor', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count', 'expected-hash'];
-  const { values: parsedValues, positionals, tokens } = parseArgs({ allowPositionals: true, tokens:true, options: {
+  const stringOptions = ['id', 'workspace', 'input', 'file', 'command', 'content', 'path', 'query', 'name', 'output-id', 'stream', 'type', 'mode', 'limit', 'cursor', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count', 'expected-hash'];
+  const { values: parsedValues, positionals, tokens } = parseArgs({ allowPositionals: true, tokens:true, strict:true, options: {
     ...Object.fromEntries(stringOptions.map(key => [key, { type: 'string' as const }])),
-    version: { type: 'boolean', short: 'V' }, compact: { type: 'boolean' }, verbose: { type: 'boolean' },
-    'allow-empty': {type:'boolean'}, recursive: { type: 'boolean', short: 'r' }, help: { type: 'boolean', short: 'h' },
+    version: { type: 'boolean', short: 'V' }, compact: { type: 'boolean' }, raw: { type: 'boolean' }, verbose: { type: 'boolean' },
+    'allow-empty': {type:'boolean'}, 'allow-unconditional': {type:'boolean'}, recursive: { type: 'boolean', short: 'r' }, help: { type: 'boolean', short: 'h' },
   } });
   const seenOptions=new Set<string>();
   for(const token of tokens){
-    if(token.kind!=='option'||!['content','file','input','expected-hash','allow-empty'].includes(token.name))continue;
+    if(token.kind!=='option')continue;
     if(seenOptions.has(token.name))throw new Error(`Duplicate option: --${token.name}`);
     seenOptions.add(token.name);
   }
   const values: Record<string, string | boolean | undefined> = parsedValues;
   if (values.version) { console.log(`arw ${ARW_CLI_VERSION}`); return; }
-  if (values.help || !positionals.length) {
-    console.log(positionals.length ? helpForCommand(positionals[0]) : help); return;
-  }
+  if (values.help || !positionals.length) { console.log(positionals.length ? helpForCommand(positionals[0]) : help); return; }
   const [verb, ...positional] = positionals;
   const spec = Object.hasOwn(commands, verb) ? commands[verb] : undefined;
   if (!spec) throw new Error('Unsupported command; use --help');
+  if ((values.raw || values.verbose) && verb !== 'exec') throw new Error('--raw and --verbose require exec');
+  if (values.raw && (values.verbose || values.compact)) throw new Error('--raw cannot be combined with --verbose or --compact');
   if (values.workspace && values.id) throw new Error('Choose --id or --workspace');
   values.id = values.id ?? values.workspace;
   const binding=readWorkspaceBinding(process.cwd());
@@ -38,17 +39,18 @@ async function main(): Promise<void> {
   if(boundWorkspace)values.id=binding!.workspaceId;
   if (verb !== 'workspaces' && !values.id) throw new Error('--id is required: the current directory has no .awm/workspace.json binding; select a workspace from arw workspaces');
   if (verb === 'workspaces' && values.id) throw new Error('workspaces does not accept --id');
-  if (values.file !== undefined && !['write', 'create'].includes(verb)) throw new Error('--file requires write or create');
-  if(verb==='exec'&&positional.length)throw new Error('arw exec reads the command from stdin; pipe or redirect it without command arguments');
-  if(verb==='exec'&&values.input!==undefined)throw new Error('arw exec reads raw command text from stdin; --input is for JSON arguments');
-  if (values.file === '-' && values.input === '-') throw new Error('--file and --input cannot both read stdin');
-  let stdin = '';
-  if(verb==='exec'&&process.stdin.isTTY)throw new Error('arw exec requires command text from stdin; pipe or redirect a command');
-  if (verb==='exec'||values.file === '-' || values.input === '-') {
-    process.stdin.setEncoding('utf8');
-    for await (const chunk of process.stdin) stdin += chunk;
+  if (values.file !== undefined && !['write', 'create', 'exec'].includes(verb)) throw new Error('--file requires write, create, or exec');
+  let args: Record<string, unknown> = values.input===undefined?{}:JSON.parse(String(values.input));
+  if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('--input must be a JSON object');
+  if(!spec.positional && positional[0]?.startsWith('{')){
+    const structured=JSON.parse(positional.shift()!);
+    if(!structured||typeof structured!=='object'||Array.isArray(structured))throw new Error('JSON command input must be an object');
+    for(const [key,value] of Object.entries(structured)){
+      if(!spec.fields.includes(key))throw new Error(`Unsupported input field: ${key}`);
+      if(Object.hasOwn(args,key))throw new Error(`Duplicate argument: ${key}`);
+      args[key]=value;
+    }
   }
-  let args: Record<string, unknown> = values.input === undefined ? {} : JSON.parse(values.input === '-' ? stdin : String(values.input));
   if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('--input must be a JSON object');
   const assign = (key: string, value: unknown) => {
     if (!spec.fields.includes(key)) throw new Error(`Unsupported argument for ${verb}: ${key}`);
@@ -56,24 +58,33 @@ async function main(): Promise<void> {
     args[key] = value;
   };
   for (const key of Object.keys(args)) if (!spec.fields.includes(key)) throw new Error(`Unsupported input field: ${key}`);
-  if(verb==='exec')assign('command',stdin.replace(/\r\n/g,'\n'))
-  else positional.forEach((value, index) => {
-    const key = spec.positional?.[index];
-    if (!key) throw new Error('Too many arguments; quote the command as one argument');
-    assign(key, value);
-  });
-  for (const key of stringOptions.filter(key => !['id', 'workspace', 'input', 'file'].includes(key))) {
-    if (values[key] === undefined) continue;
-    const numeric = ['limit', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count'].includes(key);
-    if (numeric && (!/^\d+$/.test(String(values[key])) || !Number.isSafeInteger(Number(values[key])))) throw new Error(`Invalid --${key}`);
-    if (key === 'name' && ['search', 'find'].includes(verb)) { assign('query', values[key]); if (args.mode !== undefined && args.mode !== 'names') throw new Error('--name requires mode names'); args.mode = 'names'; }
-    else assign(key.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()), numeric ? Number(values[key]) : values[key]);
+  positional.forEach((value,index)=>{const key=spec.positional?.[index];if(!key)throw new Error('Too many arguments');assign(key,value)});
+  for(const key of stringOptions.filter(key=>!['id','workspace','input','file'].includes(key))){
+    if(values[key]===undefined)continue;
+    const numeric=['limit','offset','length','head','tail','start-line','line-count'].includes(key);
+    if(numeric&&(!/^\d+$/.test(String(values[key]))||!Number.isSafeInteger(Number(values[key]))))throw new Error(`Invalid --${key}`);
+    if(key==='name'&&['search','find'].includes(verb)){assign('query',values[key]);args.mode='names'}
+    else assign(key.replace(/-([a-z])/g,(_,letter:string)=>letter.toUpperCase()),numeric?Number(values[key]):values[key]);
   }
-  if (values.file !== undefined) assign('content', values.file === '-' ? stdin : await readFile(String(values.file), 'utf8'));
+  if(values.file!==undefined){
+    if(Object.hasOwn(args,verb==='exec'?'command':'content'))throw new Error('--file conflicts with inline input');
+    if(verb!=='exec'&&values.file!=='-')assertArwTextSize((await stat(String(values.file))).size);
+    const content=values.file==='-'?await new Promise<string>((resolve,reject)=>{let data='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>data+=chunk);process.stdin.on('end',()=>resolve(data));process.stdin.on('error',reject)}):await readFile(String(values.file),'utf8');
+    assign(verb==='exec'?'command':'content',content);
+  }
+  if(values.recursive)assign('recursive',true);
+  if(typeof args.content==='string')assertArwTextSize(Buffer.byteLength(args.content));
+  if(values['allow-empty']!==undefined)assign('allowEmpty',values['allow-empty']);
+  if(values['allow-unconditional']!==undefined)assign('allowUnconditional',values['allow-unconditional']);
+  if(verb==='exec'&&!Object.hasOwn(args,'command')&&!process.stdin.isTTY){
+    process.stdin.setEncoding('utf8');
+    let command='';
+    for await(const chunk of process.stdin)command+=chunk;
+    assign('command',command);
+  }
+  if(verb==='exec'&&typeof args.command!=='string')throw new Error('arw exec requires a command string');
   if (verb === 'find') args.mode = 'names';
   if (verb !== 'workspaces') args.workspaceId = values.id;
-  if (values.recursive) assign('recursive', true);
-  if (values['allow-empty']!==undefined) assign('allowEmpty', values['allow-empty']);
   const catalog=await readWorkspaceCatalog(binding?.catalogPath);
   if(verb==='workspaces'){
     const workspaces=catalog.workspaces.filter(entry=>entry.status==='forwarded'&&entry.configPath)
@@ -86,7 +97,9 @@ async function main(): Promise<void> {
       &&!entry.workspaceId.startsWith('terminal:')&&entry.workspaceRoot===binding!.remoteRoot
       &&entry.host===binding!.host&&(entry.port??22)===binding!.port&&(entry.user??'')===binding!.user);
     workspace=candidates.find(entry=>entry.workspaceId===process.env.ARW_SESSION_WORKSPACE_ID)
-      ??candidates.find(entry=>entry.workspaceId===binding!.workspaceId)??candidates[0];
+      ??candidates.find(entry=>entry.workspaceId===binding!.workspaceId)
+      ??(candidates.length===1?candidates[0]:undefined);
+    if(!workspace&&candidates.length>1)throw new Error('Multiple sessions match the bound workspace; select one with --id');
     if(workspace){values.id=workspace.workspaceId;args.workspaceId=workspace.workspaceId;}
   }
   if(boundWorkspace){
@@ -109,16 +122,16 @@ async function main(): Promise<void> {
     return envelope.result;
   };
   const result = ['upload','download'].includes(verb) ? await transfer(verb as 'upload'|'download', args, invoke) : await invoke(spec.tool, args);
-  if (verb === 'exec' && !values.verbose) {
-    if (result.truncated) process.stderr.write(JSON.stringify({outputId: result.outputId, nextOffsets: result.nextOffsets, truncated: true}) + '\n');
+  if (verb === 'exec' && values.raw) {
+    if (result.truncated || result.completionKnown === false) process.stderr.write(JSON.stringify({outputId: result.outputId, nextOffsets: result.nextOffsets, truncated: result.truncated, captureTruncated: result.captureTruncated, hasMore: result.hasMore, completionKnown: result.completionKnown}) + '\n');
     process.stdout.write(String(result.stdout ?? '')); process.stderr.write(String(result.stderr ?? ''));
-    process.exitCode = typeof result.exitCode === 'number' && result.exitCode >= 0 && result.exitCode <= 255 ? result.exitCode : 1;
+    process.exitCode=typeof result.exitCode==='number'&&result.exitCode>=0&&result.exitCode<=255?result.exitCode:1;
   } else {
     const output = result;
     const compact = (value: unknown): unknown => Array.isArray(value) ? value.map(compact)
-      : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([key, value]) => !(key === 'status' && value === 'ok' || key === 'ok' && value === true || ['truncated', 'hasMore'].includes(key) && value === false)).map(([key, value]) => [key, compact(value)])) : value;
+      : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([key, value]) => !(key === 'status' && value === 'ok' || key === 'ok' && value === true)).map(([key, value]) => [key, compact(value)])) : value;
     console.log(JSON.stringify(values.compact ? compact(output) : output));
-    if (verb === 'exec') process.exitCode = typeof result.exitCode === 'number' && result.exitCode >= 0 && result.exitCode <= 255 ? result.exitCode : 1;
+    if (verb === 'exec') process.exitCode = typeof result.exitCode==='number'&&result.exitCode>=0&&result.exitCode<=255?result.exitCode:1;
     if (Array.isArray(result.results) && result.results.some((entry: any) => entry.ok === false)) process.exitCode = 1;
   }
 }

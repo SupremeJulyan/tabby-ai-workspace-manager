@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ForwardingServer } from '../src/arw-cli/forwarding-server';
-import { selectText } from '../src/arw-cli/operations';
+import { fileOperation, selectText } from '../src/arw-cli/operations';
 import { sftpCopy } from '../src/adapters/sftp-copy';
 import { RemotePathGuard } from '../src/security/remote-path';
 import { sftpFixture } from './sftp-copy-fixture';
@@ -14,6 +14,22 @@ import { localWorkspace } from '../src/arw-tree/workspace';
 import { registerActiveWorkspace, workspaceCatalogPath } from '../src/arw-cli/workspace-catalog';
 const execute = promisify(execFile);
 import { writeWorkspaceBinding } from '../src/arw-cli/workspace-binding';
+
+test('search scans files beyond the text read limit', async () => {
+  const content = 'x\n'.repeat(3 * 1024 * 1024) + 'arw-marker';
+  const backend = {
+    workspace: {id:'search', root:'/project', host:'fixture'},
+    list: async () => ({entries:[{path:'large.txt', name:'large.txt'}]}),
+    read: async () => ({content}),
+    fileSize: async () => Buffer.byteLength(content),
+    write: async () => ({}),
+    run: async () => ({}),
+  };
+  const signal = new AbortController().signal;
+  await assert.rejects(fileOperation(backend, 'remote_read', {path:'large.txt'}, signal), /5 MiB/);
+  const result = await fileOperation(backend, 'remote_search', {query:'arw-marker',mode:'files'}, signal);
+  assert.deepEqual(result, {results:[{path:'large.txt'}], truncated:false, complete:true, skippedFiles:0, timedOut:false});
+});
 
 test('CLI uses its exact directory binding, not inherited environment or parent bindings',async t=>{
   const root=await mkdtemp(join(tmpdir(),'arw-bound-cli-'));
@@ -23,7 +39,7 @@ test('CLI uses its exact directory binding, not inherited environment or parent 
   for(const id of ['one','two']){
     const server=new ForwardingServer({workspace:{id,root:`/projects/${id}`,host:'fixture'},terminalOnly:()=>terminalMode,
       list:async()=>({entries:[]}),read:async()=>({content:id,hash:id}),write:async(_path,content)=>({content,hash:id}),
-      run:async()=>({stdout:id,stderr:'',exitCode:0})});
+      run:async command=>({stdout:command.startsWith('test ! -L')||command.startsWith('realpath') ? `/projects/${id}\n/projects/${id}${command.includes('/file')?'/file':''}\n` : command.startsWith('if test -f')?'0':id,stderr:'',exitCode:0})});
     servers.push(server);await server.start();
     const config=join(root,`${id}.json`);await writeFile(config,JSON.stringify(server.connection));
     unregister.push(await registerActiveWorkspace(join(root,'omw','workspaces.json'),{workspaceId:id,workspaceRoot:`/projects/${id}`,name:id,host:'fixture',port:2222,user:'alice',status:'forwarded',configPath:config}));
@@ -33,16 +49,16 @@ test('CLI uses its exact directory binding, not inherited environment or parent 
   const env={...process.env,TABBY_CONFIG_DIRECTORY:root,ARW_WORKSPACE_ID:'two',ARW_WORKSPACE_ROOT:'/wrong/local/project',ARW_WORKSPACE_KIND:'local'};
   const cli=(args:string[],overrides:Record<string,string>={})=>execute(process.execPath,[resolve('dist/arw.cjs'),...args],{cwd:root,env:{...env,...overrides}});
   assert.equal(JSON.parse((await cli(['read','file'])).stdout).content,'one');
-  assert.equal(JSON.parse((await cli(['write','file','--content','updated'])).stdout).content,'updated');
-  assert.equal((await cli(['exec','pwd'])).stdout,'one');
+  assert.equal(JSON.parse((await cli(['write','file','--content','updated','--expected-hash','one'])).stdout).content,'updated');
+  assert.equal((await cli(['exec','--raw','pwd'])).stdout,'one');
   terminalMode=true;
-  assert.equal((await cli(['exec','pwd'])).stdout,'one');
+  assert.equal((await cli(['exec','--raw','pwd'])).stdout,'one');
   await assert.rejects(cli(['read','file']),/Terminal mode uses arw exec/);
   terminalMode=false;
   assert.equal(JSON.parse((await cli(['workspaces'])).stdout).workspaces.length,2);
   assert.equal(JSON.parse((await cli(['read','file','--id','two'])).stdout).content,'two');
   assert.equal(JSON.parse((await cli(['read','file','--workspace','two'])).stdout).content,'two');
-  assert.equal(JSON.parse((await cli(['write','file','--id','two','--content','authorized change'])).stdout).content,'authorized change');
+  assert.equal(JSON.parse((await cli(['write','file','--id','two','--content','authorized change','--expected-hash','two'])).stdout).content,'authorized change');
   assert.equal(JSON.parse((await cli(['read','file'])).stdout).content,'one');
   assert.deepEqual(JSON.parse(await readFile(join(root,'.awm','workspace.json'),'utf8')),binding);
   for(const change of [{host:'other'},{port:22},{user:'bob'},{remoteRoot:'/projects/two'}]){
@@ -110,16 +126,16 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   assert.equal(gitCalls.length, 3);
   await writeFile(join(root, 'a.txt'), 'one\n你好\nthree\n');
   const original=(await cli('read','a.txt'));
-  await assert.rejects(cli('write','a.txt','--content',''),/ENTIRE file.*allow-empty/);
-  await assert.rejects(cli('write','a.txt','--input',JSON.stringify({content:' \n\t'})),/allow-empty/);
+  await assert.rejects(cli('write','a.txt','--content','','--allow-unconditional'),/ENTIRE file.*allow-empty/);
+  await assert.rejects(cli('write','a.txt','--input',JSON.stringify({content:' \n\t',allowUnconditional:true})),/allow-empty/);
   const empty=join(root,'empty-local.txt');await writeFile(empty,'');
-  await assert.rejects(cli('write','a.txt','--file',empty),/allow-empty/);
+  await assert.rejects(cli('write','a.txt','--file',empty,'--allow-unconditional'),/allow-empty/);
   await assert.rejects(cli('write','a.txt','--content','x','--content',''),/Duplicate option/);
-  await assert.rejects(cli('write','a.txt','--content','x','--file',empty),/Duplicate argument: content/);
+  await assert.rejects(cli('write','a.txt','--content','x','--file',empty),/conflicts with inline input/);
   assert.equal((await cli('read','a.txt')).content,original.content,'misused arguments never reach the writer');
   await assert.rejects(cli('write','a.txt','--content','replacement','--expected-hash','wrong'),/changed/);
   await cli('write','a.txt','--content',original.content,'--expected-hash',original.hash);
-  await cli('write','intentional-empty','--content','','--allow-empty');
+  await cli('write','intentional-empty','--content','','--allow-empty','--allow-unconditional');
   assert.equal(await readFile(join(root,'intentional-empty'),'utf8'),'');
   await rm(empty);await rm(join(root,'intentional-empty'));
 
@@ -147,13 +163,13 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('download', 'folder-upload/source.bin', join(root, 'downloaded.bin')), /exists/);
   await assert.rejects(cli('upload', join(root, 'source.bin'), 'folder-upload/source.bin'), /exists/);
   await assert.rejects(cli('download', 'folder-upload', join(root, 'missing-directory')), /download -r/);
-  const command = await execute(process.execPath, [resolve('dist/arw.cjs'), '--id', 'fixture', 'exec', "printf '%070000d' 1"], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}});
+  const command = await execute(process.execPath, [resolve('dist/arw.cjs'), '--id', 'fixture', 'exec', '--raw', "printf '%070000d' 1"], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}});
   assert.equal(command.stdout.length, 32768);
   const metadata = JSON.parse(command.stderr);
   const continued = await cli('output', metadata.outputId, 'stdout', '--offset', String(metadata.nextOffsets.stdout));
   assert.equal(continued.content.length, 70000 - 32768);
   assert.equal(continued.truncated, false);
-  const large = await execute(process.execPath, [resolve('dist/arw.cjs'), '--id', 'fixture', 'exec', "printf '%01200000d' 1"], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}});
+  const large = await execute(process.execPath, [resolve('dist/arw.cjs'), '--id', 'fixture', 'exec', '--raw', "printf '%01200000d' 1"], {env: {...process.env, TABBY_CONFIG_DIRECTORY: root}});
   const largeMetadata = JSON.parse(large.stderr);
   const end = await cli('output', largeMetadata.outputId, 'stdout', '--offset', '1199990');
   assert.equal(end.content, '0000000001');
@@ -190,7 +206,7 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('install'), /Unsupported/);
   await assert.rejects(cli('upload'), /local path must be a string/);
   await assert.rejects(cli('read', 'a.txt', '--input', '{"workspaceId":"other"}'), /Unsupported/);
-  await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"write","arguments":{"path":"a.txt","content":"updated"}},{"command":"read","arguments":{"path":"missing"}},{"command":"write","arguments":{"path":"a.txt","content":"wrong"}}]}'));
+  await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"write","arguments":{"path":"a.txt","content":"updated","allowUnconditional":true}},{"command":"read","arguments":{"path":"missing"}},{"command":"write","arguments":{"path":"a.txt","content":"wrong","allowUnconditional":true}}]}'));
   assert.equal(await readFile(join(root, 'a.txt'), 'utf8'), 'updated');
 });
 

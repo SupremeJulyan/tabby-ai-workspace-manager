@@ -12,7 +12,7 @@ const cli = (...args: string[]) => execute(process.execPath, [resolve('dist/arw.
 
 test('top-level help is a short index; every command has offline help without an ID', async () => {
   const top = (await cli('--help')).stdout
-  assert.ok(top.split('\n').length <= 20)
+  assert.ok(top.split('\n').length <= 32)
   assert.match(top, /COMMAND --help/)
   for (const command of Object.keys(commands)) {
     const {stdout} = await cli(command, '--help')
@@ -35,7 +35,7 @@ test('write and edit help distinguish full replacement from partial edits',async
   const write=(await cli('write','--help')).stdout,edit=(await cli('edit','--help')).stdout
   assert.match(write,/FULL-FILE REPLACEMENT/)
   assert.match(write,/ENTIRE new file content/)
-  assert.match(write,/LOCAL machine/)
+  assert.match(write,/local UTF-8 file/)
   assert.match(write,/allow-empty/)
   assert.match(write,/expected-hash/)
   assert.match(edit,/preserves all text outside/)

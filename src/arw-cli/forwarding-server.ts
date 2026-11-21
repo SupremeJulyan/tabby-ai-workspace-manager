@@ -9,10 +9,11 @@ import { redactSensitiveText } from '../shared/redact';
 import { assertCommandAllowed, CommandPolicyError } from '../security/command-policy';
 import { appendAudit, AuditEntry } from '../security/audit';
 import { workspaceCatalogPath } from './workspace-catalog';
-import { RemotePathError } from '../security/remote-path';
+import { RemotePathError, RemotePathGuard } from '../security/remote-path';
 import { commands } from './commands';
 import { fileOperation, integer, object, text, selectText } from './operations';
 import { agentActivity } from './agent-activity';
+import { remoteSnapshotDiffCommand } from './remote-snapshot';
 
 export interface ForwardingBackend {
   activityScope?: string;
@@ -151,7 +152,23 @@ export class ForwardingServer {
     try {
       const result = await this.invokeAudited(input);
       this.reportRequest(input.name);
-      agentActivity.finish(activityId, result);
+      const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+      const before = value.snapshotId;
+      const after = value.afterSnapshotId;
+      const signal = this.controller.signal;
+      const loadDiff = typeof before === 'string' && (typeof after === 'string' || input.name === 'remote_delete')
+        ? async () => {
+          signal.throwIfAborted();
+          const previewSignal = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
+          const guard = new RemotePathGuard(this.backend.workspace.root, async (command, currentSignal) =>
+            await this.backend.run(command, currentSignal ?? previewSignal) as {stdout:string;stderr:string;exitCode:number});
+          const root = await guard.resolve('.', false, previewSignal);
+          const diff = object(await this.backend.run(remoteSnapshotDiffCommand(root, before, typeof after === 'string' ? after : undefined), previewSignal, {maxBytes:256*1024}));
+          if (diff.exitCode !== 0 && diff.truncated !== true) throw new Error(t('无法读取快照差异'));
+          const content = String(diff.stdout ?? '');
+          return diff.truncated === true ? content + '\n…' : content;
+        } : undefined;
+      agentActivity.finish(activityId, result, undefined, false, loadDiff);
       return result;
     } catch (error) {
       if(!(error instanceof CommandPolicyError)&&!(error instanceof RemotePathError))this.reportRequest(input.name,error);
@@ -224,7 +241,8 @@ export class ForwardingServer {
         if (!output) throw new Error('Output expired or unavailable in this workspace');
         const stream = text(values.stream, 'stream');
         if (!['stdout', 'stderr'].includes(stream)) throw new Error('stream must be stdout or stderr');
-        return {outputId: values.outputId, stream, ...selectText(String(output[stream] ?? ''), {offset: integer(values.offset, 0, 0, Number.MAX_SAFE_INTEGER), length: integer(values.length, 65536)})};
+        const selected=selectText(String(output[stream] ?? ''), {offset: integer(values.offset, 0, 0, Number.MAX_SAFE_INTEGER), length: integer(values.length, 65536)});
+        return {outputId: values.outputId, stream, ...selected, complete:selected.truncated!==true};
       }
       case 'arw_cli_batch': {
         if (!Array.isArray(values.operations) || !values.operations.length || values.operations.length > 50) throw new Error('batch requires 1 to 50 operations');
@@ -236,6 +254,70 @@ export class ForwardingServer {
           if (Object.keys(operation).some(key => !['command', 'arguments'].includes(key))) throw new Error('Unsupported batch field');
           const args = object(operation.arguments ?? {});
           if (Object.keys(args).some(key => !command.fields.includes(key))) throw new Error('Unsupported batch argument');
+          const requiredStrings: Record<string, string[]> = {
+            read:['path'], search:['query'], find:['query'], write:['path','content'], edit:['path'],
+            create:['path','type'], delete:['path'], chmod:['path','mode'], move:['sourcePath','targetPath'],
+            exec:['command'], output:['outputId','stream'],
+          };
+          for (const key of requiredStrings[verb] ?? []) text(args[key], key);
+          for (const [key, value] of Object.entries(args)) {
+            if (['recursive','overwrite','allowEmpty','allowUnconditional','fixedStrings','ignoreCase'].includes(key)) {
+              if (typeof value !== 'boolean') throw new Error(`${key} must be boolean`);
+            } else if (['offset','length','head','tail','startLine','lineCount','limit','maxBytes'].includes(key)) {
+              integer(value, 0, 0, Number.MAX_SAFE_INTEGER);
+            } else if (['edits','requests','excludeDirs'].includes(key)) {
+              if (!Array.isArray(value)) throw new Error(`${key} must be an array`);
+            } else text(value, key);
+          }
+          const validateRead = (read: Record<string, unknown>) => {
+            if (Object.keys(read).some(key => !commands.read.fields.includes(key))) throw new Error('Unsupported read argument');
+            text(read.path, 'path');
+            const lines = [read.head !== undefined, read.tail !== undefined, read.startLine !== undefined || read.lineCount !== undefined];
+            const bytes = read.offset !== undefined || read.length !== undefined;
+            if ([...lines, bytes].filter(Boolean).length > 1) throw new Error('Choose byte offsets, head, tail, or line selection');
+            integer(read.startLine, 1, 1);
+            for (const key of ['head','tail','lineCount']) integer(read[key], 0);
+            integer(read.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+            integer(read.length, 8192, 4, 65536);
+          };
+          if (verb === 'read') validateRead(args);
+          if (verb === 'read-many') {
+            if (!Array.isArray(args.requests) || !args.requests.length || args.requests.length > 50) throw new Error('requests must contain 1 to 50 reads');
+            integer(args.maxBytes, 65536, 1);
+            for (const request of args.requests) validateRead(object(request));
+          }
+          if (verb === 'edit') {
+            if (!Array.isArray(args.edits) || !args.edits.length || args.edits.length > 100) throw new Error('edits must contain 1 to 100 replacements');
+            for (const replacement of args.edits) {
+              const edit = object(replacement);
+              if (Object.keys(edit).some(key => !['oldText','newText'].includes(key))) throw new Error('Unsupported edit field');
+              if (!text(edit.oldText, 'oldText')) throw new Error('oldText must not be empty');
+              text(edit.newText, 'newText');
+            }
+          }
+          if (verb === 'write' && args.expectedHash === undefined && args.allowUnconditional !== true) throw new Error('write requires expectedHash or allowUnconditional');
+          if (verb === 'write' && !text(args.content, 'content').trim() && args.allowEmpty !== true) throw new Error('Blank writes require allowEmpty');
+          if (verb === 'create') {
+            if (args.type !== 'file' && args.type !== 'directory') throw new Error('type must be file or directory');
+            if (args.type === 'directory' && args.content !== undefined) throw new Error('Directories cannot have content');
+          }
+          if (verb === 'chmod' && !/^[0-7]{3}$/.test(text(args.mode, 'mode'))) throw new Error('mode must be three octal digits');
+          if (verb === 'output') {
+            if (args.stream !== 'stdout' && args.stream !== 'stderr') throw new Error('stream must be stdout or stderr');
+            integer(args.length, 65536);
+          }
+          if (['list','search','find'].includes(verb)) integer(args.limit, verb === 'list' ? 1000 : 100, 1, 1000);
+          if (verb === 'list' && args.cursor !== undefined) {
+            const cursor = text(args.cursor, 'cursor');
+            if (!/^\d+$/.test(cursor)) throw new Error('Invalid cursor');
+            integer(Number(cursor), 0);
+          }
+          if (verb === 'search' || verb === 'find') {
+            const mode = verb === 'find' ? 'names' : text(args.mode ?? 'content', 'mode');
+            if (!['content','files','count','names'].includes(mode)) throw new Error('Invalid search mode');
+            if (Array.isArray(args.excludeDirs)) for (const directory of args.excludeDirs) text(directory, 'excludeDirs entry');
+            if (mode !== 'names' && args.fixedStrings !== true) new RegExp(text(args.query, 'query'), args.ignoreCase ? 'i' : '');
+          }
           return { name: command.tool, arguments: { ...args, ...(operation.command === 'find' ? {mode: 'names'} : {}), workspaceId: workspace.id } };
         });
         const results: unknown[] = [];
@@ -251,7 +333,9 @@ export class ForwardingServer {
             break;
           }
         }
-        return { results, completed: results.length, total: operations.length };
+        const last = results.at(-1) as {index:number;ok:boolean}|undefined;
+        return { results, completed: results.length, total: operations.length,
+          failedIndex: last?.ok === false ? last.index : null, notRun: operations.length - results.length };
       }
       case 'remote_read_many': {
         if (!Array.isArray(values.requests) || !values.requests.length || values.requests.length > 50) throw new Error('requests must contain 1 to 50 reads');
@@ -266,7 +350,10 @@ export class ForwardingServer {
           if (bytes > remaining) { results.push({path: args.path, skipped: true, reason: 'maxBytes exceeded'}); break; }
           results.push(result); remaining -= bytes;
         }
-        return {results, truncated: results.length < values.requests.length || results.some(value => object(value).skipped)};
+        const complete=results.length===values.requests.length&&!results.some(value=>object(value).skipped||object(value).truncated===true);
+        const truncated=!complete;
+        const fullFiles=complete&&results.every(value=>object(value).fullFile===true);
+        return {results, truncated, complete, fullFiles};
       }
       case 'run_remote_command': {
         const command = text(values.command, 'command');
@@ -274,14 +361,18 @@ export class ForwardingServer {
         await this.backend.validateCommand?.(command, signal);
         const result = object(await this.backend.run(command, signal, {maxBytes: 8 * 1024 * 1024}));
         signal.throwIfAborted();
-        if (Buffer.byteLength(String(result.stdout ?? '')) + Buffer.byteLength(String(result.stderr ?? '')) <= 65536) return result;
+        const captureTruncated=result.truncated===true;
+        const completionKnown=typeof result.exitCode==='number';
+        if (Buffer.byteLength(String(result.stdout ?? '')) + Buffer.byteLength(String(result.stderr ?? '')) <= 65536) {
+          return {...result,captureTruncated,hasMore:false,completionKnown,truncated:captureTruncated,complete:!captureTruncated&&completionKnown};
+        }
         const outputId = randomUUID();
         this.outputs=outputCache(workspace.id)
         if (this.outputs.size >= 4) this.outputs.delete(this.outputs.keys().next().value!);
         this.outputs.set(outputId, result);
         const stdout = selectText(String(result.stdout ?? ''), {offset: 0, length: 32768});
         const stderr = selectText(String(result.stderr ?? ''), {offset: 0, length: 32768});
-        return {...result, stdout: stdout.content, stderr: stderr.content, truncated: true, outputId,
+        return {...result, stdout: stdout.content, stderr: stderr.content, captureTruncated, hasMore:true, completionKnown, truncated:true, complete:false, outputId,
           nextOffsets: {stdout: stdout.nextOffset, stderr: stderr.nextOffset}};
       }
       default: return fileOperation(this.backend, String(input.name), values, signal);

@@ -1060,14 +1060,14 @@ test('tree keeps its browsed root and file tabs bound to a snapshot',async()=>{
     const current=new BehaviorSubject({terminal,workspace:a,hint:''}),opened=[]
     const tree=new plugin.TreeComponent({current},{openNewTab:params=>opened.push(params)},{info(){}},{},{},{},{})
     await tree.refresh()
-    current.next({terminal,workspace:b,hint:''})
     assert.equal(tree.selection.workspace,a)
     await tree.open(tree.nodes[0])
     assert.equal(opened[0].inputs.workspace,a)
+    current.next({terminal,workspace:b,hint:''})
     await tree.refresh()
-    assert.equal(tree.selection.workspace,a)
+    assert.equal(tree.selection.workspace,b)
     current.next({terminal,workspace:make('c','/c'),hint:''})
-    assert.equal(tree.selection.workspace.root,'/a')
+    assert.equal(tree.selection.workspace.root,'/c')
     assert.equal(opened[0].inputs.workspace.root,'/a')
     tree.ngOnDestroy()
 })
@@ -2464,7 +2464,7 @@ test('file previews keep the original backend, navigate images, render Markdown 
         assert.equal(tree.breadcrumb,breadcrumb);assert.equal(external.length,0)
         const final=image.imageUrl;image.ngOnDestroy();previews.splice(previews.indexOf(image),1)
         await assert.rejects(fetch(final))
-    }finally{for(const preview of previews)preview.ngOnDestroy();tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}
+    }finally{for(const preview of previews)preview.ngOnDestroy();tree.ngOnDestroy();await fs.rm(root,{recursive:true,force:true,maxRetries:5})}
 })
 
 test('saved forwarding replaces an obsolete SSH session even when its open flag remains true',async()=>{
@@ -3541,7 +3541,7 @@ test('manual cd into a remote placeholder keeps an ordinary terminal local',asyn
 })
 
 
-test('binary files open as full read-only hex and cannot overwrite the original',async()=>{
+test('the text editor rejects binary files and preserves the original',async()=>{
     const fs=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
     const root=await fs.mkdtemp(join(tmpdir(),'arw-binary-editor-'))
     const plugin=load(),{localWorkspace}=require('../.build/arw-tree/workspace.js')
@@ -3551,11 +3551,7 @@ test('binary files open as full read-only hex and cannot overwrite the original'
     editor.workspace=localWorkspace(root);editor.filePath='data.bin'
     try{
         await editor.ngOnInit()
-        assert.equal(editor.error,'');assert.equal(editor.readonly,true);assert.equal(editor.dirty,false)
-        assert.equal(editor.binaryBytes.length,bytes.length)
-        assert.equal(editor.binaryContent.split('\n').length,Math.ceil(bytes.length/16))
-        assert.match(editor.binaryContent,/00000000  00 ff 41/)
-        assert.match(editor.binaryContent,/00001000  41 41 41 41/,'the final hex rows continue directly after the first')
+        assert.match(editor.error,/二进制|binary/i);assert.equal(editor.dirty,false)
         editor.content='overwrite';await editor.save()
         assert.deepEqual(await fs.readFile(join(root,'data.bin')),bytes)
     }finally{editor.ngOnDestroy();await fs.rm(root,{recursive:true,force:true})}

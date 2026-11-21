@@ -441,6 +441,26 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     activityCategory = 'all'
     activityStatus = 'all'
     private unsubscribeActivity = agentActivity.subscribe(() => { this.render() })
+    activityDiff?: { id: number; loading: boolean; text?: string; error?: string }
+
+    async showActivityDiff(activity: AgentActivity): Promise<void> {
+        if (!activity.loadDiff || this.activityDiff?.id === activity.id) return
+        const state: NonNullable<typeof this.activityDiff> = {id: activity.id, loading: true}
+        this.activityDiff = state
+        this.render()
+        try {
+            state.text = await activity.loadDiff()
+        } catch {
+            state.error = t('无法读取快照差异')
+        } finally {
+            state.loading = false
+            this.render()
+        }
+    }
+
+    closeActivityDiff(id: number): void {
+        if (this.activityDiff?.id === id) this.activityDiff = undefined
+    }
     get visibleActivities (): AgentActivity[] {
         return this.activities.filter(event => (this.activityCategory === 'all' || event.category === this.activityCategory)
             && (this.activityStatus === 'all' || event.status === this.activityStatus || (this.activityStatus === 'error' && event.status === 'denied')))

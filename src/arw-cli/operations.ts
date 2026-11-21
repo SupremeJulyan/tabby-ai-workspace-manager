@@ -1,8 +1,9 @@
-import { textFileLimit } from '../shared/text-file-limit'
+import { assertArwTextSize } from './text-limit';
 import { randomUUID } from 'node:crypto';
 import { RemotePathGuard } from '../security/remote-path';
 import { shellQuote } from '../shared/shell-quote';
 import type { ForwardingBackend } from './forwarding-server';
+import { saveRemoteSnapshot } from './remote-snapshot';
 
 const defaultReadLength=8192,maxReadLength=65536
 
@@ -48,12 +49,25 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
   };
   const guard = new RemotePathGuard(backend.workspace.root, async (command, currentSignal) => object(await backend.run(command, currentSignal ?? signal)) as unknown as {stdout: string; stderr: string; exitCode: number});
   const path = () => text(args.path, 'path');
-  const mutable = async (input: string, missing = false) => {
+  const readText = async (input: string) => {
+    if (backend.fileSize) assertArwTextSize(await backend.fileSize(input, signal));
+    const result = object(await backend.read(input, signal));
+    assertArwTextSize(Buffer.byteLength(text(result.content, 'content')));
+    return result;
+  };
+  const resolveMutable = async (input: string, missing = false) => {
     const target = await guard.resolve(input, true, signal);
     if (!missing) await guard.resolve(input, false, signal);
     const root = await guard.resolve('.', false, signal);
     if (target === root) throw new Error('Cannot mutate workspaceRoot');
-    return shellQuote(target);
+    return target;
+  };
+  const mutable = async (input: string, missing = false) => shellQuote(await resolveMutable(input, missing));
+  const snapshot = async (...targets: string[]) =>
+    saveRemoteSnapshot(run, await guard.resolve('.', false, signal), name, targets);
+  const afterSnapshot = async (...targets: string[]) => {
+    try { return { afterSnapshotId: await snapshot(...targets) }; }
+    catch { return { diffUnavailable: true }; }
   };
   switch (name) {
     case 'remote_read': {
@@ -62,17 +76,22 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
         const offset=integer(args.offset,0,0,Number.MAX_SAFE_INTEGER),length=integer(args.length,defaultReadLength,4,maxReadLength)
         const fileSize=await backend.fileSize(input,signal)
         if(!Number.isSafeInteger(fileSize)||fileSize<0)throw new Error('Invalid file size')
+        assertArwTextSize(fileSize);
         if(offset>fileSize)throw new Error('Offset exceeds file size')
         const bytes=await backend.readRange(input,offset,length,signal)
         let controls=0
         for(const value of bytes)if(value===0||value<32&&![8,9,10,12,13].includes(value))controls++
         if(bytes.includes(0)||bytes.length&&controls/bytes.length>.1)throw new Error('Binary content; use remote_download')
-        const content=new TextDecoder('utf-8',{fatal:true}).decode(bytes,{stream:offset+bytes.length<fileSize})
+        const content=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes,{stream:offset+bytes.length<fileSize})
         const consumed=Buffer.byteLength(content),nextOffset=offset+consumed
-        return {path:input,content,offset,bytes:consumed,nextOffset,fileSize,truncated:nextOffset<fileSize}
+        const truncated=nextOffset<fileSize
+        return {path:input,content,offset,bytes:consumed,nextOffset,fileSize,truncated,complete:!truncated,fullFile:offset===0&&!truncated}
       }
-      const result = object(await backend.read(input, signal));
-      return { path: input, ...result, ...selectText(text(result.content, 'content'), args) };
+      const result = await readText(input);
+      const selected=selectText(text(result.content, 'content'), args)
+      const complete=selected.truncated!==true&&result.truncated!==true;
+      const fullFile=complete&&(!('startLine' in selected)||selected.startLine===1)&&(!('offset' in selected)||selected.offset===0);
+      return { path: input, ...result, ...selected, complete, fullFile };
     }
     case 'remote_list': {
       const result = object(await backend.list(text(args.path ?? '.', 'path'), signal));
@@ -81,17 +100,28 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       const offset = args.cursor === undefined ? 0 : integer(Number(text(args.cursor, 'cursor')), 0);
       const limit = integer(args.limit, 1000, 1, 1000);
       const end = offset + limit;
-      return { ...result, entries: result.entries.slice(offset, end), truncated: result.truncated === true || end < result.entries.length,
+      const truncated=result.truncated===true||end<result.entries.length
+      return { ...result, entries: result.entries.slice(offset, end), truncated, complete:!truncated,
         ...(end < result.entries.length ? { nextCursor: String(end) } : {}) };
     }
     case 'remote_write': {
       const input = path(), content = text(args.content, 'content');
+      assertArwTextSize(Buffer.byteLength(content));
+      if(args.allowUnconditional!==undefined&&typeof args.allowUnconditional!=='boolean')throw new Error('allowUnconditional must be a boolean');
+      if(args.expectedHash===undefined&&args.allowUnconditional!==true)throw new Error('write requires expectedHash or explicit --allow-unconditional');
       if(args.allowEmpty!==undefined&&typeof args.allowEmpty!=='boolean')throw new Error('allowEmpty must be a boolean');
       if(!content.trim()&&args.allowEmpty!==true)throw new Error('write replaces the ENTIRE file. Empty or whitespace-only content requires --allow-empty (JSON: allowEmpty: true). Use edit for partial changes.');
-      return backend.write(input, content, signal, args.expectedHash === undefined ? undefined : text(args.expectedHash, 'expectedHash'));
+      const expectedHash = args.expectedHash === undefined ? undefined : text(args.expectedHash, 'expectedHash');
+      const target = await resolveMutable(input, true);
+      const existing = await run(`if test -f ${shellQuote(target)}; then stat -c '%s' -- ${shellQuote(target)}; else printf '0'; fi`);
+      const size = Number(text(existing.stdout, 'file size').trim());
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid file size');
+      assertArwTextSize(size);
+      const snapshotId = await snapshot(target);
+      return { ...object(await backend.write(input, content, signal, expectedHash)), snapshotId, ...await afterSnapshot(target) };
     }
     case 'remote_edit': {
-      const input = path(), original = object(await backend.read(input, signal));
+      const input = path(), original = await readText(input);
       if (args.expectedHash !== undefined && args.expectedHash !== original.hash) throw new Error('File changed; read it again before editing');
       if (!Array.isArray(args.edits) || !args.edits.length || args.edits.length > 100) throw new Error('edits must contain 1 to 100 replacements');
       let content = text(original.content, 'content');
@@ -102,9 +132,12 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
         const index = content.indexOf(old);
         if (!old || index < 0 || content.indexOf(old, index + 1) >= 0) throw new Error('oldText must match exactly once');
         content = content.slice(0, index) + replacement + content.slice(index + old.length);
+        assertArwTextSize(Buffer.byteLength(content));
       }
       if (typeof original.hash !== 'string') throw new Error('Backend does not support conflict-safe edits');
-      return backend.write(input, content, signal, original.hash);
+      const target = await resolveMutable(input);
+      const snapshotId = await snapshot(target);
+      return { ...object(await backend.write(input, content, signal, original.hash)), snapshotId, ...await afterSnapshot(target) };
     }
     case 'remote_create': {
       const target = await mutable(path(), true);
@@ -113,7 +146,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
         await run(`mkdir -- ${target}`);
       } else if (args.type === 'file') {
         const content = text(args.content ?? '', 'content');
-        if (Buffer.byteLength(content) > textFileLimit) throw new Error('Text files are limited to 100 MiB');
+        assertArwTextSize(Buffer.byteLength(content));
         const temporary = shellQuote((await guard.resolve(path(), true, signal)) + '.arw-' + randomUUID() + '.tmp');
         let created = false;
         try {
@@ -128,9 +161,11 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
     }
     case 'remote_delete': {
       if (args.recursive !== undefined && typeof args.recursive !== 'boolean') throw new Error('recursive must be boolean');
-      const target = await mutable(path());
+      const resolved = await resolveMutable(path());
+      const target = shellQuote(resolved);
+      const snapshotId = await snapshot(resolved);
       await run(args.recursive ? `rm -r -- ${target}` : `if test -d ${target}; then rmdir -- ${target}; else rm -- ${target}; fi`);
-      return { deleted: true, path: path() };
+      return { deleted: true, path: path(), snapshotId };
     }
     case 'remote_chmod': {
       const mode = text(args.mode, 'mode');
@@ -140,11 +175,14 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
     }
     case 'remote_move': {
       if (args.overwrite !== undefined && typeof args.overwrite !== 'boolean') throw new Error('overwrite must be boolean');
-      const source = await mutable(text(args.sourcePath, 'sourcePath'));
-      const target = await mutable(text(args.targetPath, 'targetPath'), true);
+      const resolvedSource = await resolveMutable(text(args.sourcePath, 'sourcePath'));
+      const resolvedTarget = await resolveMutable(text(args.targetPath, 'targetPath'), true);
+      const source = shellQuote(resolvedSource);
+      const target = shellQuote(resolvedTarget);
+      const snapshotId = await snapshot(resolvedSource, resolvedTarget);
       // -T prevents accidentally moving into an existing directory; -n preserves existing files.
       await run(args.overwrite ? `mv -fT -- ${source} ${target}` : `if test -e ${target} || test -L ${target}; then exit 1; fi; mv -nT -- ${source} ${target}; test ! -e ${source}`);
-      return { moved: true };
+      return { moved: true, snapshotId, ...await afterSnapshot(resolvedSource, resolvedTarget) };
     }
     case 'remote_search': {
       const query = text(args.query, 'query'), mode = text(args.mode ?? 'content', 'mode');
@@ -157,15 +195,17 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       if (!Array.isArray(excluded) || excluded.some(value => typeof value !== 'string')) throw new Error('excludeDirs must be a string array');
       const include = args.include === undefined ? undefined : glob(text(args.include, 'include'));
       const queue = [text(args.path ?? '.', 'path')], results: unknown[] = [];
-      let visited = 0, scannedBytes = 0, skippedFiles = 0, truncated = false;
+      const timeout = AbortSignal.timeout(30_000);
+      const searchSignal = AbortSignal.any([signal, timeout]);
+      let skippedFiles = 0, truncated = false;
+      try {
       while (queue.length && results.length < limit) {
-        signal.throwIfAborted();
-        const listing = object(await backend.list(queue.shift()!, signal));
+        searchSignal.throwIfAborted();
+        const listing = object(await backend.list(queue.shift()!, searchSignal));
         if (listing.truncated) truncated = true;
         if (!Array.isArray(listing.entries)) throw new Error('Invalid directory response');
         for (const value of listing.entries) {
-          signal.throwIfAborted();
-          if (++visited > 10000) { truncated = true; break; }
+          searchSignal.throwIfAborted();
           const entry = object(value);
           if (entry.symlink) continue;
           const input = text(entry.path, 'entry.path'), basename = text(entry.name, 'entry.name');
@@ -174,14 +214,12 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
           if (mode === 'names') { if (matcher!.test(basename)) results.push({ path: input }); }
           else {
             let file: Record<string, unknown>;
-            try { file = object(await backend.read(input, signal)); }
+            try { file = object(await backend.read(input, searchSignal)); }
             catch (error) {
               if (/binary|UTF-8|encoded data|too large|limited to|上限|二进制/i.test(String(error))) { skippedFiles++; continue; }
               throw error;
             }
             const content = text(file.content, 'content');
-            scannedBytes += Buffer.byteLength(content);
-            if (scannedBytes > 8 * 1024 * 1024) { truncated = true; break; }
             const matches: {line: number; text: string}[] = [];
             for (const [index, line] of content.split('\n').entries()) {
               const matched = matcher ? matcher.test(line) : (args.ignoreCase ? line.toLowerCase().includes(query.toLowerCase()) : line.includes(query));
@@ -196,9 +234,14 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
           }
           if (results.length >= limit) { truncated = true; break; }
         }
-        if (visited > 10000 || scannedBytes > 8 * 1024 * 1024) break;
       }
-      return { results: results.slice(0, limit), truncated: truncated || queue.length > 0, skippedFiles };
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!timeout.aborted) throw error;
+        truncated = true;
+      }
+      const incomplete=truncated||queue.length>0||skippedFiles>0
+      return { results: results.slice(0, limit), truncated: incomplete, complete:!incomplete, skippedFiles, timedOut: timeout.aborted };
     }
     default: throw new Error('Unsupported CLI operation');
   }

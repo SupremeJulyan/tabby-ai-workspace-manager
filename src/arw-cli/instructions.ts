@@ -13,6 +13,8 @@ Before working, discover and read applicable remote project instructions, includ
 
 Run arw --help for the command index and arw COMMAND --help for syntax, path rules, limits and examples. Inspect incomplete results before drawing conclusions. Use arw output to continue stored command output instead of rerunning the command.
 
+Use positional arguments and options for common values (for example, arw read README.md --head 40). Use --input JSON for complex values, and --file FILE or stdin for long content.
+
 Keep mutations inside workspaceRoot. Do not bypass POLICY_DENIED or expose connection URLs, tokens or credentials.
 `;
 
@@ -32,6 +34,8 @@ This AI terminal is bound to the exact terminal-mode session. Run arw commands w
 
 Use arw exec for all project operations in the existing terminal, and arw output for stored output. Keep operations inside remoteRoot from the metadata. The terminal must be at a shell prompt; if its directory changes, resynchronize it in Tabby and reopen the AI terminal.
 
+Pass the shell command as one quoted argument to arw exec, or provide it through stdin.
+
 Before working, discover and read applicable remote project instructions, including AGENTS.md at the project root and along the directories containing files you will change. They are not automatically loaded here.
 
 Run arw --help for the command index and arw COMMAND --help for syntax, terminal behavior, limits and examples. Inspect incomplete results and continue stored output instead of rerunning commands. Do not bypass POLICY_DENIED or expose connection URLs, tokens or credentials.
@@ -42,6 +46,8 @@ export const cliGuidance = `# ARW remote workspace
 Use the arw-cli skill for remote operations. This local directory is a placeholder, not a project copy or mount; do not write project files here. Identity metadata is available in .awm/workspace.json when needed.
 
 This AI terminal is already bound: run arw without --id. Sidebar switches do not change the target. If unavailable, reconnect or reopen it; never choose another workspace automatically. Use arw workspaces and --id ID only for intentional cross-workspace operations or older unbound terminals.
+
+Use positional arguments and options for common values (for example, arw read README.md --head 40). Use --input JSON for complex values, and --file FILE or stdin for long content.
 
 Read applicable remote project instructions, including AGENTS.md, before changes. Use known commands directly; consult arw COMMAND --help only for unfamiliar syntax or usage errors. Do not bypass POLICY_DENIED.
 
@@ -96,23 +102,15 @@ function previousCurrentPlaceholderGuidance(remoteRoot:string):string {
         'Omit --id for this bound workspace. If unavailable, reconnect it in Tabby; never switch targets automatically. In an unbound terminal, ask the user to identify the target, list forwarded choices with arw workspaces, and use --id ID. An explicit --id also overrides the binding.','',
         'Common commands:',
         '```sh',
-        'arw list src',
-        'arw read AGENTS.md',
-        'arw read src/main.ts --head 80',
-        'arw search TODO src',
-        "arw find '*.ts' src",
-        "printf '%s' 'git status --short' | arw exec",
-        "printf '%s' 'npm test' | arw exec",
-        "arw write notes.txt --content 'text'",
-        'arw write notes.txt --file ./local-text.txt',
-        'arw upload ./local-file.txt remote-file.txt',
-        'arw download -r remote-folder ./local-folder',
-        'arw git-pull',
-        'arw git-push --path subproject',
+        'arw list src','arw read AGENTS.md','arw read src/main.ts --head 80','arw search TODO src',
+        "arw find '*.ts' src",'arw exec "git status --short"','arw exec "npm test"',
+        "arw write notes.txt --content 'text'",'arw write notes.txt --file ./local-text.txt',
+        'arw edit notes.txt --input JSON','arw upload ./local-file.txt remote-file.txt',
+        'arw download -r remote-folder ./local-folder','arw git-pull','arw git-push subproject',
         '```','',
         'Remote relative paths start at the workspace root; local transfer paths start at the local workdir. Read applicable remote project instructions before changes. Keep mutations inside the remote root.',
         'Use known commands directly. Only consult arw COMMAND --help for unfamiliar syntax or usage errors; do not routinely query the help index or enumerate workspaces first.',
-        'Reads/searches return JSON; exec prints output and propagates exit status. Honor truncation and continuation fields. Continue stored output with arw output OUTPUT_ID stdout --offset OFFSET instead of rerunning a mutation. Inspect state before retrying interrupted mutations. Do not bypass POLICY_DENIED.',
+        'Reads/searches and exec return JSON; exec --raw prints output and propagates exit status. For multiline/complexly quoted commands, use arw exec --file SCRIPT (UTF-8, LF recommended) to avoid local shell quoting differences. Shell syntax is interpreted remotely. Honor truncation and continuation fields. Continue stored output with arw output OUTPUT_ID stdout --offset OFFSET instead of rerunning a mutation. Inspect state before retrying interrupted mutations. Do not bypass POLICY_DENIED.',
         'Terminal-mode bindings support only arw exec and arw output, running in the existing terminal at a shell prompt.','',
     ].join('\n')
 }
@@ -126,23 +124,15 @@ function previousAuthorizationPlaceholderGuidance(remoteRoot:string):string {
         'Omit --id for this bound workspace. If unavailable, reconnect it in Tabby; never switch targets automatically. In an unbound terminal, ask the user to identify the target, list forwarded choices with arw workspaces, and use --id ID. An explicit --id also overrides the binding.','',
         'Common commands:',
         '```sh',
-        'arw list src',
-        'arw read AGENTS.md',
-        'arw read src/main.ts --head 80',
-        'arw search TODO src',
-        "arw find '*.ts' src",
-        "arw exec -- 'git status --short'",
-        "arw exec -- 'npm test'",
-        "arw write notes.txt --content 'text'",
-        'arw write notes.txt --file ./local-text.txt',
-        'arw upload ./local-file.txt remote-file.txt',
-        'arw download -r remote-folder ./local-folder',
-        'arw git-pull',
-        'arw git-push --path subproject',
+        'arw list src','arw read AGENTS.md','arw read src/main.ts --head 80','arw search TODO src',
+        "arw find '*.ts' src",'arw exec "git status --short"','arw exec "npm test"',
+        "arw write notes.txt --content 'text'",'arw write notes.txt --file ./local-text.txt',
+        'arw edit notes.txt --input JSON','arw upload ./local-file.txt remote-file.txt',
+        'arw download -r remote-folder ./local-folder','arw git-pull','arw git-push subproject',
         '```','',
         'Remote relative paths start at the workspace root; local transfer paths start at the local workdir. Read applicable remote project instructions before changes. Keep mutations inside the remote root.',
         'Use known commands directly. Only consult arw COMMAND --help for unfamiliar syntax or usage errors; do not routinely query the help index or enumerate workspaces first.',
-        'Reads/searches return JSON; exec prints output and propagates exit status. Honor truncation and continuation fields. Continue stored output with arw output OUTPUT_ID stdout --offset OFFSET instead of rerunning a mutation. Inspect state before retrying interrupted mutations. Do not bypass POLICY_DENIED.',
+        'Reads/searches and exec return JSON; exec --raw prints output and propagates exit status. For multiline/complexly quoted commands, use arw exec --file SCRIPT (UTF-8, LF recommended) to avoid local shell quoting differences. Shell syntax is interpreted remotely. Honor truncation and continuation fields. Continue stored output with arw output OUTPUT_ID stdout --offset OFFSET instead of rerunning a mutation. Inspect state before retrying interrupted mutations. Do not bypass POLICY_DENIED.',
         'Terminal-mode bindings support only arw exec and arw output, running in the existing terminal at a shell prompt.','',
     ].join('\n')
 }
@@ -157,9 +147,15 @@ function previousWritePlaceholderGuidance(remoteRoot:string):string {
 
 export function placeholderGuidance(remoteRoot:string):string {
     return previousWritePlaceholderGuidance(remoteRoot)
+        .replace("printf '%s' 'git status --short' | arw exec", 'arw exec "git status --short"')
+        .replace("printf '%s' 'npm test' | arw exec", 'arw exec "npm test"')
+        .replace("arw exec -- 'git status --short'", 'arw exec "git status --short"')
+        .replace("arw exec -- 'npm test'", 'arw exec "npm test"')
+        .replace('arw write notes.txt --file ./local-text.txt', `arw edit --input '{"path":"notes.txt","edits":[{"oldText":"EXACT_OLD_TEXT","newText":"NEW_TEXT"}]}'`)
+        .replace('arw git-push --path subproject', 'arw git-push subproject')
         .replace("arw write notes.txt --content 'text'","arw write REMOTE_PATH --file LOCAL_COMPLETE_FILE --expected-hash HASH_FROM_READ")
         .replace('arw write notes.txt --file ./local-text.txt','arw edit REMOTE_PATH --input JSON_WITH_EXPECTED_HASH_AND_EDITS')
-        .replace('Use known commands directly.', 'For partial changes use arw edit with exact oldText/newText. arw write replaces the ENTIRE file: --content is the complete literal content, --file reads a complete LOCAL file, and --file - reads stdin. Never use empty text, a single test character, sample values or placeholders to probe write on an existing project file. Read first and pass the actual returned expectedHash; verify content after writing. Blank writes require explicit --allow-empty.\nUse known commands directly.')
+        .replace('Use known commands directly.', 'For partial changes use arw edit with exact oldText/newText fields in the JSON object. arw write replaces the ENTIRE file; provide the complete literal content in its JSON content field. Never use sample values or placeholders to probe write on an existing project file. Read first and pass the actual returned expectedHash; verify content after writing. Blank writes require allowEmpty:true.\nUse known commands directly.')
 }
 
 export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):void {

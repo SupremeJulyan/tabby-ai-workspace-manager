@@ -18,7 +18,13 @@ test('CLI endpoint authenticates, enforces workspace identity and handles CLI re
     async list() { return { entries: [...files.keys()] }; },
     async read(path) { return { content: files.get(path) }; },
     async write(path, content) { files.set(path, content); return { written: true }; },
-    async run(command, signal) { commandSignal = signal; return { stdout: command, stderr: '', exitCode: command === 'fail' ? 7 : 0 }; }
+    async run(command, signal) {
+      commandSignal = signal;
+      const stdout = command.startsWith('test ! -L') || command.startsWith('realpath')
+        ? `/project\n/project${command.includes('/file')?'/file':''}\n`
+        : command.startsWith('if test -f') ? '6' : command;
+      return { stdout, stderr: '', exitCode: command === 'fail' ? 7 : 0 };
+    }
   });
   const directory = await mkdtemp(join(tmpdir(), 'arw-cli-test-'));
   const previousConfig=process.env.TABBY_CONFIG_DIRECTORY;
@@ -49,11 +55,11 @@ test('CLI endpoint authenticates, enforces workspace identity and handles CLI re
   assert.equal((await ipcFetch(connection,{body:'invalid json'})).status,400);
   const workspaces = JSON.parse((await cli('workspaces')).stdout);
   assert.equal(workspaces.workspaces[0].workspaceId, 'one');
-  await cli('write', 'file', '--id', 'one', '--content', 'after');
+  await cli('write', 'file', '--id', 'one', '--content', 'after', '--allow-unconditional');
   assert.equal(files.get('file'), 'after');
   assert.equal(JSON.parse((await cli('read', 'file', '--id', 'one')).stdout).content, 'after');
   await assert.rejects(cli('read', 'file', '--id', 'other'), /Workspace is unavailable/);
-  assert.equal((await cli('exec', '--id', 'one', '--', 'pwd')).stdout, 'pwd');
+  assert.equal((await cli('exec', '--id', 'one', '--raw', '--', 'pwd')).stdout, 'pwd');
   await assert.rejects(cli('exec', '--id', 'one', '--', 'fail'), (error: any) => error.code === 7);
   const proxied=await execute(process.execPath,[resolve(__dirname,'../dist/arw.cjs'),'read','file','--id','one'],{
     env:{...process.env,TABBY_CONFIG_DIRECTORY:directory,NODE_USE_ENV_PROXY:'1',HTTP_PROXY:'http://127.0.0.1:1',HTTPS_PROXY:'http://127.0.0.1:1',ALL_PROXY:'http://127.0.0.1:1',NO_PROXY:''},

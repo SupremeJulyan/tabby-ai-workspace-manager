@@ -89,14 +89,14 @@ arw workspaces
 arw list src
 arw read README.md --head 40
 arw search TODO src
-arw exec -- 'git status --short'
+arw exec "git status --short"
 arw upload ./local-file path
 arw download -r folder ./local-folder
 arw git-pull
-arw git-push --path subproject
+arw git-push subproject
 ```
 
-In other terminals, list forwarded workspaces with `arw workspaces` and select a target with `--id ID`. Run `arw --help` for file reading and writing, searching, exact edits, creation, deletion, moves, permissions, and batch operations.
+Use positional arguments and options for common values. For complex inputs such as edits and batches, use `--input JSON`; provide long file content with `--file FILE` or stdin. `exec` returns JSON by default and `--raw` prints streams. For portable multiline commands, use a UTF-8 script file with `arw exec --file SCRIPT` (LF line endings are recommended) to avoid local shell quoting differences. In other terminals, select a target with `--id ID`. Run `arw COMMAND --help` for usage.
 
 ## License
 

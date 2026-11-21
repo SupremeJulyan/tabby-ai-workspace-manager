@@ -51,6 +51,17 @@ export const TREE_TEMPLATE = `
       <details class="activity-entry" *ngFor="let activity of visibleActivities; trackBy: trackActivity" [attr.data-status]="activity.status">
         <summary><span class="activity-dot" [class.spinning]="activity.status==='running'"><i class="fas" [class.fa-circle-notch]="activity.status==='running'" [class.fa-circle]="activity.status!=='running'"></i></span><span class="activity-title">{{activityLabel(activity)}}<small class="activity-workspace" [title]="activity.root">{{activity.root}}</small><small>{{activity.command || activity.path || activity.root}}</small></span><span class="activity-state">{{activityState(activity)}}</span></summary>
         <div class="activity-detail"><div>{{activity.startedAt | date:'HH:mm:ss'}}<span *ngIf="activity.durationMs !== undefined"> · {{activity.durationMs}} ms</span></div><div>{{activity.host}} · {{activity.root}}</div><div>{{ '工作区：' | arwTranslate }}{{activity.workspaceId}}</div><div>{{ '工具：' | arwTranslate }}{{activity.operation}}</div><pre *ngIf="activity.command || activity.path">{{activity.command || activity.path}}</pre><div *ngIf="activity.exitCode !== undefined">{{ '退出码：' | arwTranslate }}{{activity.exitCode}}</div><pre class="activity-error" *ngIf="activity.error">{{activity.error}}</pre></div>
+        <div class="activity-detail" *ngIf="activity.loadDiff || activity.diffUnavailable">
+          <button type="button" *ngIf="activity.loadDiff && activityDiff?.id !== activity.id" (click)="showActivityDiff(activity)">{{ '查看 Git 差异' | arwTranslate }}</button>
+          <div *ngIf="activity.diffUnavailable">{{ '无法保存操作后的快照' | arwTranslate }}</div>
+          <ng-container *ngIf="activityDiff?.id === activity.id">
+            <button type="button" (click)="closeActivityDiff(activity.id)">{{ '关闭差异' | arwTranslate }}</button>
+            <div *ngIf="activityDiff?.loading" role="status">{{ '正在读取差异…' | arwTranslate }}</div>
+            <div *ngIf="activityDiff?.error" role="alert">{{activityDiff?.error}}</div>
+            <pre *ngIf="activityDiff?.text" style="max-height: 24rem; overflow: auto; white-space: pre">{{activityDiff?.text}}</pre>
+            <div *ngIf="activityDiff?.text === ''">{{ '无文本差异' | arwTranslate }}</div>
+          </ng-container>
+        </div>
       </details>
     </div>
   </div>
