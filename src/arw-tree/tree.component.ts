@@ -442,9 +442,34 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     activityStatus = 'all'
     private unsubscribeActivity = agentActivity.subscribe(() => { this.render() })
     activityDiff?: { id: number; loading: boolean; text?: string; error?: string }
+    restoringActivity?: number
+    lastActivityRestore?: {id: number; error?: string}
+
+    async restoreActivity(activity: AgentActivity): Promise<void> {
+        if (!activity.restore || this.restoringActivity !== undefined) return
+        this.restoringActivity = activity.id
+        this.render()
+        try {
+            const confirmation = await this.platform.showMessageBox({
+                type: 'warning',
+                message: t('还原本次 AI 操作涉及的文件？'),
+                detail: activity.path ?? activity.root,
+                buttons: [t('取消'), t('还原更改')],
+                defaultId: 0, cancelId: 0,
+            })
+            if (confirmation.response !== 1) return
+            await activity.restore()
+            this.lastActivityRestore = {id: activity.id}
+        } catch (error) {
+            this.lastActivityRestore = {id: activity.id, error: error instanceof Error ? error.message : String(error)}
+        } finally {
+            this.restoringActivity = undefined
+            this.render()
+        }
+    }
 
     async showActivityDiff(activity: AgentActivity): Promise<void> {
-        if (!activity.loadDiff || this.activityDiff?.id === activity.id) return
+        if (!activity.loadDiff || (this.activityDiff?.id === activity.id && this.activityDiff.loading)) return
         const state: NonNullable<typeof this.activityDiff> = {id: activity.id, loading: true}
         this.activityDiff = state
         this.render()

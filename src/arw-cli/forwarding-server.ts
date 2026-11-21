@@ -13,7 +13,7 @@ import { RemotePathError, RemotePathGuard } from '../security/remote-path';
 import { commands } from './commands';
 import { fileOperation, integer, object, text, selectText } from './operations';
 import { agentActivity } from './agent-activity';
-import { remoteSnapshotDiffCommand } from './remote-snapshot';
+import { remoteSnapshotDiffCommand, remoteSnapshotRestoreCommand } from './remote-snapshot';
 
 export interface ForwardingBackend {
   activityScope?: string;
@@ -145,7 +145,10 @@ export class ForwardingServer {
     return true;
   }
 
+  private restoringSnapshot = false;
+
   private async invoke(input: { name?: unknown; arguments?: unknown }): Promise<unknown> {
+    if(this.restoringSnapshot)throw new Error('A snapshot restore is in progress');
     if(this.paused)throw new Error(t("转发正在重建，请稍后重试"));
     this.activeRequests++;
     const activityId = agentActivity.start(this.backend.workspace, input, this.backend.activityScope);
@@ -156,19 +159,36 @@ export class ForwardingServer {
       const before = value.snapshotId;
       const after = value.afterSnapshotId;
       const signal = this.controller.signal;
-      const loadDiff = typeof before === 'string' && (typeof after === 'string' || input.name === 'remote_delete')
+      const loadDiff = typeof before === 'string'
         ? async () => {
           signal.throwIfAborted();
           const previewSignal = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
           const guard = new RemotePathGuard(this.backend.workspace.root, async (command, currentSignal) =>
             await this.backend.run(command, currentSignal ?? previewSignal) as {stdout:string;stderr:string;exitCode:number});
           const root = await guard.resolve('.', false, previewSignal);
-          const diff = object(await this.backend.run(remoteSnapshotDiffCommand(root, before, typeof after === 'string' ? after : undefined), previewSignal, {maxBytes:256*1024}));
+          const diff = object(await this.backend.run(remoteSnapshotDiffCommand(root, before), previewSignal, {maxBytes:256*1024}));
           if (diff.exitCode !== 0 && diff.truncated !== true) throw new Error(t('无法读取快照差异'));
           const content = String(diff.stdout ?? '');
           return diff.truncated === true ? content + '\n…' : content;
         } : undefined;
-      agentActivity.finish(activityId, result, undefined, false, loadDiff);
+      const restore = typeof before === 'string' && (typeof after === 'string' || input.name === 'remote_delete') ? async () => {
+        signal.throwIfAborted();
+        if (this.paused || this.restoringSnapshot || this.activeRequests) throw new Error(t('工作区正忙，请稍后再试'));
+        this.restoringSnapshot = true;
+        this.activeRequests++;
+        try {
+          const guard = new RemotePathGuard(this.backend.workspace.root, async (command, currentSignal) =>
+            await this.backend.run(command, currentSignal ?? signal) as {stdout:string;stderr:string;exitCode:number});
+          const root = await guard.resolve('.', false, signal);
+          const restored = object(await this.backend.run(remoteSnapshotRestoreCommand(root, before, typeof after === 'string' ? after : undefined), signal));
+          if (restored.exitCode !== 0) throw new Error(String(restored.stderr || t('无法还原快照')));
+          this.reportRequest(input.name);
+        } finally {
+          this.activeRequests--;
+          this.restoringSnapshot = false;
+        }
+      } : undefined;
+      agentActivity.finish(activityId, result, undefined, false, loadDiff, restore);
       return result;
     } catch (error) {
       if(!(error instanceof CommandPolicyError)&&!(error instanceof RemotePathError))this.reportRequest(input.name,error);

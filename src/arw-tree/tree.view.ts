@@ -48,13 +48,22 @@ export const TREE_TEMPLATE = `
     </div>
     <div class="tree activity-timeline" [attr.aria-label]="'AI 远程操作时间线' | arwTranslate" aria-live="polite">
       <div class="empty-state compact" *ngIf="!visibleActivities.length"><i class="fas fa-robot"></i><span>{{activities.length ? ('当前筛选条件下没有活动' | arwTranslate) : ('暂无 AI 远程操作' | arwTranslate)}}</span><small>{{ '通过 arw 转发的读取、修改和命令会自动显示；不包含 AI 对话和本地命令。' | arwTranslate }}</small></div>
-      <details class="activity-entry" *ngFor="let activity of visibleActivities; trackBy: trackActivity" [attr.data-status]="activity.status">
-        <summary><span class="activity-dot" [class.spinning]="activity.status==='running'"><i class="fas" [class.fa-circle-notch]="activity.status==='running'" [class.fa-circle]="activity.status!=='running'"></i></span><span class="activity-title">{{activityLabel(activity)}}<small class="activity-workspace" [title]="activity.root">{{activity.root}}</small><small>{{activity.command || activity.path || activity.root}}</small></span><span class="activity-state">{{activityState(activity)}}</span></summary>
+      <details #activityEntry class="activity-entry" *ngFor="let activity of visibleActivities; trackBy: trackActivity" [attr.data-status]="activity.status">
+        <summary>
+          <span class="activity-dot" [class.spinning]="activity.status==='running'"><i class="fas" [class.fa-circle-notch]="activity.status==='running'" [class.fa-circle]="activity.status!=='running'"></i></span>
+          <span class="activity-title">{{activityLabel(activity)}}<small class="activity-workspace" [title]="activity.root">{{activity.root}}</small><small>{{activity.command || activity.path || activity.root}}</small></span>
+          <span *ngIf="activity.loadDiff" style="display: flex; flex: none; gap: 4px">
+            <button type="button" (click)="$event.preventDefault(); activityEntry.open = true; showActivityDiff(activity)">{{ '查看差异' | arwTranslate }}</button>
+            <button type="button" *ngIf="activity.restore" [disabled]="restoringActivity !== undefined || (lastActivityRestore?.id === activity.id && !lastActivityRestore?.error)" (click)="$event.preventDefault(); activityEntry.open = true; restoreActivity(activity)">{{ '还原更改' | arwTranslate }}</button>
+          </span>
+          <span class="activity-state">{{activityState(activity)}}</span>
+        </summary>
         <div class="activity-detail"><div>{{activity.startedAt | date:'HH:mm:ss'}}<span *ngIf="activity.durationMs !== undefined"> · {{activity.durationMs}} ms</span></div><div>{{activity.host}} · {{activity.root}}</div><div>{{ '工作区：' | arwTranslate }}{{activity.workspaceId}}</div><div>{{ '工具：' | arwTranslate }}{{activity.operation}}</div><pre *ngIf="activity.command || activity.path">{{activity.command || activity.path}}</pre><div *ngIf="activity.exitCode !== undefined">{{ '退出码：' | arwTranslate }}{{activity.exitCode}}</div><pre class="activity-error" *ngIf="activity.error">{{activity.error}}</pre></div>
         <div class="activity-detail" *ngIf="activity.loadDiff || activity.diffUnavailable">
-          <button type="button" *ngIf="activity.loadDiff && activityDiff?.id !== activity.id" (click)="showActivityDiff(activity)">{{ '查看 Git 差异' | arwTranslate }}</button>
+          <div *ngIf="lastActivityRestore?.id === activity.id" role="status">{{lastActivityRestore?.error || ('已还原本次更改' | arwTranslate)}}</div>
           <div *ngIf="activity.diffUnavailable">{{ '无法保存操作后的快照' | arwTranslate }}</div>
           <ng-container *ngIf="activityDiff?.id === activity.id">
+            <div>{{ '操作前快照与当前文件的差异' | arwTranslate }}</div>
             <button type="button" (click)="closeActivityDiff(activity.id)">{{ '关闭差异' | arwTranslate }}</button>
             <div *ngIf="activityDiff?.loading" role="status">{{ '正在读取差异…' | arwTranslate }}</div>
             <div *ngIf="activityDiff?.error" role="alert">{{activityDiff?.error}}</div>
