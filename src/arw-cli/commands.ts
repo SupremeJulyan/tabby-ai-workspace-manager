@@ -48,8 +48,6 @@ Exec returns JSON by default and --raw prints streams.
 write, edit, delete, and move save a snapshot in the remote account's private
 ~/.arw-snapshots directory before modifying files. Success includes snapshotId.
 Snapshots require remote Git and GNU tar. A snapshot failure blocks the change.
-For an eligible file whose bytes match Git HEAD, the snapshot can reference a
-pinned object in the project repository. Keep that repository to restore it.
 --verbose remains an alias for JSON output.
 Use --file for scripts with complex quoting or multiple lines; LF line endings are recommended.
 `;
@@ -138,6 +136,8 @@ Use arw edit for partial changes. Never send sample/placeholder text to test wri
 --file reads a complete local UTF-8 file; --file - reads complete content from stdin.
 Empty or whitespace-only content is rejected unless --allow-empty explicitly permits it.
 Use arw read PATH --head 0 to obtain the hash, then pass it with --expected-hash.
+For an eligible file whose bytes match Git HEAD, the snapshot can reference a
+pinned object in the project repository. Keep that repository to restore it.
 Explicitly use --allow-unconditional (JSON: allowUnconditional: true) to omit the check.
 A hash detects concurrent changes; it does not validate whether your new content is complete.
 After writing, read back the target and check the intended contents.
