@@ -10,6 +10,24 @@ import { remoteSnapshotDiffCommand, remoteSnapshotRestoreCommand, saveRemoteSnap
 
 const execute = promisify(execFile)
 
+test('keeps the three newest snapshots per path and reports retired IDs', {skip:process.platform !== 'linux'}, async t => {
+  const home = await mkdtemp(join(tmpdir(), 'arw-snapshot-retention-'))
+  t.after(() => rm(home, {recursive:true, force:true}))
+  const root = await mkdtemp(join(home, 'workspace-'))
+  const run = (command: string) => execute('sh', ['-c', command], {env:{...process.env, HOME:home}})
+  const file = join(root, 'notes.txt')
+  const other = join(root, 'other.txt')
+  const unrelated = await saveRemoteSnapshot(run, root, 'remote_write', [other])
+  const ids: string[] = [], expired: string[] = []
+  for (let index = 0; index < 4; index++) {
+    await writeFile(file, String(index))
+    ids.push(await saveRemoteSnapshot(run, root, 'remote_write', [file], false, removed => expired.push(...removed)))
+  }
+  assert.deepEqual(expired, [ids[0]])
+  await assert.rejects(run(remoteSnapshotDiffCommand(root, ids[0])))
+  for (const id of [...ids.slice(1), unrelated]) await run(remoteSnapshotDiffCommand(root, id))
+})
+
 test('clean tracked files reuse pinned blobs while dirty, ignored and filtered bytes use archives', {skip:process.platform !== 'linux'}, async t => {
   const home = await mkdtemp(join(tmpdir(), 'arw-git-reuse-'))
   t.after(() => rm(home, {recursive:true, force:true}))

@@ -473,6 +473,7 @@ export const englishMessages: Record<string,string> = {
     "当前文件": "Current files",
     "正在读取差异…": "Loading diff…",
     "无法读取快照差异": "Could not load snapshot diff",
+    "快照已失效": "Snapshot expired",
     "还原本次 AI 操作涉及的文件？": "Restore the files affected by this AI operation?",
     "还原会覆盖这些路径上的当前更改。": "Restoring will overwrite current changes at these paths.",
     "已还原本次更改": "Changes restored",

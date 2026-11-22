@@ -1540,8 +1540,9 @@ test('remote AI launch uses a persistent placeholder, private session config and
         for(let i=0;i<100&&(await catalog()).workspaces.length;i++)await new Promise(r=>setTimeout(r,5))
         assert.deepEqual((await catalog()).workspaces,[],'disconnect removes dead AI forwarding entries immediately')
         for(let i=0;i<100;i++){
-            try{await access(firstEntry.configPath);await new Promise(r=>setTimeout(r,5))}
-            catch{break}
+            const paths=await Promise.allSettled([access(firstEntry.configPath),access(secondEntry.configPath)])
+            if(paths.every(path=>path.status==='rejected'))break
+            await new Promise(r=>setTimeout(r,5))
         }
         await assert.rejects(access(firstEntry.configPath));await assert.rejects(access(secondEntry.configPath))
     }finally{

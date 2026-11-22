@@ -21,6 +21,8 @@ export interface AgentActivity {
     exitCode?: number
     error?: string
     loadDiff?: () => Promise<string>
+    snapshotId?: string
+    snapshotExpired?: boolean
     restore?: () => Promise<void>
 }
 
@@ -32,6 +34,7 @@ export class AgentActivityStore {
     private events: AgentActivity[] = []
     private listeners = new Set<()=>void>()
     private sequence = 0
+    private expiredSnapshots = new Set<string>()
     constructor (private limit = 200, private now = () => Date.now()) {}
     snapshot (terminalScope?: string): AgentActivity[] { return this.events.filter(event => terminalScope === undefined || event.terminalScope === terminalScope).map(event => ({...event})).reverse() }
     subscribe (listener: ()=>void): ()=>void {
@@ -56,12 +59,32 @@ export class AgentActivityStore {
         if (!event || event.status !== 'running') return
         const value = result && typeof result === 'object' ? result as Record<string, unknown> : {}
         event.exitCode = typeof value.exitCode === 'number' ? value.exitCode : undefined
-        event.loadDiff = loadDiff
-        event.restore = restore
+        event.snapshotId = typeof value.snapshotId === 'string' ? value.snapshotId : undefined
+        event.snapshotExpired = event.snapshotId !== undefined && this.expiredSnapshots.has(event.snapshotId)
+        if (!event.snapshotExpired) {
+            event.loadDiff = loadDiff
+            event.restore = restore
+        }
         event.status = denied ? 'denied' : error !== undefined || value.status === 'error' || (Array.isArray(value.results) && value.results.some(result => result?.ok === false)) || (event.exitCode !== undefined && event.exitCode !== 0) ? 'error' : 'success'
         event.durationMs = Math.max(0, this.now() - event.startedAt)
         if (error !== undefined) event.error = safeText(error instanceof Error ? error.message : String(error))
         this.emit()
+    }
+    expireSnapshots (ids: string[]): void {
+        for (const id of ids) this.expiredSnapshots.add(id)
+        const expired = new Set(ids)
+        let changed = false
+        for (const event of this.events) {
+            if (!event.snapshotId || !expired.has(event.snapshotId)) continue
+            event.snapshotExpired = true
+            event.loadDiff = undefined
+            event.restore = undefined
+            changed = true
+        }
+        while (this.expiredSnapshots.size > this.limit) {
+            this.expiredSnapshots.delete(this.expiredSnapshots.values().next().value!)
+        }
+        if (changed) this.emit()
     }
     clear (terminalScope?: string): void {
         this.events = this.events.filter(event => event.status === 'running' || (terminalScope !== undefined && event.terminalScope !== terminalScope))

@@ -148,6 +148,35 @@ finally:
         shutil.rmtree(stage)
 `;
 
+const pruneScript = String.raw`
+import fcntl, json, os, subprocess, sys
+from collections import Counter
+from pathlib import Path
+
+repo, current = sys.argv[1:]
+prefix = 'refs/arw/snapshots/'
+git = ['git', '--git-dir', repo]
+os.environ['GIT_ALLOW_PROTOCOL'] = ''
+with (Path(repo) / 'arw-retention.lock').open('ab') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    snapshots = []
+    for ref in subprocess.check_output(git + ['for-each-ref', '--format=%(refname)', prefix]).decode().splitlines():
+        manifest = json.loads(subprocess.check_output(git + ['cat-file', 'blob', ref + ':manifest.json']))
+        snapshots.append((manifest['createdAt'], ref, manifest))
+    counts = Counter()
+    expired = []
+    for _, ref, manifest in sorted(snapshots, key=lambda item: (item[0], item[1] == prefix + current, item[1]), reverse=True):
+        paths = set(manifest['paths'])
+        if any(counts[path] >= 3 for path in paths):
+            expired.append((ref, manifest.get('gitReference')))
+        counts.update(paths)
+    for ref, reference in expired:
+        subprocess.run(git + ['update-ref', '-d', ref], check=True)
+        print(ref[len(prefix):], flush=True)
+        if reference:
+            subprocess.run(['git', '--git-dir', reference['gitDir'], 'update-ref', '-d', ref, reference['oid']], check=False)
+`;
+
 export function remoteSnapshotRestoreCommand(root: string, before: string): string {
   if (!/^[0-9a-f-]{36}$/.test(before)) {
     throw new Error('Invalid snapshot ID');
@@ -201,7 +230,7 @@ with open('current.tar', 'wb') as archive:
 `;
 
 /** Store exact file bytes and metadata without using the project's Git index. */
-export async function saveRemoteSnapshot(run: Run, root: string, operation: string, targets: string[], reuseGit = false): Promise<string> {
+export async function saveRemoteSnapshot(run: Run, root: string, operation: string, targets: string[], reuseGit = false, onExpired?: (ids: string[]) => void): Promise<string> {
   const snapshotId = randomUUID();
   const workspaceKey = createHash('sha256').update(root).digest('hex');
   const paths = [...new Set(targets)].map(target => posix.relative(root, target));
@@ -214,6 +243,7 @@ export async function saveRemoteSnapshot(run: Run, root: string, operation: stri
     'set -eu',
     'umask 077',
     'base="$HOME/.arw-snapshots"',
+    'command -v python3 >/dev/null',
     'test ! -L "$base"',
     'mkdir -p -- "$base"',
     'base=$(cd -P -- "$base" && pwd -P)',
@@ -222,8 +252,9 @@ export async function saveRemoteSnapshot(run: Run, root: string, operation: stri
     `repo="$base/${workspaceKey}.git"`,
     'test ! -L "$repo"',
     'if test ! -f "$repo/HEAD"; then git init --quiet --bare "$repo"; fi',
+    `prune() { python3 -c ${shellQuote(pruneScript)} "$repo" ${shellQuote(snapshotId)}; }`,
     ...(reuseGit ? [
-      `if command -v python3 >/dev/null && python3 -c ${shellQuote(reuseScript)} "$repo" ${shellQuote(manifest)} ${shellQuote(snapshotId)} ${shellQuote(root)}; then exit 0; fi`,
+      `if command -v python3 >/dev/null && python3 -c ${shellQuote(reuseScript)} "$repo" ${shellQuote(manifest)} ${shellQuote(snapshotId)} ${shellQuote(root)}; then prune; exit 0; fi`,
     ] : []),
     'scratch=$(mktemp -d "$base/.snapshot.XXXXXXXX")',
     'trap \'rm -rf -- "$scratch"\' EXIT',
@@ -241,10 +272,13 @@ export async function saveRemoteSnapshot(run: Run, root: string, operation: stri
     'archive=$(git --git-dir="$repo" hash-object -w --no-filters "$scratch/files.tar")',
     'tree=$(printf "100644 blob %s\\tmanifest.json\\n100644 blob %s\\tfiles.tar\\n" "$manifest" "$archive" | git --git-dir="$repo" mktree)',
     `git --git-dir="$repo" update-ref refs/arw/snapshots/${snapshotId} "$tree"`,
+    'prune',
     ')',
   ].join('\n');
   try {
-    await run(command);
+    const result = await run(command) as { stdout?: string } | undefined;
+    const expired = (result?.stdout ?? '').split(/\r?\n/).filter(id => /^[0-9a-f-]{36}$/.test(id));
+    if (expired.length) onExpired?.(expired);
   } catch (error) {
     throw new Error('Remote snapshot failed. The file operation did not start.', { cause: error });
   }

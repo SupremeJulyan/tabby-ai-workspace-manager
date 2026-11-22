@@ -56,6 +56,7 @@ export const TREE_TEMPLATE = `
             <button type="button" [disabled]="loadingActivityDiffs.has(activity.id)" (click)="$event.preventDefault(); showActivityDiff(activity)">{{ (loadingActivityDiffs.has(activity.id) ? '正在读取差异…' : '查看差异') | arwTranslate }}</button>
             <button type="button" *ngIf="activity.restore" [disabled]="restoringActivity !== undefined || (lastActivityRestore?.id === activity.id && !lastActivityRestore?.error)" (click)="$event.preventDefault(); activityEntry.open = true; restoreActivity(activity)">{{ '还原更改' | arwTranslate }}</button>
           </span>
+          <span *ngIf="activity.snapshotExpired">{{ '快照已失效' | arwTranslate }}</span>
           <span class="activity-state">{{activityState(activity)}}</span>
         </summary>
         <div class="activity-detail"><div>{{activity.startedAt | date:'HH:mm:ss'}}<span *ngIf="activity.durationMs !== undefined"> · {{activity.durationMs}} ms</span></div><div>{{activity.host}} · {{activity.root}}</div><div>{{ '工作区：' | arwTranslate }}{{activity.workspaceId}}</div><div>{{ '工具：' | arwTranslate }}{{activity.operation}}</div><pre *ngIf="activity.command || activity.path">{{activity.command || activity.path}}</pre><div *ngIf="activity.exitCode !== undefined">{{ '退出码：' | arwTranslate }}{{activity.exitCode}}</div><pre class="activity-error" *ngIf="activity.error">{{activity.error}}</pre></div>

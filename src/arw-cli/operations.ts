@@ -4,6 +4,7 @@ import { RemotePathGuard } from '../security/remote-path';
 import { shellQuote } from '../shared/shell-quote';
 import type { ForwardingBackend } from './forwarding-server';
 import { saveRemoteSnapshot } from './remote-snapshot';
+import { agentActivity } from './agent-activity';
 
 const defaultReadLength=8192,maxReadLength=65536
 
@@ -64,7 +65,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
   };
   const mutable = async (input: string, missing = false) => shellQuote(await resolveMutable(input, missing));
   const snapshot = async (targets: string[]) =>
-    saveRemoteSnapshot(run, await guard.resolve('.', false, signal), name, targets);
+    saveRemoteSnapshot(run, await guard.resolve('.', false, signal), name, targets, false, ids => agentActivity.expireSnapshots(ids));
   switch (name) {
     case 'remote_read': {
       const input=path(),hasLineSelection=['head','tail','startLine','lineCount'].some(key=>args[key]!==undefined)
