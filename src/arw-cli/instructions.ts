@@ -157,11 +157,12 @@ export function placeholderGuidance(remoteRoot:string):string {
         .replace('Use known commands directly.', 'For partial changes use arw edit with exact oldText/newText fields in the JSON object. arw write replaces the ENTIRE file; provide the complete literal content in its JSON content field. Never use sample values or placeholders to probe write on an existing project file. ARW saves a snapshot before writing. Blank writes require allowEmpty:true.\nUse known commands directly.')
 }
 
-export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):void {
-    removeGeneratedAgentGuidance(placeholder)
+export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string,migrate=true):void {
+    if(migrate)removeGeneratedAgentGuidance(placeholder)
     try{writeFileSync(join(placeholder,'AGENTS.md'),placeholderGuidance(remoteRoot),{mode:0o600,flag:'wx'})}
     catch(error){
         if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error
+        if(!migrate)return
         const file=join(placeholder,'AGENTS.md')
         if(lstatSync(file).isFile()){
             const content=readFileSync(file,'utf8')

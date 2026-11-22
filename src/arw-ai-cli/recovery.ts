@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { currentCliPath } from './cli-path'
 import { ensurePlaceholderGuidance } from '../arw-cli/instructions'
 import { agentCwdPath, isolatedAgentCwdPath, legacyAgentCwdPath, removeLegacyAgentMetadata } from './agent-cwd'
+import { applyPlaceholderPatches } from './patches'
 import { readWorkspaceBinding, writeWorkspaceBinding } from '../arw-cli/workspace-binding'
 import { agentShellFromOptions, isAgentProfile } from './agent-profile'
 import { replaceShellArguments, shellCommand, shellEnvironment, type ShellType } from './shell'
@@ -72,7 +73,8 @@ export function prepareAiRecovery(terminal:AgentTerminal,storageRoot:string,cliS
         removeLegacyAgentMetadata(cwd,remoteRoot)
         // Migrate only identity saved on this verified terminal profile, not process.env.
         if(!binding&&workspaceId&&identity.host)writeWorkspaceBinding(cwd,{version:2,kind:'remote',workspaceId,remoteRoot,...identity,terminalOnly:terminalMode,catalogPath:join(dirname(storageRoot),'omw','workspaces.json')})
-        ensurePlaceholderGuidance(cwd,remoteRoot)
+        applyPlaceholderPatches(storageRoot,cwd,remoteRoot)
+        ensurePlaceholderGuidance(cwd,remoteRoot,false)
     }
     const savedPath=Object.entries(env).find(([name])=>name.toLowerCase()==='path')?.[1]
     const executableCli=process.platform==='win32'?persistentCliSource(cliSource):cliSource

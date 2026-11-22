@@ -76,10 +76,12 @@ test('only unchanged legacy instructions are replaced with minimal placeholder c
         for(const terminalOnly of [false,true]){
             const ensure=()=>ensureAgentCwdPlaceholder('/project',storage,{host:'fixture',user:'alice'},terminalOnly,'terminal:bound')
             const {localPath}=await ensure(),file=join(localPath,'AGENTS.md')
+            await writeFile(join(storage,'version'),'0.2.3\n')
             await writeFile(file,legacyCliGuidance(terminalOnly))
             await ensure()
             assert.equal(await readFile(file,'utf8'),placeholderGuidance('/project'))
             await writeFile(file,terminalOnly?terminalCliGuidance:cliGuidance)
+            await rm(join(storage,'version'))
             await ensure()
             assert.equal(await readFile(file,'utf8'),placeholderGuidance('/project'))
             const customized=legacyCliGuidance(terminalOnly)+'\nUser instructions\n'
@@ -159,6 +161,7 @@ test('launch and recovery preserve user instructions and restore missing minimal
             await ensure()
             assert.equal(await readFile(path,'utf8'),placeholderGuidance('/project'))
             await writeFile(path,terminalOnly?terminalCliGuidance:cliGuidance)
+            await writeFile(join(storage,'version'),'0.2.3\n')
             recover()
             assert.equal(await readFile(path,'utf8'),placeholderGuidance('/project'))
         }
@@ -210,9 +213,20 @@ test('cross-workspace guidance upgrades the previous generated placeholder and p
             /^Omit --id[^\n]+/m,
             'Omit --id for this bound workspace. If unavailable, reconnect it in Tabby; never switch targets automatically. In an unbound terminal, ask the user to identify the target, list forwarded choices with arw workspaces, and use --id ID. An explicit --id also overrides the binding.'
         )
-        await writeFile(file,previous);await ensure()
+        await writeFile(file,previous)
+        const other=await ensureAgentCwdPlaceholder('/second',storage,{host:'fixture',user:'alice'})
+        const otherGuidance=join(other.localPath,'AGENTS.md')
+        await writeFile(otherGuidance,previous.replace('"/project"','"/second"'))
+        await writeFile(join(storage,'version'),'0.2.3\n')
+        await ensure()
         assert.equal(await readFile(file,'utf8'),placeholderGuidance('/project'))
+        assert.equal(await readFile(otherGuidance,'utf8'),placeholderGuidance('/second'))
+        assert.equal((await readFile(join(storage,'version'),'utf8')).trim(),'0.2.4')
+        await writeFile(file,previous)
+        await ensure()
+        assert.equal(await readFile(file,'utf8'),previous)
         const customized=previous+'\nUser customization\n'
+        await rm(join(storage,'version'))
         await writeFile(file,customized);await ensure()
         assert.equal(await readFile(file,'utf8'),customized)
     }finally{await rm(storage,{recursive:true,force:true,maxRetries:5})}

@@ -4,6 +4,7 @@ import { lstatSync, readFileSync, rmdirSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, posix } from 'node:path'
 import { ensurePlaceholderGuidance } from '../arw-cli/instructions'
 import { writeWorkspaceBinding, type WorkspaceBinding } from '../arw-cli/workspace-binding'
+import { applyPlaceholderPatches } from './patches'
 
 export interface AgentCwdIdentity { host: string; port?: number; user?: string }
 export interface AgentCwdPlaceholder { localPath: string; created: boolean }
@@ -98,6 +99,7 @@ export async function ensureAgentCwdPlaceholder (
     await mkdir(localPath, { recursive: true, mode: 0o700 })
     removeLegacyAgentMetadata(localPath,root)
     if(binding)writeWorkspaceBinding(localPath,{...binding,targetOnly:!terminalOnly},!terminalOnly)
-    ensurePlaceholderGuidance(localPath,root)
+    applyPlaceholderPatches(storageRoot,localPath,root)
+    ensurePlaceholderGuidance(localPath,root,false)
     return { localPath, created }
 }
