@@ -55,7 +55,7 @@ test('CLI endpoint authenticates, enforces workspace identity and handles CLI re
   assert.equal((await ipcFetch(connection,{body:'invalid json'})).status,400);
   const workspaces = JSON.parse((await cli('workspaces')).stdout);
   assert.equal(workspaces.workspaces[0].workspaceId, 'one');
-  await cli('write', 'file', '--id', 'one', '--content', 'after', '--allow-unconditional');
+  await cli('write', 'file', '--id', 'one', '--content', 'after');
   assert.equal(files.get('file'), 'after');
   assert.equal(JSON.parse((await cli('read', 'file', '--id', 'one')).stdout).content, 'after');
   await assert.rejects(cli('read', 'file', '--id', 'other'), /Workspace is unavailable/);
@@ -67,7 +67,7 @@ test('CLI endpoint authenticates, enforces workspace identity and handles CLI re
   assert.equal(JSON.parse(proxied.stdout).content,'after','IPC must work with an unreachable HTTP proxy');
   const content = '\n'.repeat(5 * 1024 * 1024);
   const write = (content: string) => ipcFetch(connection, {body: JSON.stringify({name:'remote_write',
-    arguments:{workspaceId:'one',path:'file',content,allowUnconditional:true,allowEmpty:true}})});
+    arguments:{workspaceId:'one',path:'file',content,allowEmpty:true}})});
   const accepted = await write(content);
   assert.equal(accepted.status, 200);
   assert.ok((await accepted.json()).result.written);

@@ -87,7 +87,9 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       const selected=selectText(text(result.content, 'content'), args)
       const complete=selected.truncated!==true&&result.truncated!==true;
       const fullFile=complete&&(!('startLine' in selected)||selected.startLine===1)&&(!('offset' in selected)||selected.offset===0);
-      return { path: input, ...result, ...selected, complete, fullFile };
+      const file={...result}
+      delete file.hash
+      return { path: input, ...file, ...selected, complete, fullFile };
     }
     case 'remote_list': {
       const result = object(await backend.list(text(args.path ?? '.', 'path'), signal));
@@ -103,7 +105,6 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
     case 'remote_write': {
       const input = path(), content = text(args.content, 'content');
       assertArwTextSize(Buffer.byteLength(content));
-      if(args.allowUnconditional!==undefined&&typeof args.allowUnconditional!=='boolean')throw new Error('allowUnconditional must be a boolean');
       if(args.allowEmpty!==undefined&&typeof args.allowEmpty!=='boolean')throw new Error('allowEmpty must be a boolean');
       if(!content.trim()&&args.allowEmpty!==true)throw new Error('write replaces the ENTIRE file. Empty or whitespace-only content requires --allow-empty (JSON: allowEmpty: true). Use edit for partial changes.');
       const target = await resolveMutable(input, true);
@@ -112,7 +113,8 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid file size');
       assertArwTextSize(size);
       const snapshotId = await snapshot([target]);
-      return { ...object(await backend.write(input, content, signal)), snapshotId };
+      const result=object(await backend.write(input, content, signal));delete result.hash
+      return { ...result, snapshotId };
     }
     case 'remote_edit': {
       const input = path(), original = await readText(input);
@@ -129,7 +131,8 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       }
       const target = await resolveMutable(input);
       const snapshotId = await snapshot([target]);
-      return { ...object(await backend.write(input, content, signal)), snapshotId };
+      const result=object(await backend.write(input, content, signal));delete result.hash
+      return { ...result, snapshotId };
     }
     case 'remote_create': {
       const target = await mutable(path(), true);

@@ -282,7 +282,7 @@ export class ForwardingServer {
           };
           for (const key of requiredStrings[verb] ?? []) text(args[key], key);
           for (const [key, value] of Object.entries(args)) {
-            if (['recursive','overwrite','allowEmpty','allowUnconditional','fixedStrings','ignoreCase'].includes(key)) {
+            if (['recursive','overwrite','allowEmpty','fixedStrings','ignoreCase'].includes(key)) {
               if (typeof value !== 'boolean') throw new Error(`${key} must be boolean`);
             } else if (['offset','length','head','tail','startLine','lineCount','limit','maxBytes'].includes(key)) {
               integer(value, 0, 0, Number.MAX_SAFE_INTEGER);
@@ -368,7 +368,9 @@ export class ForwardingServer {
           const content = text(result.content, 'content');
           const bytes = Buffer.byteLength(content);
           if (bytes > remaining) { results.push({path: args.path, skipped: true, reason: 'maxBytes exceeded'}); break; }
-          results.push(result); remaining -= bytes;
+          const file={...result}
+          delete file.hash
+          results.push(file); remaining -= bytes;
         }
         const complete=results.length===values.requests.length&&!results.some(value=>object(value).skipped||object(value).truncated===true);
         const truncated=!complete;

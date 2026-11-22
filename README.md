@@ -99,7 +99,7 @@ arw git-pull
 arw git-push subproject
 ```
 
-常用参数使用位置参数和选项；`edit`、`batch` 等复杂参数可使用 `--input JSON`，长文件内容可通过 `--file FILE` 或 stdin 提供。`exec` 默认返回 JSON，`--raw` 输出原始流；跨平台多行命令建议用 UTF-8 脚本文件 `arw exec --file SCRIPT`（脚本建议使用 LF 换行），避免本地 shell 的引号和转义差异。普通终端可用 `--id ID` 指定目标。运行 `arw COMMAND --help` 查看用法。
+常用参数使用位置参数和选项；`edit`、`batch` 等复杂参数可使用 `--input JSON`。长文件内容使用 `--file FILE` 或 `--file -` 从 stdin 读取。`exec` 默认返回 JSON，`--raw` 输出原始流；跨平台多行命令建议用 UTF-8 脚本文件 `arw exec --file SCRIPT`（脚本建议使用 LF 换行），避免本地 shell 的引号和转义差异。普通终端可用 `--id ID` 指定目标。运行 `arw COMMAND --help` 查看用法。
 
 ## License
 

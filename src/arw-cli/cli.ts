@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   const { values: parsedValues, positionals, tokens } = parseArgs({ args:process.argv.slice(2), allowPositionals: true, tokens:true, strict:true, options: {
     ...Object.fromEntries(stringOptions.map(key => [key, { type: 'string' as const }])),
     version: { type: 'boolean', short: 'V' }, compact: { type: 'boolean' }, raw: { type: 'boolean' }, verbose: { type: 'boolean' },
-    'allow-empty': {type:'boolean'}, 'allow-unconditional': {type:'boolean'}, recursive: { type: 'boolean', short: 'r' }, help: { type: 'boolean', short: 'h' },
+    'allow-empty': {type:'boolean'}, recursive: { type: 'boolean', short: 'r' }, help: { type: 'boolean', short: 'h' },
   } });
   const seenOptions=new Set<string>();
   for(const token of tokens){
@@ -75,7 +75,6 @@ async function main(): Promise<void> {
   if(values.recursive)assign('recursive',true);
   if(typeof args.content==='string')assertArwTextSize(Buffer.byteLength(args.content));
   if(values['allow-empty']!==undefined)assign('allowEmpty',values['allow-empty']);
-  if(values['allow-unconditional']!==undefined)assign('allowUnconditional',values['allow-unconditional']);
   if(verb==='exec'&&!Object.hasOwn(args,'command')&&!process.stdin.isTTY){
     process.stdin.setEncoding('utf8');
     let command='';

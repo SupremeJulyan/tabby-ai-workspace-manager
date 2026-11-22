@@ -887,7 +887,10 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             if(this.app.activeTab!==originalTab&&this.app.activeTab!==split)return
             this.mode='files'
             this.activeProject=project.id
-            if(terminal)this.registry.bindWorkspaceTerminal?.(terminal,this.source??terminal,workspace,this.selection?.remote)
+            if(terminal){
+                const remote=isSshTab(terminal)?terminal.sshSession??undefined:this.selection?.remote
+                this.registry.bindWorkspaceTerminal?.(terminal,terminal,workspace,remote)
+            }
             if(split&&terminal)this.registry.selectWorkspaceTerminal?.(split,terminal)
             const identity=fileWorkspaceToken(workspace)
             if(identity)activateWorkspacePanes(this.app,identity,split?terminal:undefined)
@@ -1093,10 +1096,27 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     get forwarded (): boolean { return Boolean(this.canForward && this.forwarding.state(this.source as any, this.selection!.workspace!.root)) }
     get forwardingBusy (): boolean { return Boolean(this.canForward && this.forwarding.busy(this.source as any)) }
     private stopForwarding (): void { if (this.canForward) void this.forwarding.disable(this.source as any) }
+    private rebindCurrentRemoteSession():void{
+        const selection=this.selection,selected=selection?.terminal
+        const terminal=selected&&isSshTab(selected)?selected:selection?.sourceTerminal??selected
+        if(selection?.workspace?.kind!=='remote'||!terminal||!isSshTab(terminal))return
+        const remote=terminal.sshSession
+        if(!remote?.open)return
+        const identity=JSON.stringify([remote.profile.id??null,remote.profile.options.host,remote.profile.options.port??22,
+            remote.authUsername??remote.profile.options.user??''])
+        if(!selection.workspace.identityKey||selection.workspace.identityKey!==identity)return
+        const current=this.browserWorkspace??selection.workspace
+        const base={...remoteWorkspace(remote,selection.workspace.root),id:selection.workspace.id}
+        this.selection={...selection,remote,workspace:base}
+        if(this.browserWorkspace)this.browserWorkspace={...remoteWorkspace(remote,current.root),id:current.id}
+        this.error=''
+        this.disposeWorkspaceWatch();this.watchWorkspace()
+    }
     async refreshCurrentView ():Promise<void> {
         const request=++this.manualRefreshRequest
         this.manualRefreshing=true;this.render()
         try{
+            this.rebindCurrentRemoteSession()
             const selection=this.selection,source=selection?.sourceTerminal??selection?.terminal
             if(selection?.workspace?.kind==='remote'&&selection.remote?.open&&this.projectStore){
                 for(const project of this.projects){

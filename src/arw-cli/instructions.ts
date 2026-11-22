@@ -13,7 +13,7 @@ Before working, discover and read applicable remote project instructions, includ
 
 Run arw --help for the command index and arw COMMAND --help for syntax, path rules, limits and examples. Inspect incomplete results before drawing conclusions. Use arw output to continue stored command output instead of rerunning the command.
 
-Use positional arguments and options for common values (for example, arw read README.md --head 40). Use --input JSON for complex values, and --file FILE or stdin for long content.
+Use positional arguments and options for common values (for example, arw read README.md --head 40). Pass JSON with --input for complex values. Use --file FILE or --file - for long content.
 
 Keep mutations inside workspaceRoot. Do not bypass POLICY_DENIED or expose connection URLs, tokens or credentials.
 `;
@@ -47,7 +47,7 @@ Use the arw-cli skill for remote operations. This local directory is a placehold
 
 This AI terminal is already bound: run arw without --id. Sidebar switches do not change the target. If unavailable, reconnect or reopen it; never choose another workspace automatically. Use arw workspaces and --id ID only for intentional cross-workspace operations or older unbound terminals.
 
-Use positional arguments and options for common values (for example, arw read README.md --head 40). Use --input JSON for complex values, and --file FILE or stdin for long content.
+Use positional arguments and options for common values (for example, arw read README.md --head 40). Pass JSON with --input for complex values. Use --file FILE or --file - for long content.
 
 Read applicable remote project instructions, including AGENTS.md, before changes. Use known commands directly; consult arw COMMAND --help only for unfamiliar syntax or usage errors. Do not bypass POLICY_DENIED.
 
@@ -154,7 +154,6 @@ export function placeholderGuidance(remoteRoot:string):string {
         .replace('arw write notes.txt --file ./local-text.txt', `arw edit --input '{"path":"notes.txt","edits":[{"oldText":"EXACT_OLD_TEXT","newText":"NEW_TEXT"}]}'`)
         .replace('arw git-push --path subproject', 'arw git-push subproject')
         .replace("arw write notes.txt --content 'text'","arw write REMOTE_PATH --file LOCAL_COMPLETE_FILE")
-        .replace('arw write notes.txt --file ./local-text.txt','arw edit REMOTE_PATH --input JSON_WITH_EXPECTED_HASH_AND_EDITS')
         .replace('Use known commands directly.', 'For partial changes use arw edit with exact oldText/newText fields in the JSON object. arw write replaces the ENTIRE file; provide the complete literal content in its JSON content field. Never use sample values or placeholders to probe write on an existing project file. ARW saves a snapshot before writing. Blank writes require allowEmpty:true.\nUse known commands directly.')
 }
 

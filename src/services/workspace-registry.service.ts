@@ -116,9 +116,13 @@ export class WorkspaceRegistry {
                 const pinned=this.pinnedSelections.get(terminal),source=pinned?.sourceTerminal
                 if(pinned?.workspace&&source&&isSshTab(source)){
                     const candidate=source.sshSession,original=pinned.remote
-                    const sameIdentity=candidate&&original&&candidate.profile.options.host===original.profile.options.host
-                        &&(candidate.profile.options.port??22)===(original.profile.options.port??22)
-                        &&(candidate.authUsername??candidate.profile.options.user)===(original.authUsername??original.profile.options.user)
+                    const candidateIdentity=candidate?JSON.stringify([candidate.profile.id??null,candidate.profile.options.host,
+                        candidate.profile.options.port??22,candidate.authUsername??candidate.profile.options.user??'']):undefined
+                    const sameIdentity=candidate&&pinned.workspace.identityKey
+                        ?candidateIdentity===pinned.workspace.identityKey
+                        :candidate&&original&&candidate.profile.options.host===original.profile.options.host
+                            &&(candidate.profile.options.port??22)===(original.profile.options.port??22)
+                            &&(candidate.authUsername??candidate.profile.options.user)===(original.authUsername??original.profile.options.user)
                     const remote=candidate?.open&&sameIdentity?candidate:undefined
                     if(entry.selection.remote!==remote){
                         if(remote){
@@ -134,13 +138,18 @@ export class WorkspaceRegistry {
             }
             const metadata = entry.restored
             if (!metadata || entry.pinned) continue
-            const source = [...this.entries.keys()].find(candidate => {
+            const matches = [...this.entries.keys()].filter(candidate => {
                 if (!isSshTab(candidate) || !candidate.sshSession?.open) return false
                 const remote = candidate.sshSession
                 const options = remote.profile.options
                 return options.host === metadata.host && (options.port ?? 22) === metadata.port
                     && (remote.authUsername ?? options.user ?? '') === (metadata.user ?? '')
             })
+            const workspaceMatches=metadata.workspaceId
+                ?matches.filter(candidate=>workspaceTerminalId(candidate)===metadata.workspaceId):[]
+            const source=workspaceMatches.length===1?workspaceMatches[0]
+                :workspaceMatches.length>1?undefined
+                :matches.length===1?matches[0]:undefined
             const remote = source && isSshTab(source) ? source.sshSession ?? undefined : undefined
             if (entry.selection.remote === remote && entry.selection.workspace?.root === metadata.remoteRoot) continue
             const env=terminal.profile?.options?.env
@@ -273,7 +282,6 @@ export class WorkspaceRegistry {
             this.activate(terminal)
             if(switched || !entry.selection.workspace)void inspect()
         }))
-        entry.subscriptions.push(terminal.sessionChanged$.subscribe(watch))
         entry.subscriptions.push(new Subscription(() => sessionSubscriptions.forEach(subscription => subscription.unsubscribe())))
         watch()
         if (terminal.hasFocus || !this.current.value) this.activate(terminal)

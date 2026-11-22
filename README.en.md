@@ -99,7 +99,7 @@ arw git-pull
 arw git-push subproject
 ```
 
-Use positional arguments and options for common values. For complex inputs such as edits and batches, use `--input JSON`; provide long file content with `--file FILE` or stdin. `exec` returns JSON by default and `--raw` prints streams. For portable multiline commands, use a UTF-8 script file with `arw exec --file SCRIPT` (LF line endings are recommended) to avoid local shell quoting differences. In other terminals, select a target with `--id ID`. Run `arw COMMAND --help` for usage.
+Use positional arguments and options for common values. For complex inputs such as edits and batches, pass JSON with `--input JSON`. Provide long file content with `--file FILE` or `--file -` to read stdin. `exec` returns JSON by default and `--raw` prints streams. For portable multiline commands, use a UTF-8 script file with `arw exec --file SCRIPT` (LF line endings are recommended) to avoid local shell quoting differences. In other terminals, select a target with `--id ID`. Run `arw COMMAND --help` for usage.
 
 ## License
 

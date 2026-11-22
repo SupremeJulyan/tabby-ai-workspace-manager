@@ -11,7 +11,7 @@ export const commands: Record<string, { tool: string; positional?: string[]; fie
   'read-many': { tool: 'remote_read_many', fields: ['requests', 'maxBytes'] },
   search: { tool: 'remote_search', positional: ['query', 'path'], fields: ['query', 'path', 'mode', 'fixedStrings', 'ignoreCase', 'limit', 'include', 'excludeDirs'] },
   find: { tool: 'remote_search', positional: ['query', 'path'], fields: ['query', 'path', 'mode', 'limit', 'excludeDirs'] },
-  write: { tool: 'remote_write', positional: ['path'], fields: ['path', 'content', 'allowEmpty', 'allowUnconditional'] },
+  write: { tool: 'remote_write', positional: ['path'], fields: ['path', 'content', 'allowEmpty'] },
   edit: { tool: 'remote_edit', positional: ['path'], fields: ['path', 'edits'] },
   create: { tool: 'remote_create', positional: ['path', 'type'], fields: ['path', 'type', 'content'] },
   delete: { tool: 'remote_delete', positional: ['path'], fields: ['path', 'recursive'] },
@@ -31,35 +31,19 @@ Git:       git-pull, git-push
 Execute:   exec, batch
 
 Run arw COMMAND --help for arguments, limits and examples (no connection required).
-AI terminals use .awm/workspace.json in their local working directory; otherwise use --id.
-With user authorization for the target and operations, use explicit --id ID on each
-command to access another workspace; --workspace aliases --id. This does not rebind
-the terminal. Never substitute another target automatically if the bound one is unavailable.
-Find IDs with arw workspaces. Remote paths start at workspaceRoot;
-local transfer paths start at the CLI directory. Terminal mode supports exec/output.
-Identity bindings may reconnect to a single matching session. If multiple sessions
-match and neither the preferred nor original session is available, use --id.
-Simple values use positional arguments/options; use --input JSON for structured input.
-Long text can come from --file or stdin. Options: -h/--help,
--V/--version, --id ID, --compact (removes only status:"ok" and ok:true markers).
-Text operations are limited to 5 MiB per file. Use download and upload for larger files.
-Upload to a new path first; to replace an existing file, use move with overwrite:true.
-Exec returns JSON by default and --raw prints streams.
-write, edit, delete, and move save a snapshot in the remote account's private
-~/.arw-snapshots directory before modifying files. Success includes snapshotId.
-Snapshots require remote Git and GNU tar. A snapshot failure blocks the change.
---verbose remains an alias for JSON output.
-Use --file for scripts with complex quoting or multiple lines; LF line endings are recommended.
+Pass simple values as arguments/options and structured values with --input JSON.
+Use --file for long content or scripts; use download/upload for files over 5 MiB.
+Options: -h/--help, -V/--version, --id ID, --compact, --raw.
 `;
 
 const commandHelp: Record<string, string> = {
   'workspaces': `Usage: arw workspaces
 
-List IDs and identities of currently forwarded workspaces only. Does not accept --id.
+List IDs and identities of currently forwarded workspaces only.
 Match host, port, user and workspaceRoot before operating. Ask the user to authorize
 the target and intended operations unless already authorized, then pass explicit
 --id ID on each command. Do not switch targets implicitly.`,
-  'list': `Usage: arw list [PATH] [--limit N] [--cursor N] [--id ID]
+  'list': `Usage: arw list [PATH] [--limit N] [--cursor N] [--input JSON] [--id ID]
 
 PATH defaults to workspaceRoot.
   list defaults to 1000 entries (maximum 1000); pass returned nextCursor to --cursor.
@@ -68,7 +52,7 @@ Structured fields are also accepted with --input JSON. --compact removes only st
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'read': `Usage: arw read PATH [--offset N --length N | --head N | --tail N | --start-line N --line-count N] [--id ID]
+  'read': `Usage: arw read [PATH] [--offset N --length N | --head N | --tail N | --start-line N --line-count N] [--input JSON] [--id ID]
 
   Byte reads (the default, or with --offset/--length) start at offset 0 and default
   to length 8192 bytes;
@@ -78,8 +62,8 @@ read-only paths may access outside it subject to account permissions.
   Line selection returns startLine, totalLines, truncated, and complete; continue with a later
   --start-line and --line-count. Byte offsets count UTF-8 bytes and are adjusted to
   valid character boundaries.
-  fullFile indicates whether this response contains the entire file. Use --head 0
-  to request the file hash without returning its text.
+  fullFile indicates whether this response contains the entire file. --head 0 returns
+  no text lines.
 Structured input is also accepted with --input JSON.
 --compact removes only status markers (status: "ok" and ok: true); all result and completeness fields remain.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
@@ -97,9 +81,10 @@ Example: arw read-many --input '{"requests":[{"path":"README.md","head":40}],"ma
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'search': `Usage: arw search QUERY [PATH] [--mode content|files|count|names] [--limit N] [--id ID]
+  'search': `Usage: arw search [QUERY] [PATH] [--name GLOB] [--mode content|files|count|names] [--limit N] [--input JSON] [--id ID]
 
   Default mode content uses JavaScript regular expressions, matched per line.
+  --name GLOB is an alias for names mode and sets QUERY to the glob.
   files returns matching file paths; count counts matching lines per file.
   names/find match file basenames using * and ? globs, not directory paths:
     arw find '*.ts' src --id ID
@@ -115,9 +100,10 @@ Simple query and path values may be positional; use --input JSON for nested fiel
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'find': `Usage: arw find GLOB [PATH] [--limit N] [--id ID]
+  'find': `Usage: arw find [GLOB] [PATH] [--name GLOB] [--limit N] [--input JSON] [--id ID]
 
 Match file basenames using * and ? globs, not directory paths. PATH defaults to root.
+--name GLOB is an alias for the GLOB argument and selects names mode.
 Example: arw find '*.ts' src --id ID
 Default limit 100 (maximum 1000); excludes .git and node_modules and skips symlinks.
 Uses a 30-second deadline; inspect timedOut, truncated and complete. Override default
@@ -128,7 +114,7 @@ See arw search --help for content searching.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'write': `Usage: arw write PATH (--content FULL_TEXT | --file LOCAL_FILE | --file -) [--allow-empty] [--id ID]
+  'write': `Usage: arw write [PATH] (--content FULL_TEXT | --file LOCAL_FILE | --file - | --input JSON) [--allow-empty] [--id ID]
 
 FULL-FILE REPLACEMENT: existing file contents are completely replaced, not patched or appended.
 Use arw edit for partial changes. Never send sample/placeholder text to test write on a project file.
@@ -137,14 +123,13 @@ Use arw edit for partial changes. Never send sample/placeholder text to test wri
 Empty or whitespace-only content is rejected unless --allow-empty explicitly permits it.
 A snapshot is saved before writing.
 New snapshots store the original file independently of the project Git repository.
---allow-unconditional is still accepted for compatibility.
 After writing, read back the target and check the intended contents.
 --input JSON is also accepted for structured values.
 --workspace aliases --id. --compact removes only status markers (status: "ok" and ok: true); all result and completeness fields remain.
 Remote relative paths start at workspaceRoot.
 Mutations stay inside workspaceRoot.
 `,
-  'edit': `Usage: arw edit PATH --input JSON [--id ID]
+  'edit': `Usage: arw edit [PATH] --input JSON [--id ID]
 
 Use edit for partial changes; it preserves all text outside the specified replacements.
 Each edit oldText must be nonempty and match exactly once; edits apply in array order.
@@ -158,7 +143,7 @@ Do not use arw write for a partial edit: write replaces the entire file.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'create': `Usage: arw create PATH file|directory [--content TEXT | --file FILE | --file -] [--id ID]
+  'create': `Usage: arw create [PATH] [file|directory] [--content TEXT | --file FILE | --file - | --input JSON] [--id ID]
 
 Create a missing target; missing parent directories are not created.
 Files default to empty content. Directories cannot have content.
@@ -168,7 +153,7 @@ Pass optional file content with --content, --file LOCAL_FILE, or --file - (stdin
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'delete': `Usage: arw delete PATH [-r] [--id ID]
+  'delete': `Usage: arw delete [PATH] [-r] [--input JSON] [--id ID]
 
 Delete a file or empty directory; -r / --recursive removes a directory recursively.
 Cannot delete workspaceRoot. Do not automatically retry failed mutations.
@@ -177,7 +162,7 @@ Cannot delete workspaceRoot. Do not automatically retry failed mutations.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'chmod': `Usage: arw chmod PATH MODE [--id ID]
+  'chmod': `Usage: arw chmod [PATH] [MODE] [--input JSON] [--id ID]
 
 MODE must be three octal digits, for example 755. Cannot chmod workspaceRoot.
 --input JSON is also accepted.
@@ -194,7 +179,7 @@ Example: arw move --input '{"sourcePath":"old","targetPath":"new","overwrite":fa
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'exec': `Usage: arw exec [COMMAND | --command COMMAND | --file SCRIPT | --file -] [--id ID] [--raw]
+  'exec': `Usage: arw exec [COMMAND | --command COMMAND | --file SCRIPT | --file - | --input JSON] [--id ID] [--raw]
 
 Pass the complete shell command as one argument, with --command, through stdin, or from
 a UTF-8 script file with --file SCRIPT (--file - reads stdin). Files preserve line endings;
@@ -225,7 +210,7 @@ Changes to variables and directories persist, and exit closes the terminal shell
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'output': `Usage: arw output OUTPUT_ID stdout|stderr [--offset N --length N] [--id ID]
+  'output': `Usage: arw output [OUTPUT_ID] [stdout|stderr] [--offset N --length N] [--input JSON] [--id ID]
 
 Read stored exec output using the same workspace ID. Offsets/length are UTF-8 bytes;
 offset defaults to 0, length to 65536. Start at exec nextOffsets for each stream,
@@ -238,7 +223,7 @@ Options and fields may also be passed using --input JSON.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'upload': `Usage: arw upload [-r] LOCAL_PATH REMOTE_PATH [--id ID]
+  'upload': `Usage: arw upload [-r] [LOCAL_PATH] [REMOTE_PATH] [--input JSON] [--id ID]
 
   JSON fields: localPath, remotePath, recursive. An existing destination directory receives source basename; the final target must
   not exist. Transfers do not overwrite, merge directories, or follow symbolic links.
@@ -252,7 +237,7 @@ Local relative paths start at the CLI current directory. Use -r for directories.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'download': `Usage: arw download [-r] REMOTE_PATH LOCAL_PATH [--id ID]
+  'download': `Usage: arw download [-r] [REMOTE_PATH] [LOCAL_PATH] [--input JSON] [--id ID]
 
   JSON fields: remotePath, localPath, recursive. An existing destination directory receives source basename; the final target must
   not exist. Transfers do not overwrite, merge directories, or follow symbolic links.
@@ -266,7 +251,7 @@ Local relative paths start at the CLI current directory. Use -r for directories.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'git-pull': `Usage: arw git-pull [REMOTE_PATH] [--id ID]
+  'git-pull': `Usage: arw git-pull [REMOTE_PATH] [--input JSON] [--id ID]
 
 Relay Git through local network/credentials. PATH defaults to workspaceRoot.
 Use the current branch upstream; pull allows fast-forward only.
@@ -275,7 +260,7 @@ Use the current branch upstream; pull allows fast-forward only.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'git-push': `Usage: arw git-push [REMOTE_PATH] [--id ID]
+  'git-push': `Usage: arw git-push [REMOTE_PATH] [--input JSON] [--id ID]
 
 Relay Git through local network/credentials. PATH defaults to workspaceRoot.
 Use the current branch upstream; push never forces updates.

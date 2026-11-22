@@ -1463,7 +1463,7 @@ test('restored AI placeholder waits for its SSH identity and survives reconnect 
         assert.equal(registry.current.value.terminal,source)
         source.sshSession.open=false;source.session.destroyed$.next()
         assert.equal(registry.get(ai).workspace,undefined)
-        source.sshSession.open=true;source.sessionChanged$.next();await settle()
+        source.sshSession.open=true;registry.activate(ai);await settle()
         assert.equal(registry.get(ai).workspace.root,'/remote/project')
         assert.equal(registry.get(ai).remote,source.sshSession)
         registry.unregister(source)

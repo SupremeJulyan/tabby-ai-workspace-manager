@@ -126,16 +126,16 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   assert.equal(gitCalls.length, 3);
   await writeFile(join(root, 'a.txt'), 'one\n你好\nthree\n');
   const original=(await cli('read','a.txt'));
-  await assert.rejects(cli('write','a.txt','--content','','--allow-unconditional'),/ENTIRE file.*allow-empty/);
-  await assert.rejects(cli('write','a.txt','--input',JSON.stringify({content:' \n\t',allowUnconditional:true})),/allow-empty/);
+  await assert.rejects(cli('write','a.txt','--content','','--allow-unconditional'),/Unknown option/);
+  await assert.rejects(cli('write','a.txt','--input',JSON.stringify({content:' \n\t'})),/allow-empty/);
   const empty=join(root,'empty-local.txt');await writeFile(empty,'');
-  await assert.rejects(cli('write','a.txt','--file',empty,'--allow-unconditional'),/allow-empty/);
+  await assert.rejects(cli('write','a.txt','--file',empty),/allow-empty/);
   await assert.rejects(cli('write','a.txt','--content','x','--content',''),/Duplicate option/);
   await assert.rejects(cli('write','a.txt','--content','x','--file',empty),/conflicts with inline input/);
   assert.equal((await cli('read','a.txt')).content,original.content,'misused arguments never reach the writer');
   await assert.rejects(cli('write','a.txt','--content','replacement','--expected-hash','wrong'),/Unknown option/);
   await cli('write','a.txt','--content',original.content);
-  await cli('write','intentional-empty','--content','','--allow-empty','--allow-unconditional');
+  await cli('write','intentional-empty','--content','','--allow-empty');
   assert.equal(await readFile(join(root,'intentional-empty'),'utf8'),'');
   await rm(empty);await rm(join(root,'intentional-empty'));
 
@@ -206,7 +206,7 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('install'), /Unsupported/);
   await assert.rejects(cli('upload'), /local path must be a string/);
   await assert.rejects(cli('read', 'a.txt', '--input', '{"workspaceId":"other"}'), /Unsupported/);
-  await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"write","arguments":{"path":"a.txt","content":"updated","allowUnconditional":true}},{"command":"read","arguments":{"path":"missing"}},{"command":"write","arguments":{"path":"a.txt","content":"wrong","allowUnconditional":true}}]}'));
+  await assert.rejects(cli('batch', '--input', '{"operations":[{"command":"write","arguments":{"path":"a.txt","content":"updated"}},{"command":"read","arguments":{"path":"missing"}},{"command":"write","arguments":{"path":"a.txt","content":"wrong"}}]}'));
   assert.equal(await readFile(join(root, 'a.txt'), 'utf8'), 'updated');
 });
 
