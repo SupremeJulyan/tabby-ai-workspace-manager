@@ -441,7 +441,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     activityCategory = 'all'
     activityStatus = 'all'
     private unsubscribeActivity = agentActivity.subscribe(() => { this.render() })
-    activityDiff?: { id: number; loading: boolean; text?: string; error?: string }
+    readonly loadingActivityDiffs = new Set<number>()
     restoringActivity?: number
     lastActivityRestore?: {id: number; error?: string}
 
@@ -469,22 +469,30 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
     }
 
     async showActivityDiff(activity: AgentActivity): Promise<void> {
-        if (!activity.loadDiff || (this.activityDiff?.id === activity.id && this.activityDiff.loading)) return
-        const state: NonNullable<typeof this.activityDiff> = {id: activity.id, loading: true}
-        this.activityDiff = state
+        const workspace = this.selection?.workspace
+        if (!workspace || !activity.loadDiff || this.loadingActivityDiffs.has(activity.id)) return
+        const source = this.source
+        const tab = this.activeTab
+        this.loadingActivityDiffs.add(activity.id)
         this.render()
         try {
-            state.text = await activity.loadDiff()
-        } catch {
-            state.error = t('无法读取快照差异')
+            const patch = await activity.loadDiff()
+            if (tab !== this.activeTab || source !== this.source) return
+            await openFilePane(this.app, {
+                type: ArwEditorComponent,
+                inputs: {
+                    workspace, filePath: activity.path || activity.root, readonly: true, diffPatch: patch,
+                    diffLabel: t('操作前快照与当前文件的差异'),
+                    diffDescription: activity.root,
+                    diffSnapshot: true,
+                },
+            }, source, this.config?.store.omw?.fileLayout, this.tabs)
+        } catch (error) {
+            this.notifications.error(t('无法读取快照差异'), String(error))
         } finally {
-            state.loading = false
+            this.loadingActivityDiffs.delete(activity.id)
             this.render()
         }
-    }
-
-    closeActivityDiff(id: number): void {
-        if (this.activityDiff?.id === id) this.activityDiff = undefined
     }
     get visibleActivities (): AgentActivity[] {
         return this.activities.filter(event => (this.activityCategory === 'all' || event.category === this.activityCategory)

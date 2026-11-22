@@ -53,7 +53,7 @@ export const TREE_TEMPLATE = `
           <span class="activity-dot" [class.spinning]="activity.status==='running'"><i class="fas" [class.fa-circle-notch]="activity.status==='running'" [class.fa-circle]="activity.status!=='running'"></i></span>
           <span class="activity-title">{{activityLabel(activity)}}<small class="activity-workspace" [title]="activity.root">{{activity.root}}</small><small>{{activity.command || activity.path || activity.root}}</small></span>
           <span *ngIf="activity.loadDiff" style="display: flex; flex: none; gap: 4px">
-            <button type="button" (click)="$event.preventDefault(); activityEntry.open = true; showActivityDiff(activity)">{{ '查看差异' | arwTranslate }}</button>
+            <button type="button" [disabled]="loadingActivityDiffs.has(activity.id)" (click)="$event.preventDefault(); showActivityDiff(activity)">{{ (loadingActivityDiffs.has(activity.id) ? '正在读取差异…' : '查看差异') | arwTranslate }}</button>
             <button type="button" *ngIf="activity.restore" [disabled]="restoringActivity !== undefined || (lastActivityRestore?.id === activity.id && !lastActivityRestore?.error)" (click)="$event.preventDefault(); activityEntry.open = true; restoreActivity(activity)">{{ '还原更改' | arwTranslate }}</button>
           </span>
           <span class="activity-state">{{activityState(activity)}}</span>
@@ -61,14 +61,6 @@ export const TREE_TEMPLATE = `
         <div class="activity-detail"><div>{{activity.startedAt | date:'HH:mm:ss'}}<span *ngIf="activity.durationMs !== undefined"> · {{activity.durationMs}} ms</span></div><div>{{activity.host}} · {{activity.root}}</div><div>{{ '工作区：' | arwTranslate }}{{activity.workspaceId}}</div><div>{{ '工具：' | arwTranslate }}{{activity.operation}}</div><pre *ngIf="activity.command || activity.path">{{activity.command || activity.path}}</pre><div *ngIf="activity.exitCode !== undefined">{{ '退出码：' | arwTranslate }}{{activity.exitCode}}</div><pre class="activity-error" *ngIf="activity.error">{{activity.error}}</pre></div>
         <div class="activity-detail" *ngIf="activity.loadDiff">
           <div *ngIf="lastActivityRestore?.id === activity.id" role="status">{{lastActivityRestore?.error || ('已还原本次更改' | arwTranslate)}}</div>
-          <ng-container *ngIf="activityDiff?.id === activity.id">
-            <div>{{ '操作前快照与当前文件的差异' | arwTranslate }}</div>
-            <button type="button" (click)="closeActivityDiff(activity.id)">{{ '关闭差异' | arwTranslate }}</button>
-            <div *ngIf="activityDiff?.loading" role="status">{{ '正在读取差异…' | arwTranslate }}</div>
-            <div *ngIf="activityDiff?.error" role="alert">{{activityDiff?.error}}</div>
-            <pre *ngIf="activityDiff?.text" style="max-height: 24rem; overflow: auto; white-space: pre">{{activityDiff?.text}}</pre>
-            <div *ngIf="activityDiff?.text === ''">{{ '无文本差异' | arwTranslate }}</div>
-          </ng-container>
         </div>
       </details>
     </div>

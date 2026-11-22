@@ -35,7 +35,7 @@ export class FileRecoveryProvider extends TabRecoveryProvider<BaseTabComponent> 
         for(const key of ['initialContent','diffPatch','diffLabel','diffDescription']){
             if(typeof state[key]==='string')inputs[key]=state[key]
         }
-        for(const key of ['readonly','diffStaged'])if(typeof state[key]==='boolean')inputs[key]=state[key]
+        for(const key of ['readonly','diffStaged','diffSnapshot'])if(typeof state[key]==='boolean')inputs[key]=state[key]
         for(const key of ['viewOnly','renderOnOpen'])if(typeof state[key]==='boolean')inputs[key]=state[key]
         if(typeof state.diffPatch!=='string'&&typeof state.initialContent!=='string')inputs.readonly=false
         if(['split','unified'].includes(state.diffMode))inputs.diffMode=state.diffMode

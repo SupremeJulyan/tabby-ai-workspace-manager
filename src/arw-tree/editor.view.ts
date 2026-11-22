@@ -35,7 +35,7 @@ ${TEXT_SEARCH_TEMPLATE}
     <ng-container *ngIf="diff.combined"><div class="diff-empty">{{ '合并冲突的组合差异，请先解决冲突。' | arwTranslate }}</div><pre>{{diffPatch}}</pre></ng-container>
     <div class="diff-empty" *ngIf="!diff.binary && !diff.combined && !diff.hunks.length">{{ '没有文本差异（可能仅文件名、权限或空文件发生变化）。' | arwTranslate }}</div>
     <ng-container *ngIf="!diff.combined">
-      <div class="split-labels" *ngIf="diffMode==='split' && diff.hunks.length"><span>{{diffLabel ? ('父提交 · 修改前' | arwTranslate) : (diffStaged ? ('HEAD · 提交前' | arwTranslate) : ('暂存区 · 修改前' | arwTranslate))}}</span><span>{{diffLabel ? ('当前提交 · 修改后' | arwTranslate) : (diffStaged ? ('暂存区 · 待提交' | arwTranslate) : ('工作区 · 修改后' | arwTranslate))}}</span></div>
+      <div class="split-labels" *ngIf="diffMode==='split' && diff.hunks.length"><span>{{ (diffSnapshot ? '操作前快照' : diffLabel ? '父提交 · 修改前' : diffStaged ? 'HEAD · 提交前' : '暂存区 · 修改前') | arwTranslate }}</span><span>{{ (diffSnapshot ? '当前文件' : diffLabel ? '当前提交 · 修改后' : diffStaged ? '暂存区 · 待提交' : '工作区 · 修改后') | arwTranslate }}</span></div>
       <section class="diff-hunk" *ngFor="let hunk of visibleHunks">
         <div class="hunk-header" *ngIf="hunk.file">{{hunk.file}}</div>
         <div class="hunk-header">{{hunk.header}}</div>

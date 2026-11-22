@@ -45,6 +45,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
     initialContent?: string
     diffPatch?: string
     diffLabel?: string
+    diffSnapshot?: boolean
     diffDescription?: string
     diffStaged = false
     diff?: DiffModel
@@ -724,7 +725,7 @@ export class ArwEditorComponent extends BaseTabComponent implements AfterViewIni
         const workspace=this.workspace&&fileWorkspaceToken(this.workspace)
         if(!workspace)return null
         const state:Record<string,unknown>={arwPaneLayout:this.arwPaneLayout,readonly:this.readonly,initialContent:this.initialContent,diffPatch:this.diffPatch,
-            diffLabel:this.diffLabel,diffDescription:this.diffDescription,diffStaged:this.diffStaged,diffMode:this.diffMode,
+            diffLabel:this.diffLabel,diffSnapshot:this.diffSnapshot,diffDescription:this.diffDescription,diffStaged:this.diffStaged,diffMode:this.diffMode,
             viewOnly:this.viewOnly,renderOnOpen:this.markdownPreview,softWrap:this.softWrap,lineEnding:this.lineEnding,
             textEncoding:this.textEncoding,savedLineEnding:this.savedLineEnding,savedTextEncoding:this.savedTextEncoding}
         if(options?.includeState!==false&&this.dirty)state.recoveredEdit={content:this.content,original:this.original,hash:this.hash}
