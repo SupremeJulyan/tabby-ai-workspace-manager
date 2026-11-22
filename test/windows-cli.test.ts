@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { execFile } from 'node:child_process'
 import { installUserCli, uninstallUserCli } from '../src/arw-ai-cli/cli-lifecycle'
@@ -62,6 +62,38 @@ test('Windows command shim runs through cmd.exe with spaced Unicode paths and li
     const command=[...windowsCliFiles(source,home).keys()][0]
     const result=await promisify(execFile)('cmd.exe',['/d','/s','/c',`""${command}" "two words" "a&b""`],{windowsVerbatimArguments:true,encoding:'utf8'})
     assert.deepEqual(JSON.parse(result.stdout.trim()),['two words','a&b'])
+})
+
+test('PowerShell resolves arw to its native shim and preserves arguments, stdin and exit status',{skip:process.platform!=='win32'},async context=>{
+    const home=await mkdtemp(join(tmpdir(),'arw ps 用户 '));context.after(()=>rm(home,{recursive:true,force:true}))
+    const source=join(home,'source.cjs')
+    await writeFile(source,`let input='';process.stdin.setEncoding('utf8');
+process.stdin.on('data',chunk=>input+=chunk);
+process.stdin.on('end',()=>{console.log(JSON.stringify({args:process.argv.slice(2),input}));process.exitCode=7})`)
+    const options={platform:'win32' as const,userPath:{async read(){return ''},async write(){}}}
+    await installUserCli(source,home,'',options)
+    const directory=dirname([...windowsCliFiles(source,home).keys()][0])
+    const args=['--input',JSON.stringify({path:'中文 😀',content:"' \" \\ $ & % `\r\n"}),'']
+    const env={...process.env,PATH:directory+';'+process.env.PATH,
+        ARW_TEST_ARGV:JSON.stringify(args),ARW_TEST_INPUT:'中文 😀'}
+    const script="$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $argvValues = ConvertFrom-Json -InputObject $env:ARW_TEST_ARGV; $env:ARW_TEST_INPUT | arw @argvValues '--' '-needle' 'end\\'; exit $LASTEXITCODE"
+    for(const shell of ['pwsh.exe','powershell.exe']){
+        const encoded=Buffer.from(script,'utf16le').toString('base64')
+        const shellArgs=['-NoProfile','-NonInteractive','-ExecutionPolicy','RemoteSigned']
+        await assert.rejects(promisify(execFile)(shell,[...shellArgs,'-EncodedCommand',encoded],{env,encoding:'utf8'}),
+            (error:{code?:number;stdout?:string;stderr?:string})=>{
+                assert.equal(error.code,7,`${shell}: ${error.stderr}`)
+                const result=JSON.parse(error.stdout!.trim())
+                assert.deepEqual(result.args,[...args,'--','-needle','end\\'],shell)
+                assert.equal(result.input.replace(/\r\n/g,'\n'),'中文 😀\n',shell)
+                return true
+            },shell)
+        const helpCommand=`& '${resolve('dist/bin/arw.ps1').replaceAll("'","''")}' read --help; exit $LASTEXITCODE`
+        const helpRun=promisify(execFile)(shell,[...shellArgs,'-EncodedCommand',Buffer.from(helpCommand,'utf16le').toString('base64')],{encoding:'utf8',timeout:10000})
+        helpRun.child.stdin?.end()
+        const help=await helpRun
+        assert.match(help.stdout,/^Usage: arw read/,shell)
+    }
 })
 
 test('Windows CI exercises the real user PATH registry adapter without expanding stored variables',{skip:process.platform!=='win32'||process.env.CI!=='true'},async()=>{

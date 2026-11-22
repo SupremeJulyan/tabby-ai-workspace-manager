@@ -13,7 +13,7 @@ declare const ARW_CLI_VERSION: string;
 
 async function main(): Promise<void> {
   const stringOptions = ['id', 'workspace', 'input', 'file', 'command', 'content', 'path', 'query', 'name', 'output-id', 'stream', 'type', 'mode', 'limit', 'cursor', 'offset', 'length', 'head', 'tail', 'start-line', 'line-count', 'expected-hash'];
-  const { values: parsedValues, positionals, tokens } = parseArgs({ allowPositionals: true, tokens:true, strict:true, options: {
+  const { values: parsedValues, positionals, tokens } = parseArgs({ args:process.argv.slice(2), allowPositionals: true, tokens:true, strict:true, options: {
     ...Object.fromEntries(stringOptions.map(key => [key, { type: 'string' as const }])),
     version: { type: 'boolean', short: 'V' }, compact: { type: 'boolean' }, raw: { type: 'boolean' }, verbose: { type: 'boolean' },
     'allow-empty': {type:'boolean'}, 'allow-unconditional': {type:'boolean'}, recursive: { type: 'boolean', short: 'r' }, help: { type: 'boolean', short: 'h' },

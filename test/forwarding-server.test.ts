@@ -65,6 +65,16 @@ test('CLI endpoint authenticates, enforces workspace identity and handles CLI re
     env:{...process.env,TABBY_CONFIG_DIRECTORY:directory,NODE_USE_ENV_PROXY:'1',HTTP_PROXY:'http://127.0.0.1:1',HTTPS_PROXY:'http://127.0.0.1:1',ALL_PROXY:'http://127.0.0.1:1',NO_PROXY:''},
   });
   assert.equal(JSON.parse(proxied.stdout).content,'after','IPC must work with an unreachable HTTP proxy');
+  const content = '\n'.repeat(5 * 1024 * 1024);
+  const write = (content: string) => ipcFetch(connection, {body: JSON.stringify({name:'remote_write',
+    arguments:{workspaceId:'one',path:'file',content,allowUnconditional:true,allowEmpty:true}})});
+  const accepted = await write(content);
+  assert.equal(accepted.status, 200);
+  assert.ok((await accepted.json()).result.written);
+  assert.equal(files.get('file')?.length, content.length);
+  const oversized = await write(content + '\n');
+  assert.match((await oversized.json()).result.message, /5 MiB/);
+  assert.equal(files.get('file')?.length, content.length);
   await server.stop();
   if(process.platform!=='win32')await assert.rejects(access(dirname(connection.socketPath)));
   assert.equal(commandSignal?.aborted, true);

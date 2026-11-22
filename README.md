@@ -24,6 +24,9 @@
 
 安装后可使用 `arw` 命令。Windows 使用 WSL AI 终端时，Windows Node.js 需在 PATH 中可用。
 
+PowerShell 使用安装包中的 `arw.ps1` 保留 JSON 参数的引号，例如 `arw list --input '{"path":"."}'`。如果 PowerShell 执行策略禁止脚本，可以改用 CMD 中的 `arw.cmd`，或直接用 Node.js 运行安装目录中的 `dist/arw.cjs`。
+如果位置参数以连字符开头，在 PowerShell 中将分隔符写为 `'--'`，例如 `arw search '--' '-needle'`。
+
 ## 快速开始
 
 1. 打开本地、WSL 终端或连接 SSH，侧栏自动显示对应工作区。

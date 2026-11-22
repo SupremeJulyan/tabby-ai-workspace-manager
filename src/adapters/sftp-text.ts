@@ -1,4 +1,5 @@
 import { BinaryFileError } from '../shared/binary-file'
+import { createHash } from 'node:crypto'
 import { OPEN_READ, OPEN_WRITE, OPEN_CREATE, OPEN_TRUNCATE } from 'russh'
 import type { SFTPSession, SFTPFile } from 'tabby-ssh/typings/session/sftp'
 import { textFileLimit, WorkspaceText } from '../arw-tree/workspace'
@@ -21,26 +22,29 @@ export function sftpTextVersion(info:SFTPFile):string {
     return `sftp:${info.size}:${modified}`
 }
 
-export async function readSftpText(sftp:SFTPSession,target:string,signal?:AbortSignal,info?:SFTPFile):Promise<WorkspaceText> {
+export const sftpContentHash = (content: Uint8Array|string): string =>
+    'sftp-sha256:' + createHash('sha256').update(typeof content==='string' ? Buffer.from(content) : content).digest('hex')
+
+export async function readSftpText(sftp:SFTPSession,target:string,signal?:AbortSignal,info?:SFTPFile,hashContents=false):Promise<WorkspaceText> {
     signal?.throwIfAborted()
     info ??= await sftp.stat(target)
     if(info.isDirectory)throw new Error(t('只能读取普通文本文件'))
     if(!Number.isSafeInteger(info.size)||info.size<0||info.size>textFileLimit)throw new Error(t('文本文件上限为 100 MiB'))
-    const version=sftpTextVersion(info)
+    const version=hashContents ? undefined : sftpTextVersion(info)
     signal?.throwIfAborted()
     const file=await sftp.open(target,OPEN_READ)
     try {
         const bytes=await readSftpBytes(file,info.size,signal)
         if(bytes.includes(0))throw new BinaryFileError(t('暂不支持二进制文件'))
         const content=decodeText(bytes)
-        return {content,hash:version}
+        return {content,hash:version??sftpContentHash(bytes)}
     }finally{await file.close()}
 }
 
 /** In-place SFTP writes retain the existing inode, owner, ACLs and ordinary mode bits. */
 export async function saveSftpText(
     sftp:SFTPSession,target:string,content:string,expectedVersion:string|undefined,
-    signal:AbortSignal,recordPermissions:(permissions:string)=>void,started:()=>void,
+    signal:AbortSignal,recordPermissions:(permissions:string)=>void,started:()=>void,hashContents=false,
 ):Promise<string> {
     signal.throwIfAborted()
     let before:SFTPFile|undefined
@@ -51,7 +55,10 @@ export async function saveSftpText(
     if(before?.isDirectory)throw new Error(t('只能保存普通文件'))
     if(expectedVersion!==undefined){
         if(!before)throw new FileMissingError(t('远端文件路径不存在'))
-        if(sftpTextVersion(before)!==expectedVersion)
+        const current = hashContents && /^sftp-sha256:[a-f0-9]{64}$/.test(expectedVersion)
+            ? (await readSftpText(sftp, target, signal, before, true)).hash
+            : hashContents ? undefined : sftpTextVersion(before)
+        if(current!==expectedVersion)
             throw new FileConflictError(t('远端文件已变化'))
     }
     const mode=before?sftpPermissions(before):'600'
@@ -82,5 +89,5 @@ export async function saveSftpText(
     signal.throwIfAborted()
     if(after.size!==writtenBytes)throw new Error(t('远程文件在保存时发生变化'))
     if(mode!==undefined&&sftpPermissions(after)!==mode)throw new Error(t('远端文件权限在保存时发生了变化'))
-    return sftpTextVersion(after)
+    return hashContents ? sftpContentHash(content) : sftpTextVersion(after)
 }

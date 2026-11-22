@@ -12,8 +12,14 @@ export async function saveRemoteText(
     if(!posix.isAbsolute(root)||/[\x00-\x1f\x7f]/.test(root+input))throw new RemotePathError('Invalid remote path')
     const target=posix.resolve(root,input)
     if(!isRemotePathInsideRoot(root,target))throw new RemotePathError('Path is outside workspaceRoot')
-    if(expectedVersion!==undefined&&!/^shell:\d+:[^\x00-\x1f\x7f]{1,128}$/.test(expectedVersion))throw new FileConflictError('Remote file has changed (远端文件已变化)')
+    const contentVersion = expectedVersion?.match(/^sftp-sha256:([a-f0-9]{64})$/)?.[1]
+    if(expectedVersion!==undefined&&!contentVersion&&!/^shell:\d+:[^\x00-\x1f\x7f]{1,128}$/.test(expectedVersion))throw new FileConflictError('Remote file has changed (远端文件已变化)')
     const quoted=shellQuote(target),marker=`ARW_SAVE_${randomBytes(24).toString('hex')}`
+    const conflict = "|| { printf '%s\\n' 'Remote file has changed (远端文件已变化)' >&2; exit 1; }"
+    const verifyVersion = contentVersion
+        ? `_arw_sum=$(sha256sum < ${quoted}) || exit 1
+test "\${_arw_sum%% *}" = ${shellQuote(contentVersion)} ${conflict}`
+        : expectedVersion===undefined ? '' : `test "$(stat -c '%s:%y' -- ${quoted})" = ${shellQuote(expectedVersion.slice('shell:'.length))} ${conflict}`
     const ready=`\0${marker}:READY\0`,begin=`\0${marker}:STARTED\0`,bytes=Buffer.from(content)
     let acknowledged=false
     const result=await transport.run(`test ! -L ${quoted} || { printf '%s\\n' 'symbolic-link writes are not allowed' >&2; exit 1; }
@@ -28,7 +34,7 @@ if test -e ${quoted}; then
 $_arw_before
 ARW_METADATA
     test "$_arw_links" = 1 || { printf '%s\\n' 'Cannot safely write a hard-linked file' >&2; exit 1; }
-    ${expectedVersion===undefined?'':`test "$(stat -c '%s:%y' -- ${quoted})" = ${shellQuote(expectedVersion.slice('shell:'.length))} || { printf '%s\\n' 'Remote file has changed (远端文件已变化)' >&2; exit 1; }`}
+    ${verifyVersion}
     test "$(_arw_stat)" = "$_arw_before" || { printf '%s\\n' 'Remote file changed before saving (远端文件在保存前发生了变化)' >&2; exit 1; }
 else
     ${expectedVersion===undefined?':':`printf '%s\\n' 'ARW_FILE_MISSING: Remote file path does not exist' >&2; exit 1`}

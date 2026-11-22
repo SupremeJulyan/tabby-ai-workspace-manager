@@ -9,8 +9,53 @@ import { remoteWorkspace } from '../src/adapters/remote-workspace'
 import { optionalSftp } from '../src/adapters/optional-sftp'
 import { cliWorkspaceFiles } from '../src/arw-cli/workspace-files'
 import { parseShellDirectory } from '../src/adapters/shell-files'
+import { readSftpText, saveSftpText } from '../src/adapters/sftp-text'
 import { sftpFixture } from './sftp-copy-fixture'
 import { statSync, readdirSync } from 'node:fs'
+
+test('CLI SFTP writes reject stale hashes when the file size and SFTP modification time do not change',async t=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-sftp-content-version-'))
+    t.after(()=>rm(root,{recursive:true,force:true}))
+    const target=join(root,'file.txt'), sftp=sftpFixture()
+    const originalStat=sftp.stat.bind(sftp)
+    sftp.stat=async path=>({...await originalStat(path),modified:new Date(0)})
+    const open=sftp.open.bind(sftp)
+    // Windows requires O_CREAT with O_TRUNC in the local test fixture.
+    if(process.platform==='win32')sftp.open=(path,flags)=>open(path,flags&16?flags|8:flags)
+    const signal=new AbortController().signal
+    const read=()=>readSftpText(sftp,target,signal,undefined,true)
+    let writes=0
+    const save=(text:string,hash:string)=>saveSftpText(sftp,target,text,hash,signal,()=>{},()=>{writes++},true)
+    await writeFile(target,'alpha')
+    const initial=await read()
+    assert.match(initial.hash,/^sftp-sha256:[a-f0-9]{64}$/)
+    const updated=await save('bravo',initial.hash)
+    assert.equal(updated,(await read()).hash)
+    assert.notEqual(updated,initial.hash)
+    await assert.rejects(save('stale',initial.hash),{code:'FILE_CONFLICT'})
+    await assert.rejects(save('stale','sftp:5:0'),{code:'FILE_CONFLICT'})
+    assert.equal(writes,1)
+    assert.equal(await readFile(target,'utf8'),'bravo')
+})
+
+test('large CLI writes stream through SSH and enforce the SFTP content hash before truncating',{skip:process.platform==='win32'},async t=>{
+    const root=await mkdtemp(join(tmpdir(),'arw-cli-stream-save-'))
+    t.after(()=>rm(root,{recursive:true,force:true}))
+    const fixture=sessionFixture(root)
+    fixture.session.openSFTP=async()=>sftpFixture()
+    const workspace=remoteWorkspace(fixture.session as any,root)
+    const target=join(root,'file.txt')
+    const content='x'.repeat(5*1024*1024)
+    await writeFile(target,'alpha')
+    const original=await workspace.readCli!('file.txt')
+    await writeFile(target,'bravo')
+    await assert.rejects(workspace.writeCli!('file.txt',content,original.hash),{code:'FILE_CONFLICT'})
+    assert.equal(await readFile(target,'utf8'),'bravo')
+    const changed=await workspace.readCli!('file.txt')
+    const updated=await workspace.writeCli!('file.txt',content,changed.hash)
+    assert.equal(updated.hash,(await workspace.readCli!('file.txt')).hash)
+    assert.equal((await stat(target)).size,5*1024*1024)
+})
 
 function sessionFixture (cwd:string, beforeCommand?:(command:string)=>Promise<void>, env=process.env) {
     let opens=0

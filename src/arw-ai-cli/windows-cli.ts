@@ -32,11 +32,37 @@ try {
     },
 }
 
+export function powershellCliShim(target: string): string {
+    return [
+        '# tabby-ai-workspace-manager managed CLI',
+        '$arwNode = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source',
+        `$arwTarget = Join-Path $PSScriptRoot '${target}'`,
+        '$arwArguments = @($arwTarget) + $args',
+        'if (Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue) {',
+        "    $PSNativeCommandArgumentPassing = 'Standard'",
+        '} else {',
+        '    # Older PowerShell versions lose embedded quotes when invoking native commands.',
+        '    $arwJson = ConvertTo-Json -InputObject $arwArguments -Compress',
+        '    $arwEncoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($arwJson))',
+        "    $arwArguments = @('-e', 'process.argv=[process.execPath,...JSON.parse(Buffer.from(process.argv[1],String.fromCharCode(98,97,115,101,54,52)).toString())];require(process.argv[1])', $arwEncoded)",
+        '}',
+        'if ($MyInvocation.ExpectingInput) {',
+        '    $OutputEncoding = [Text.UTF8Encoding]::new($false)',
+        '    $input | & $arwNode @arwArguments',
+        '} else {',
+        '    & $arwNode @arwArguments',
+        '}',
+        'exit $LASTEXITCODE',
+        '',
+    ].join('\r\n')
+}
+
 export function windowsCliFiles(source:string,home:string):Map<string,string>{
     const bin=join(home,'.tabby-ai-workspace-manager','bin')
     return new Map([
         [join(bin,'arw.cmd'),'@echo off\r\n@rem tabby-ai-workspace-manager managed CLI\r\nsetlocal DisableDelayedExpansion\r\nnode "%~dp0arw-launcher.cjs" %*\r\n'],
         [join(bin,'arw-launcher.cjs'),`require(${JSON.stringify(source)});\n`],
+        [join(bin,'arw.ps1'),powershellCliShim('arw-launcher.cjs')],
     ])
 }
 async function read(path:string):Promise<string|undefined>{
@@ -45,7 +71,7 @@ async function read(path:string):Promise<string|undefined>{
 export async function ensureWindowsCli(source:string,home:string):Promise<void>{
     const files=windowsCliFiles(source,home)
     const directory=dirname([...files.keys()][0])
-    for(const name of ['arw.exe','arw.bat','arw.ps1']){
+    for(const name of ['arw.exe','arw.bat']){
         const path=join(directory,name)
         if(await lstat(path).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error})){
             throw new Error(t`已有其他 arw 命令，未覆盖：${path}`)

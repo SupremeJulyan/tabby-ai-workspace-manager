@@ -13,6 +13,7 @@ import { RemotePathError, RemotePathGuard } from '../security/remote-path';
 import { commands } from './commands';
 import { fileOperation, integer, object, text, selectText } from './operations';
 import { agentActivity } from './agent-activity';
+import { arwTextLimit } from './text-limit';
 import { remoteSnapshotDiffCommand, remoteSnapshotRestoreCommand } from './remote-snapshot';
 
 export interface ForwardingBackend {
@@ -93,8 +94,9 @@ export class ForwardingServer {
         const chunks: Buffer[] = []; let length = 0;
         for await (const value of request) {
           length += value.length;
-          if (length > 2 * 1024 * 1024) { reply(413, { error: 'Request too large' }); return; }
-          chunks.push(Buffer.from(value));
+          // JSON may escape each UTF-8 byte as six ASCII characters.
+          if (length > 6 * arwTextLimit + 64 * 1024) { reply(413, { error: 'Request too large' }); return; }
+          chunks.push(value);
         }
         input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();

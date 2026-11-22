@@ -196,7 +196,7 @@ export class AiLauncherService {
                         list: async path => ({ entries: await cliFiles.list(path) }),
                         fileSize:workspace.fileSize?workspace.fileSize.bind(workspace):undefined,
                         readRange:workspace.readByteRange?((path,offset,length,signal)=>workspace.readByteRange!(path,offset,length,signal)):undefined,
-                        read: async path => ({ path, ...await cliFiles.read(path) }),
+                        read: async (path,signal) => ({ path, ...await cliFiles.read(path,signal) }),
                         write: async (path, content, _signal, expectedHash) => ({ path, ...await cliFiles.write(path, content, expectedHash, _signal) }),
                         run: (value, signal, options) => isTerminalCommandMode(source)?runTerminalCommand(source,workspace.root,value,signal,options?.maxBytes):workspace.run(value, signal, options),
                         validateCommand: workspace.validateCommand?.bind(workspace),

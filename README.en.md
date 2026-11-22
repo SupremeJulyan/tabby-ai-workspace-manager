@@ -24,6 +24,9 @@ Verified with Tabby 1.0.238, Node.js 22+, npm, and Git. Install and sign in to y
 
 The `arw` command is available after installation. WSL AI terminals on Windows require Windows Node.js on PATH.
 
+PowerShell uses the installed `arw.ps1` shim to preserve quotes in JSON arguments, for example `arw list --input '{"path":"."}'`. If your PowerShell execution policy blocks scripts, use `arw.cmd` in CMD or run the installed `dist/arw.cjs` with Node.js.
+For a positional argument starting with a hyphen, quote the separator in PowerShell, for example `arw search '--' '-needle'`.
+
 ## Quick start
 
 1. Open a local or WSL terminal, or connect over SSH; the sidebar shows its workspace.

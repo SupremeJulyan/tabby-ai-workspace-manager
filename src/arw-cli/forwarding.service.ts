@@ -154,7 +154,7 @@ export class ForwardingService {
                 readRange:workspace.readByteRange?((input,offset,length,signal)=>workspace.readByteRange!(input,offset,length,signal)):undefined,
                 read: async (input, signal) => {
                     signal.throwIfAborted()
-                    return { path: input, ...await cliFiles.read(input) }
+                    return { path: input, ...await cliFiles.read(input, signal) }
                 },
                 write: async (input, content, signal, expectedHash) => {
                     signal.throwIfAborted()

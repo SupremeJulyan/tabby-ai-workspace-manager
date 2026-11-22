@@ -35,6 +35,7 @@ export interface Workspace {
   list(path: string, signal?: AbortSignal): Promise<WorkspaceFile[]>;
   listForGit?(path:string,limit:number,signal?:AbortSignal):Promise<{entries:WorkspaceFile[];truncated:boolean}>;
   read(path: string, signal?:AbortSignal): Promise<WorkspaceText>;
+  readCli?(path: string, signal?:AbortSignal): Promise<WorkspaceText>;
   fileSize?(path:string,signal?:AbortSignal):Promise<number>;
   readBytes?(path:string,maxBytes:number,signal?:AbortSignal):Promise<Uint8Array>;
   readByteRange?(path:string,offset:number,maxBytes:number,signal?:AbortSignal,forEditing?:boolean):Promise<Uint8Array>;
@@ -58,6 +59,7 @@ export function projectWorkspace (workspace: Workspace, root: string): Workspace
         get connectionStatus(){return workspace.connectionStatus},
         list: (path, signal) => workspace.list(childRoot(root, path), signal),
         read: (path,signal) => workspace.read(childRoot(root, path),signal),
+        readCli: workspace.readCli ? (path,signal)=>workspace.readCli!(childRoot(root,path),signal) : undefined,
         fileSize: workspace.fileSize ? (path,signal)=>workspace.fileSize!(childRoot(root,path),signal) : undefined,
         saveIssue:workspace.saveIssue ? path=>workspace.saveIssue!(childRoot(root,path)) : undefined,
         verifySave:workspace.verifySave ? path=>workspace.verifySave!(childRoot(root,path)) : undefined,

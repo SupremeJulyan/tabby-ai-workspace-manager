@@ -20,7 +20,7 @@ import { SaveConfirmation, SaveConfirmationState } from './save-confirmation'
 import { logFileRecovery } from '../services/file-recovery-log'
 import { leafName } from '../shared/workspace-name'
 import { saveRemoteText } from './remote-save'
-import { readSftpText, saveSftpText, sftpPermissions } from './sftp-text'
+import { readSftpText, saveSftpText, sftpContentHash, sftpPermissions } from './sftp-text'
 import { readSftpBytes, readSftpPrefix } from './sftp-read'
 
 class BackgroundDirectoryLimit extends Error {}
@@ -73,12 +73,12 @@ export function remoteWorkspace (session: SSHSession, root: string): Workspace {
         const [mode,uid,gid]=metadata.split(':').slice(3,6)
         return `${(parseInt(mode,8)&0o1777).toString(8)}:${uid}:${gid}`
     }
-    const read = async (input: string,signal?:AbortSignal) => {
+    const read = async (input: string,signal?:AbortSignal,hashContents=false) => {
         signal?.throwIfAborted()
         if (!session.open) throw new Error(t('SSH 已断开'))
         const sftp = await optionalSftp(session)
         signal?.throwIfAborted()
-        if (sftp) return readSftpText(sftp,posix.resolve(root,input),signal)
+        if (sftp) return readSftpText(sftp,posix.resolve(root,input),signal,undefined,hashContents)
         const target = await guard.resolveRead(input,signal)
         return readShellText(transport, target,signal)
     }
@@ -257,6 +257,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
         },
         write,
         writeCli,
+        readCli: (input, signal) => read(input, signal, true),
         retrySave:(input,content)=>write(input,content,undefined,true),
         run: (command, signal, options) => transport.run(command, signal, options),
         async validateCommand(command, signal) {
@@ -268,7 +269,8 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
     }
     // CLI requests never enter SaveConfirmation: no editor state or manual unlock.
     async function writeCli(input:string,content:string,expectedHash?:string,requestSignal?:AbortSignal) {
-        if(Buffer.byteLength(content)>textFileLimit)throw new Error(t('文本文件上限为 100 MiB'))
+        const bytes=Buffer.byteLength(content)
+        if(bytes>textFileLimit)throw new Error(t('文本文件上限为 100 MiB'))
         const signal=AbortSignal.any([AbortSignal.timeout(30000),...(requestSignal?[requestSignal]:[])])
         const connection=session.ssh
         const check=()=>{
@@ -282,19 +284,20 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             await guard.resolve(input,true,signal)
             const sftp=await optionalSftp(session)
             check()
-            const version=sftp
-                ?await saveSftpText(sftp,posix.resolve(root,input),content,expectedHash,signal,()=>{},()=>{started=true})
+            // Large bursts can exhaust some servers' SFTP channel window. Stream larger CLI writes over SSH.
+            const version=sftp&&bytes<=2*1024*1024
+                ?await saveSftpText(sftp,posix.resolve(root,input),content,expectedHash,signal,()=>{},()=>{started=true},true)
                 :await saveRemoteText(transport,root,input,content,expectedHash,signal,()=>{},()=>{started=true})
             check()
             notifyWorkspaceChange(workspace)
-            return {content,hash:version}
+            return {content,hash:sftp&&bytes>2*1024*1024?sftpContentHash(content):version}
         }catch(error){
             if(!started)throw error
             // Lost acknowledgements can follow a successful write. Inspect once;
             // never repeat the mutation or leave a persistent editor save lock.
             if(!requestSignal?.aborted&&session.open&&session.ssh===connection){
                 try{
-                    const current=await workspace.read(input,AbortSignal.timeout(5000))
+                    const current=await read(input,AbortSignal.timeout(5000),true)
                     if(current.content===content.replace(/^\ufeff/,'')){notifyWorkspaceChange(workspace);return current}
                 }catch{/* Return the original write failure with recovery guidance. */}
             }
