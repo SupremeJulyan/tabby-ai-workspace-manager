@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 import { t } from '../shared/i18n'
 
 const execute=promisify(execFile)
+// Exact digest of the first managed arw.ps1 shipped with the Windows installer.
+const legacyPowerShellShimHash = 'b466dbee14a925eae210b40976ffe33fc37366878b3686cdced26a0c3b128636'
 export interface UserPathStore {read():Promise<string>;write(value:string):Promise<void>}
 const powershell=join(process.env.SystemRoot??'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe')
 const prefix="$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
@@ -92,6 +95,7 @@ async function read(path:string):Promise<string|undefined>{
 export async function ensureWindowsCli(source:string,home:string):Promise<void>{
     const files=windowsCliFiles(source,home)
     const directory=dirname([...files.keys()][0])
+    const upgrades=new Map<string,string>()
     for(const name of ['arw.exe','arw.bat']){
         const path=join(directory,name)
         if(await lstat(path).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error})){
@@ -100,12 +104,22 @@ export async function ensureWindowsCli(source:string,home:string):Promise<void>{
     }
     for(const [path,content] of files){
         const previous=await read(path)
-        if(previous!==undefined&&previous!==content)throw new Error(t`已有其他 arw 命令，未覆盖：${path}`)
+        if(previous===undefined||previous===content)continue
+        if(path===join(directory,'arw.ps1')&&createHash('sha256').update(previous).digest('hex')===legacyPowerShellShimHash){
+            upgrades.set(path,previous)
+            continue
+        }
+        throw new Error(t`已有其他 arw 命令，未覆盖：${path}`)
     }
     for(const [path,content] of files){
         await mkdir(dirname(path),{recursive:true})
+        if(upgrades.has(path))continue
         try{await writeFile(path,content,{flag:'wx'})}
         catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST'||await read(path)!==content)throw error}
+    }
+    for(const [path,previous] of upgrades){
+        if(await read(path)!==previous)throw new Error(t`已有其他 arw 命令，未覆盖：${path}`)
+        await writeFile(path,files.get(path)!)
     }
 }
 function pathKey(value:string):string{return win32.normalize(value.trim().replace(/^"|"$/g,'')).replace(/[\\/]+$/,'').toLowerCase()}
