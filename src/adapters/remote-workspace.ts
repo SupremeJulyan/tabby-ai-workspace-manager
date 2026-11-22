@@ -301,7 +301,7 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
                     if(current.content===content.replace(/^\ufeff/,'')){notifyWorkspaceChange(workspace);return current}
                 }catch{/* Return the original write failure with recovery guidance. */}
             }
-            throw new Error(`CLI_WRITE_UNCONFIRMED: Remote contents may be incomplete. Inspect the file before retrying. ${String(error)}`,{cause:error})
+            throw new Error(`CLI_WRITE_UNCONFIRMED: Remote contents may be incomplete. Read the file before retrying. ${String(error)}`,{cause:error})
         }finally{finishForegroundWrite(priority)}
     }
     async function write(input:string, content:string, expectedHash?:string,confirmedRetry=false) {
