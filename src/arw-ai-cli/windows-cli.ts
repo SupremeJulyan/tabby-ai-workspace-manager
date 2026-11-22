@@ -32,27 +32,43 @@ try {
     },
 }
 
+export const powershellCliLoader = `const { Readable } = require('node:stream');
+const { createInterface } = require('node:readline');
+const [target, ...args] = JSON.parse(Buffer.from(process.argv[2], 'base64').toString('utf8'));
+if (process.argv[3] === 'pipeline') {
+    const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    Object.defineProperty(process, 'stdin', { value: Readable.from((async function* () {
+        for await (const line of lines) yield Buffer.from(line, 'base64');
+    })()) });
+}
+process.argv = [process.execPath, target, ...args];
+require(target);
+`
+
 export function powershellCliShim(target: string): string {
     return [
         '# tabby-ai-workspace-manager managed CLI',
         '$arwNode = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source',
         `$arwTarget = Join-Path $PSScriptRoot '${target}'`,
         '$arwArguments = @($arwTarget) + $args',
-        'if (Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue) {',
+        '$arwLegacy = !(Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue)',
+        'if (!$arwLegacy) {',
         "    $PSNativeCommandArgumentPassing = 'Standard'",
         '} else {',
         '    # Older PowerShell versions lose embedded quotes when invoking native commands.',
         '    $arwJson = ConvertTo-Json -InputObject $arwArguments -Compress',
         '    $arwEncoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($arwJson))',
-        "    $arwArguments = @('-e', 'process.argv=[process.execPath,...JSON.parse(Buffer.from(process.argv[1],String.fromCharCode(98,97,115,101,54,52)).toString())];require(process.argv[1])', $arwEncoded)",
+        "    $arwArguments = @((Join-Path $PSScriptRoot 'arw-ps-argv.cjs'), $arwEncoded)",
         '}',
         'if ($MyInvocation.ExpectingInput) {',
-        '    $arwPreviousEncoding = $global:OutputEncoding',
         '    $OutputEncoding = [Text.UTF8Encoding]::new($false)',
-        '    # Windows PowerShell can take the encoding from the caller scope.',
-        '    $global:OutputEncoding = $OutputEncoding',
-        '    try { $input | & $arwNode @arwArguments }',
-        '    finally { $global:OutputEncoding = $arwPreviousEncoding }',
+        '    if ($arwLegacy) {',
+        '        # Encode each line explicitly so a transport BOM cannot become file content.',
+        "        $arwArguments += 'pipeline'",
+        '        $input | ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_ + [Environment]::NewLine)) } | & $arwNode @arwArguments',
+        '    } else {',
+        '        $input | & $arwNode @arwArguments',
+        '    }',
         '} else {',
         '    & $arwNode @arwArguments',
         '}',
@@ -67,6 +83,7 @@ export function windowsCliFiles(source:string,home:string):Map<string,string>{
         [join(bin,'arw.cmd'),'@echo off\r\n@rem tabby-ai-workspace-manager managed CLI\r\nsetlocal DisableDelayedExpansion\r\nnode "%~dp0arw-launcher.cjs" %*\r\n'],
         [join(bin,'arw-launcher.cjs'),`require(${JSON.stringify(source)});\n`],
         [join(bin,'arw.ps1'),powershellCliShim('arw-launcher.cjs')],
+        [join(bin,'arw-ps-argv.cjs'),powershellCliLoader],
     ])
 }
 async function read(path:string):Promise<string|undefined>{
