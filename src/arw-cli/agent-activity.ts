@@ -22,7 +22,6 @@ export interface AgentActivity {
     error?: string
     loadDiff?: () => Promise<string>
     restore?: () => Promise<void>
-    diffUnavailable?: boolean
 }
 
 function safeText (text: string): string {
@@ -59,7 +58,6 @@ export class AgentActivityStore {
         event.exitCode = typeof value.exitCode === 'number' ? value.exitCode : undefined
         event.loadDiff = loadDiff
         event.restore = restore
-        event.diffUnavailable = value.diffUnavailable === true
         event.status = denied ? 'denied' : error !== undefined || value.status === 'error' || (Array.isArray(value.results) && value.results.some(result => result?.ok === false)) || (event.exitCode !== undefined && event.exitCode !== 0) ? 'error' : 'success'
         event.durationMs = Math.max(0, this.now() - event.startedAt)
         if (error !== undefined) event.error = safeText(error instanceof Error ? error.message : String(error))

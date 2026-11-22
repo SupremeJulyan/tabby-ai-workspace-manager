@@ -59,9 +59,8 @@ export const TREE_TEMPLATE = `
           <span class="activity-state">{{activityState(activity)}}</span>
         </summary>
         <div class="activity-detail"><div>{{activity.startedAt | date:'HH:mm:ss'}}<span *ngIf="activity.durationMs !== undefined"> · {{activity.durationMs}} ms</span></div><div>{{activity.host}} · {{activity.root}}</div><div>{{ '工作区：' | arwTranslate }}{{activity.workspaceId}}</div><div>{{ '工具：' | arwTranslate }}{{activity.operation}}</div><pre *ngIf="activity.command || activity.path">{{activity.command || activity.path}}</pre><div *ngIf="activity.exitCode !== undefined">{{ '退出码：' | arwTranslate }}{{activity.exitCode}}</div><pre class="activity-error" *ngIf="activity.error">{{activity.error}}</pre></div>
-        <div class="activity-detail" *ngIf="activity.loadDiff || activity.diffUnavailable">
+        <div class="activity-detail" *ngIf="activity.loadDiff">
           <div *ngIf="lastActivityRestore?.id === activity.id" role="status">{{lastActivityRestore?.error || ('已还原本次更改' | arwTranslate)}}</div>
-          <div *ngIf="activity.diffUnavailable">{{ '无法保存操作后的快照' | arwTranslate }}</div>
           <ng-container *ngIf="activityDiff?.id === activity.id">
             <div>{{ '操作前快照与当前文件的差异' | arwTranslate }}</div>
             <button type="button" (click)="closeActivityDiff(activity.id)">{{ '关闭差异' | arwTranslate }}</button>

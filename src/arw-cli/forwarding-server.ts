@@ -159,7 +159,6 @@ export class ForwardingServer {
       this.reportRequest(input.name);
       const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
       const before = value.snapshotId;
-      const after = value.afterSnapshotId;
       const signal = this.controller.signal;
       const loadDiff = typeof before === 'string'
         ? async () => {
@@ -173,7 +172,7 @@ export class ForwardingServer {
           const content = String(diff.stdout ?? '');
           return diff.truncated === true ? content + '\n…' : content;
         } : undefined;
-      const restore = typeof before === 'string' && (typeof after === 'string' || input.name === 'remote_delete') ? async () => {
+      const restore = typeof before === 'string' ? async () => {
         signal.throwIfAborted();
         if (this.paused || this.restoringSnapshot || this.activeRequests) throw new Error(t('工作区正忙，请稍后再试'));
         this.restoringSnapshot = true;
@@ -182,7 +181,7 @@ export class ForwardingServer {
           const guard = new RemotePathGuard(this.backend.workspace.root, async (command, currentSignal) =>
             await this.backend.run(command, currentSignal ?? signal) as {stdout:string;stderr:string;exitCode:number});
           const root = await guard.resolve('.', false, signal);
-          const restored = object(await this.backend.run(remoteSnapshotRestoreCommand(root, before, typeof after === 'string' ? after : undefined), signal));
+          const restored = object(await this.backend.run(remoteSnapshotRestoreCommand(root, before), signal));
           if (restored.exitCode !== 0) throw new Error(String(restored.stderr || t('无法还原快照')));
           this.reportRequest(input.name);
         } finally {

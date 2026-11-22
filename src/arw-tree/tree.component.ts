@@ -453,7 +453,7 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
             const confirmation = await this.platform.showMessageBox({
                 type: 'warning',
                 message: t('还原本次 AI 操作涉及的文件？'),
-                detail: activity.path ?? activity.root,
+                detail: `${activity.path ?? activity.root}\n${t('还原会覆盖这些路径上的当前更改。')}`,
                 buttons: [t('取消'), t('还原更改')],
                 defaultId: 0, cancelId: 0,
             })

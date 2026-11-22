@@ -136,8 +136,7 @@ Use arw edit for partial changes. Never send sample/placeholder text to test wri
 --file reads a complete local UTF-8 file; --file - reads complete content from stdin.
 Empty or whitespace-only content is rejected unless --allow-empty explicitly permits it.
 A snapshot is saved before writing.
-For an eligible file whose bytes match Git HEAD, the snapshot can reference a
-pinned object in the project repository. Keep that repository to restore it.
+New snapshots store the original file independently of the project Git repository.
 --allow-unconditional is still accepted for compatibility.
 After writing, read back the target and check the intended contents.
 --input JSON is also accepted for structured values.

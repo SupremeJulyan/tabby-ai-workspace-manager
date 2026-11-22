@@ -470,6 +470,7 @@ export const englishMessages: Record<string,string> = {
     "查看差异": "View diff",
     "操作前快照与当前文件的差异": "Diff between the snapshot and current files",
     "还原本次 AI 操作涉及的文件？": "Restore the files affected by this AI operation?",
+    "还原会覆盖这些路径上的当前更改。": "Restoring will overwrite current changes at these paths.",
     "已还原本次更改": "Changes restored",
     "无法还原快照": "Could not restore snapshot",
     "工作区正忙，请稍后再试": "The workspace is busy. Try again shortly.",

@@ -63,12 +63,8 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
     return target;
   };
   const mutable = async (input: string, missing = false) => shellQuote(await resolveMutable(input, missing));
-  const snapshot = async (targets: string[], reuseGit = true) =>
-    saveRemoteSnapshot(run, await guard.resolve('.', false, signal), name, targets, reuseGit);
-  const afterSnapshot = async (...targets: string[]) => {
-    try { return { afterSnapshotId: await snapshot(targets, false) }; }
-    catch { return { diffUnavailable: true }; }
-  };
+  const snapshot = async (targets: string[]) =>
+    saveRemoteSnapshot(run, await guard.resolve('.', false, signal), name, targets);
   switch (name) {
     case 'remote_read': {
       const input=path(),hasLineSelection=['head','tail','startLine','lineCount'].some(key=>args[key]!==undefined)
@@ -116,7 +112,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid file size');
       assertArwTextSize(size);
       const snapshotId = await snapshot([target]);
-      return { ...object(await backend.write(input, content, signal)), snapshotId, ...await afterSnapshot(target) };
+      return { ...object(await backend.write(input, content, signal)), snapshotId };
     }
     case 'remote_edit': {
       const input = path(), original = await readText(input);
@@ -133,7 +129,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       }
       const target = await resolveMutable(input);
       const snapshotId = await snapshot([target]);
-      return { ...object(await backend.write(input, content, signal)), snapshotId, ...await afterSnapshot(target) };
+      return { ...object(await backend.write(input, content, signal)), snapshotId };
     }
     case 'remote_create': {
       const target = await mutable(path(), true);
@@ -178,7 +174,7 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       const snapshotId = await snapshot([resolvedSource, resolvedTarget]);
       // -T prevents accidentally moving into an existing directory; -n preserves existing files.
       await run(args.overwrite ? `mv -fT -- ${source} ${target}` : `if test -e ${target} || test -L ${target}; then exit 1; fi; mv -nT -- ${source} ${target}; test ! -e ${source}`);
-      return { moved: true, snapshotId, ...await afterSnapshot(resolvedSource, resolvedTarget) };
+      return { moved: true, snapshotId };
     }
     case 'remote_search': {
       const query = text(args.query, 'query'), mode = text(args.mode ?? 'content', 'mode');

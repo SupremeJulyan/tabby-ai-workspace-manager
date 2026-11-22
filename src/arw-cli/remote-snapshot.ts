@@ -88,7 +88,7 @@ import json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 ` + materializeScript + String.raw`
 
-root, key, before, after = sys.argv[1:]
+root, key, before = sys.argv[1:]
 root = Path(root)
 repo = Path.home() / '.arw-snapshots' / (key + '.git')
 def git(*args, **kwargs):
@@ -107,20 +107,6 @@ def validate():
         target = root / p
         if target.resolve() != target or target.is_symlink() or not target.parent.is_dir():
             raise RuntimeError('The target path or its parent changed: ' + p)
-    present = [p for p in paths if os.path.lexists(root / p)]
-    if not after:
-        if present:
-            raise RuntimeError('A deleted path now exists. Restore stopped.')
-        return
-    with tempfile.TemporaryFile() as archive:
-        subprocess.run(['tar', '--create', '--file=-', '--null', '--files-from=-'],
-                       cwd=root, input=b''.join(os.fsencode(p) + b'\0' for p in present),
-                       stdout=archive, check=True)
-        archive.seek(0)
-        actual = git('hash-object', '--stdin', stdin=archive).strip()
-    expected = git('rev-parse', ref(after, 'files.tar')).strip()
-    if actual != expected:
-        raise RuntimeError('Files changed after the operation. Restore stopped.')
 
 validate()
 stage = Path(tempfile.mkdtemp(prefix='.arw-restore-', dir=root))
@@ -162,12 +148,12 @@ finally:
         shutil.rmtree(stage)
 `;
 
-export function remoteSnapshotRestoreCommand(root: string, before: string, after?: string): string {
-  if (![before, ...(after ? [after] : [])].every(id => /^[0-9a-f-]{36}$/.test(id))) {
+export function remoteSnapshotRestoreCommand(root: string, before: string): string {
+  if (!/^[0-9a-f-]{36}$/.test(before)) {
     throw new Error('Invalid snapshot ID');
   }
   const key = createHash('sha256').update(root).digest('hex');
-  return ['python3', '-c', restoreScript, root, key, before, after ?? ''].map(shellQuote).join(' ');
+  return ['python3', '-c', restoreScript, root, key, before].map(shellQuote).join(' ');
 }
 
 export function remoteSnapshotDiffCommand(root: string, before: string): string {
