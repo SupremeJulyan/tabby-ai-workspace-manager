@@ -7,7 +7,7 @@ export function cliWorkspaceFiles(workspace:Workspace):Pick<Workspace,'list'|'re
     const guard=new RemotePathGuard(workspace.root,(command,signal)=>workspace.run(command,signal))
     return {
         list:workspace.list.bind(workspace),
-        read:(workspace.readCli ?? workspace.read).bind(workspace),
+        read:workspace.read.bind(workspace),
         async write(path,content,expectedHash,signal){
             await guard.resolve(path,true,signal)
             if(!workspace.writeCli)throw new Error('Remote workspace does not support independent CLI writes')

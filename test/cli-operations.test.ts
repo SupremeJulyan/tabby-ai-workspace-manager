@@ -49,7 +49,7 @@ test('CLI uses its exact directory binding, not inherited environment or parent 
   const env={...process.env,TABBY_CONFIG_DIRECTORY:root,ARW_WORKSPACE_ID:'two',ARW_WORKSPACE_ROOT:'/wrong/local/project',ARW_WORKSPACE_KIND:'local'};
   const cli=(args:string[],overrides:Record<string,string>={})=>execute(process.execPath,[resolve('dist/arw.cjs'),...args],{cwd:root,env:{...env,...overrides}});
   assert.equal(JSON.parse((await cli(['read','file'])).stdout).content,'one');
-  assert.equal(JSON.parse((await cli(['write','file','--content','updated','--expected-hash','one'])).stdout).content,'updated');
+  assert.equal(JSON.parse((await cli(['write','file','--content','updated'])).stdout).content,'updated');
   assert.equal((await cli(['exec','--raw','pwd'])).stdout,'one');
   terminalMode=true;
   assert.equal((await cli(['exec','--raw','pwd'])).stdout,'one');
@@ -58,7 +58,7 @@ test('CLI uses its exact directory binding, not inherited environment or parent 
   assert.equal(JSON.parse((await cli(['workspaces'])).stdout).workspaces.length,2);
   assert.equal(JSON.parse((await cli(['read','file','--id','two'])).stdout).content,'two');
   assert.equal(JSON.parse((await cli(['read','file','--workspace','two'])).stdout).content,'two');
-  assert.equal(JSON.parse((await cli(['write','file','--id','two','--content','authorized change','--expected-hash','two'])).stdout).content,'authorized change');
+  assert.equal(JSON.parse((await cli(['write','file','--id','two','--content','authorized change'])).stdout).content,'authorized change');
   assert.equal(JSON.parse((await cli(['read','file'])).stdout).content,'one');
   assert.deepEqual(JSON.parse(await readFile(join(root,'.awm','workspace.json'),'utf8')),binding);
   for(const change of [{host:'other'},{port:22},{user:'bob'},{remoteRoot:'/projects/two'}]){
@@ -133,8 +133,8 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('write','a.txt','--content','x','--content',''),/Duplicate option/);
   await assert.rejects(cli('write','a.txt','--content','x','--file',empty),/conflicts with inline input/);
   assert.equal((await cli('read','a.txt')).content,original.content,'misused arguments never reach the writer');
-  await assert.rejects(cli('write','a.txt','--content','replacement','--expected-hash','wrong'),/changed/);
-  await cli('write','a.txt','--content',original.content,'--expected-hash',original.hash);
+  await assert.rejects(cli('write','a.txt','--content','replacement','--expected-hash','wrong'),/Unknown option/);
+  await cli('write','a.txt','--content',original.content);
   await cli('write','intentional-empty','--content','','--allow-empty','--allow-unconditional');
   assert.equal(await readFile(join(root,'intentional-empty'),'utf8'),'');
   await rm(empty);await rm(join(root,'intentional-empty'));
@@ -180,7 +180,7 @@ test('expanded CLI performs structured reads, searches, edits, file management a
   await assert.rejects(cli('output', 'missing', 'stdout'), /expired/);
   await cli('edit', 'a.txt', '--input', '{"edits":[{"oldText":"one","newText":"first"}]}');
   assert.match(await readFile(join(root, 'a.txt'), 'utf8'), /^first/);
-  await assert.rejects(cli('edit', 'a.txt', '--input', '{"expectedHash":"stale","edits":[{"oldText":"first","newText":"bad"}]}'), /changed/);
+  await assert.rejects(cli('edit', 'a.txt', '--input', '{"expectedHash":"stale","edits":[{"oldText":"first","newText":"bad"}]}'), /Unsupported input field/);
   await cli('create', 'folder', 'directory');
   await cli('create', 'folder/new', 'file', '--content', 'payload');
   await assert.rejects(cli('create', 'folder/new', 'file'), /failed|exists/i);

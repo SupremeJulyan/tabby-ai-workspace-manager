@@ -286,22 +286,22 @@ find . -mindepth 1 -maxdepth 1 \\( -type d -o -type f -o -type l \\) -printf '%y
             check()
             // Large bursts can exhaust some servers' SFTP channel window. Stream larger CLI writes over SSH.
             const version=sftp&&bytes<=2*1024*1024
-                ?await saveSftpText(sftp,posix.resolve(root,input),content,expectedHash,signal,()=>{},()=>{started=true},true)
+                ?await saveSftpText(sftp,posix.resolve(root,input),content,expectedHash,signal,()=>{},()=>{started=true},expectedHash!==undefined)
                 :await saveRemoteText(transport,root,input,content,expectedHash,signal,()=>{},()=>{started=true})
             check()
             notifyWorkspaceChange(workspace)
-            return {content,hash:sftp&&bytes>2*1024*1024?sftpContentHash(content):version}
+            return {content,hash:sftp&&bytes>2*1024*1024&&expectedHash!==undefined?sftpContentHash(content):version}
         }catch(error){
             if(!started)throw error
             // Lost acknowledgements can follow a successful write. Inspect once;
             // never repeat the mutation or leave a persistent editor save lock.
             if(!requestSignal?.aborted&&session.open&&session.ssh===connection){
                 try{
-                    const current=await read(input,AbortSignal.timeout(5000),true)
+                    const current=await read(input,AbortSignal.timeout(5000),expectedHash!==undefined)
                     if(current.content===content.replace(/^\ufeff/,'')){notifyWorkspaceChange(workspace);return current}
                 }catch{/* Return the original write failure with recovery guidance. */}
             }
-            throw new Error(`CLI_WRITE_UNCONFIRMED: Remote contents may be incomplete. Read the file and retry with its current expectedHash; no editor unlock is required. ${String(error)}`,{cause:error})
+            throw new Error(`CLI_WRITE_UNCONFIRMED: Remote contents may be incomplete. Inspect the file before retrying. ${String(error)}`,{cause:error})
         }finally{finishForegroundWrite(priority)}
     }
     async function write(input:string, content:string, expectedHash?:string,confirmedRetry=false) {

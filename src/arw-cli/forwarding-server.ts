@@ -317,7 +317,6 @@ export class ForwardingServer {
               text(edit.newText, 'newText');
             }
           }
-          if (verb === 'write' && args.expectedHash === undefined && args.allowUnconditional !== true) throw new Error('write requires expectedHash or allowUnconditional');
           if (verb === 'write' && !text(args.content, 'content').trim() && args.allowEmpty !== true) throw new Error('Blank writes require allowEmpty');
           if (verb === 'create') {
             if (args.type !== 'file' && args.type !== 'directory') throw new Error('type must be file or directory');

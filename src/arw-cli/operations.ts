@@ -108,21 +108,18 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
       const input = path(), content = text(args.content, 'content');
       assertArwTextSize(Buffer.byteLength(content));
       if(args.allowUnconditional!==undefined&&typeof args.allowUnconditional!=='boolean')throw new Error('allowUnconditional must be a boolean');
-      if(args.expectedHash===undefined&&args.allowUnconditional!==true)throw new Error('write requires expectedHash or explicit --allow-unconditional');
       if(args.allowEmpty!==undefined&&typeof args.allowEmpty!=='boolean')throw new Error('allowEmpty must be a boolean');
       if(!content.trim()&&args.allowEmpty!==true)throw new Error('write replaces the ENTIRE file. Empty or whitespace-only content requires --allow-empty (JSON: allowEmpty: true). Use edit for partial changes.');
-      const expectedHash = args.expectedHash === undefined ? undefined : text(args.expectedHash, 'expectedHash');
       const target = await resolveMutable(input, true);
       const existing = await run(`if test -f ${shellQuote(target)}; then stat -c '%s' -- ${shellQuote(target)}; else printf '0'; fi`);
       const size = Number(text(existing.stdout, 'file size').trim());
       if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid file size');
       assertArwTextSize(size);
       const snapshotId = await snapshot([target]);
-      return { ...object(await backend.write(input, content, signal, expectedHash)), snapshotId, ...await afterSnapshot(target) };
+      return { ...object(await backend.write(input, content, signal)), snapshotId, ...await afterSnapshot(target) };
     }
     case 'remote_edit': {
       const input = path(), original = await readText(input);
-      if (args.expectedHash !== undefined && args.expectedHash !== original.hash) throw new Error('File changed; read it again before editing');
       if (!Array.isArray(args.edits) || !args.edits.length || args.edits.length > 100) throw new Error('edits must contain 1 to 100 replacements');
       let content = text(original.content, 'content');
       for (const value of args.edits) {
@@ -134,10 +131,9 @@ export async function fileOperation(backend: ForwardingBackend, name: string, ar
         content = content.slice(0, index) + replacement + content.slice(index + old.length);
         assertArwTextSize(Buffer.byteLength(content));
       }
-      if (typeof original.hash !== 'string') throw new Error('Backend does not support conflict-safe edits');
       const target = await resolveMutable(input);
       const snapshotId = await snapshot([target]);
-      return { ...object(await backend.write(input, content, signal, original.hash)), snapshotId, ...await afterSnapshot(target) };
+      return { ...object(await backend.write(input, content, signal)), snapshotId, ...await afterSnapshot(target) };
     }
     case 'remote_create': {
       const target = await mutable(path(), true);

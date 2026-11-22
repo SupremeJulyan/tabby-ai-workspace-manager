@@ -153,9 +153,9 @@ export function placeholderGuidance(remoteRoot:string):string {
         .replace("arw exec -- 'npm test'", 'arw exec "npm test"')
         .replace('arw write notes.txt --file ./local-text.txt', `arw edit --input '{"path":"notes.txt","edits":[{"oldText":"EXACT_OLD_TEXT","newText":"NEW_TEXT"}]}'`)
         .replace('arw git-push --path subproject', 'arw git-push subproject')
-        .replace("arw write notes.txt --content 'text'","arw write REMOTE_PATH --file LOCAL_COMPLETE_FILE --expected-hash HASH_FROM_READ")
+        .replace("arw write notes.txt --content 'text'","arw write REMOTE_PATH --file LOCAL_COMPLETE_FILE")
         .replace('arw write notes.txt --file ./local-text.txt','arw edit REMOTE_PATH --input JSON_WITH_EXPECTED_HASH_AND_EDITS')
-        .replace('Use known commands directly.', 'For partial changes use arw edit with exact oldText/newText fields in the JSON object. arw write replaces the ENTIRE file; provide the complete literal content in its JSON content field. Never use sample values or placeholders to probe write on an existing project file. Read first and pass the actual returned expectedHash; verify content after writing. Blank writes require allowEmpty:true.\nUse known commands directly.')
+        .replace('Use known commands directly.', 'For partial changes use arw edit with exact oldText/newText fields in the JSON object. arw write replaces the ENTIRE file; provide the complete literal content in its JSON content field. Never use sample values or placeholders to probe write on an existing project file. ARW saves a snapshot before writing. Blank writes require allowEmpty:true.\nUse known commands directly.')
 }
 
 export function ensurePlaceholderGuidance(placeholder:string,remoteRoot:string):void {

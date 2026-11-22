@@ -11,8 +11,8 @@ export const commands: Record<string, { tool: string; positional?: string[]; fie
   'read-many': { tool: 'remote_read_many', fields: ['requests', 'maxBytes'] },
   search: { tool: 'remote_search', positional: ['query', 'path'], fields: ['query', 'path', 'mode', 'fixedStrings', 'ignoreCase', 'limit', 'include', 'excludeDirs'] },
   find: { tool: 'remote_search', positional: ['query', 'path'], fields: ['query', 'path', 'mode', 'limit', 'excludeDirs'] },
-  write: { tool: 'remote_write', positional: ['path'], fields: ['path', 'content', 'expectedHash', 'allowEmpty', 'allowUnconditional'] },
-  edit: { tool: 'remote_edit', positional: ['path'], fields: ['path', 'edits', 'expectedHash'] },
+  write: { tool: 'remote_write', positional: ['path'], fields: ['path', 'content', 'allowEmpty', 'allowUnconditional'] },
+  edit: { tool: 'remote_edit', positional: ['path'], fields: ['path', 'edits'] },
   create: { tool: 'remote_create', positional: ['path', 'type'], fields: ['path', 'type', 'content'] },
   delete: { tool: 'remote_delete', positional: ['path'], fields: ['path', 'recursive'] },
   chmod: { tool: 'remote_chmod', positional: ['path', 'mode'], fields: ['path', 'mode'] },
@@ -128,35 +128,33 @@ See arw search --help for content searching.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.
 `,
-  'write': `Usage: arw write PATH (--content FULL_TEXT | --file LOCAL_FILE | --file -) (--expected-hash HASH | --allow-unconditional) [--allow-empty] [--id ID]
+  'write': `Usage: arw write PATH (--content FULL_TEXT | --file LOCAL_FILE | --file -) [--allow-empty] [--id ID]
 
 FULL-FILE REPLACEMENT: existing file contents are completely replaced, not patched or appended.
 Use arw edit for partial changes. Never send sample/placeholder text to test write on a project file.
 --content is the literal ENTIRE new file content, not a filename, patch, or search/replacement.
 --file reads a complete local UTF-8 file; --file - reads complete content from stdin.
 Empty or whitespace-only content is rejected unless --allow-empty explicitly permits it.
-Use arw read PATH --head 0 to obtain the hash, then pass it with --expected-hash.
+A snapshot is saved before writing.
 For an eligible file whose bytes match Git HEAD, the snapshot can reference a
 pinned object in the project repository. Keep that repository to restore it.
-Explicitly use --allow-unconditional (JSON: allowUnconditional: true) to omit the check.
-A hash detects concurrent changes; it does not validate whether your new content is complete.
+--allow-unconditional is still accepted for compatibility.
 After writing, read back the target and check the intended contents.
 --input JSON is also accepted for structured values.
 --workspace aliases --id. --compact removes only status markers (status: "ok" and ok: true); all result and completeness fields remain.
 Remote relative paths start at workspaceRoot.
 Mutations stay inside workspaceRoot.
 `,
-  'edit': `Usage: arw edit PATH --input JSON [--expected-hash HASH] [--id ID]
+  'edit': `Usage: arw edit PATH --input JSON [--id ID]
 
 Use edit for partial changes; it preserves all text outside the specified replacements.
 Each edit oldText must be nonempty and match exactly once; edits apply in array order.
 Read first and use exact oldText from that file, then supply the intended newText.
 newText is literal replacement text; an empty newText deletes the matched text.
-JSON shape: {"path":"REMOTE_PATH","expectedHash":"ACTUAL_HASH_FROM_READ","edits":[{"oldText":"EXACT_EXISTING_TEXT","newText":"INTENDED_REPLACEMENT"}]}
+JSON shape: {"path":"REMOTE_PATH","edits":[{"oldText":"EXACT_EXISTING_TEXT","newText":"INTENDED_REPLACEMENT"}]}
 Replace all illustrative values with real values; never write placeholders into project files.
-Pass the actual returned hash as expectedHash or --expected-hash to reject stale writes.
 Do not use arw write for a partial edit: write replaces the entire file.
---input JSON contains edits and expectedHash; path may be positional or in JSON.
+--input JSON contains edits; path may be positional or in JSON.
 --compact removes only status markers (status: "ok" and ok: true); all result and completeness fields remain.
 Remote relative paths start at workspaceRoot. Mutations stay inside workspaceRoot;
 read-only paths may access outside it subject to account permissions.

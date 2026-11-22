@@ -37,7 +37,7 @@ test('write and edit help distinguish full replacement from partial edits',async
   assert.match(write,/ENTIRE new file content/)
   assert.match(write,/local UTF-8 file/)
   assert.match(write,/allow-empty/)
-  assert.match(write,/expected-hash/)
+  assert.match(write,/snapshot is saved before writing/i)
   assert.match(edit,/preserves all text outside/)
   assert.doesNotMatch(edit,/^\s+arw write /m)
 })
