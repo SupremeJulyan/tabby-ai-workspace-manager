@@ -35,7 +35,7 @@ try {
 export function powershellCliShim(target: string): string {
     return [
         '# tabby-ai-workspace-manager managed CLI',
-        '$arwNode = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source',
+        '$arwNode = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source',
         `$arwTarget = Join-Path $PSScriptRoot '${target}'`,
         '$arwArguments = @($arwTarget) + $args',
         'if (Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue) {',
