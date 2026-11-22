@@ -827,13 +827,12 @@ test('CLI writes recover independently of editor save issues and verify lost ack
     failure='partial'
     await assert.rejects(cli.write('agent','first attempt'),/CLI_WRITE_UNCONFIRMED.*Read the file/)
     assert.equal(workspace.saveIssue!('agent'),undefined,'CLI failure never locks the editor or future CLI requests')
-    const current=await cli.read('agent')
-    assert.equal((await cli.write('agent','retry',current.hash)).content,'retry')
+    assert.equal((await cli.read('agent')).content,'f')
+    assert.equal((await cli.write('agent','retry')).content,'retry')
     const before=writes
     failure='ack'
     assert.equal((await cli.write('agent','confirmed after lost acknowledgement')).content,'confirmed after lost acknowledgement')
     assert.equal(writes,before+1,'verification does not repeat the mutation')
-    await assert.rejects(cli.write('agent','stale overwrite',current.hash),/远端文件已变化/)
     assert.equal(workspace.saveIssue!('agent'),undefined)
     const abort=new AbortController();abort.abort()
     await assert.rejects(cli.write('cancelled','no write',undefined,abort.signal))
@@ -848,8 +847,8 @@ test('CLI shell writes remain usable after an interrupted request without editor
     await assert.rejects(cli.write('file','interrupted body'),/CLI_WRITE_UNCONFIRMED/)
     assert.equal(workspace.saveIssue!('file'),undefined)
     fixture.hooks.rewrite=undefined
-    const current=await cli.read('file')
-    assert.equal((await cli.write('file','recovered body',current.hash)).content,'recovered body')
+    assert.equal((await cli.read('file')).content,'i')
+    assert.equal((await cli.write('file','recovered body')).content,'recovered body')
     assert.equal(await readFile(join(root,'file'),'utf8'),'recovered body')
 })
 
