@@ -127,3 +127,22 @@ test('opening and reopening remote files selects their temporary workspace witho
     assert.equal(workspaceHiddenPanes.has(oldFile),true)
     assert.equal(focused,file)
 })
+
+test('opening a file from a workspace subdirectory keeps the saved workspace AI pane visible',async()=>{
+    const {workspaceHiddenPanes}=await import('../src/shared/workspace-pane-visibility')
+    const rootWorkspace:any={kind:'local',root:'/project',host:'localhost'}
+    const childWorkspace:any={kind:'local',root:'/project/sub',host:'localhost'}
+    const terminal={},ai={profile:{options:{env:{ARW_WORKSPACE_ROOT:'/project',ARW_WORKSPACE_KIND:'local'}}}}
+    class FilePane { arwFilePane=true; workspace:any; filePath='note.txt'; constructor(workspace:any){this.workspace=workspace} }
+    let focused:any=terminal
+    const split:any={root:new Container(),getAllTabs(){return this.root.getAllTabs()},getFocusedTab:()=>focused,focus(pane:any){focused=pane},maximize(){},layout(){},async add(pane:any){this.root.children.push(pane)}}
+    split.root.children=[terminal,ai]
+    const app:any={tabs:[split],activeTab:split,getParentTab:()=>split,selectTab(){},emitTabsChanged(){}}
+    const tabs={create(){return new FilePane(childWorkspace) as any}}
+    const file=await openFilePane(app,{type:FilePane as any,inputs:{workspace:childWorkspace,filePath:'note.txt'}},terminal,'tiled',tabs)
+    assert.ok(file)
+    assert.equal(workspaceHiddenPanes.has(ai),false)
+    assert.ok(split.getAllTabs().includes(ai))
+    assert.ok(split.root.getAllTabs().includes(ai))
+    assert.equal(rootWorkspace.root,'/project')
+})

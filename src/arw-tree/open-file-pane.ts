@@ -3,7 +3,7 @@ import { selectPaneWorkspace } from '../shared/workspace-pane-visibility'
 import { paneLayout, selectStackedPane } from '../shared/pane-layout'
 import { orderedFilePanes } from '../arw-ai-cli/collapsed-panes'
 import { isFilePane, type WorkspacePaneIdentity } from '../shared/pane-kind'
-import { isAbsolute, posix, resolve } from 'node:path'
+import { isAbsolute, posix, relative, resolve } from 'node:path'
 import type { Workspace } from './workspace'
 import { collapsedAiPanes } from '../arw-ai-cli/collapsed-panes'
 import type { AppService, BaseTabComponent, SplitTabComponent, TabsService } from 'tabby-core'
@@ -64,7 +64,36 @@ function sameFile(pane:any,inputs:any,type:any):boolean {
 
 function selectFileWorkspace(split:SplitTabComponent,pane:BaseTabComponent):void {
     const file=pane as BaseTabComponent&{arwWorkspaceIdentity?:WorkspacePaneIdentity;workspace?:WorkspacePaneIdentity}
-    const identity=file.arwWorkspaceIdentity??file.workspace
+    let identity=file.arwWorkspaceIdentity??file.workspace
+    // Project and directory workspaces are scoped views of a saved workspace.
+    // Keep their panes associated with the original workspace so opening a
+    // file in a subdirectory does not hide that workspace's AI terminals.
+    const visited=new Set<object>()
+    let workspace=identity as (WorkspacePaneIdentity&{sourceWorkspace?:WorkspacePaneIdentity})|undefined
+    while(workspace?.sourceWorkspace&&!visited.has(workspace)){
+        visited.add(workspace)
+        workspace=workspace.sourceWorkspace as typeof workspace
+    }
+    identity=workspace
+    if(identity){
+        const ai=(split.getAllTabs() as (BaseTabComponent&{profile?:{options?:{env?:Record<string,string>}}})[])
+            .filter(tab=>tab.profile?.options?.env?.ARW_WORKSPACE_ROOT)
+        const contains=(parent:WorkspacePaneIdentity,child:WorkspacePaneIdentity):boolean=>{
+            if(parent.kind!==child.kind)return false
+            if(parent.kind==='remote'&&(parent.host!==child.host||(parent.port??22)!==(child.port??22)||(parent.user??'')!==(child.user??'')))return false
+            const paths=parent.kind==='remote'?posix:undefined
+            const root=parent.kind==='remote'?paths!.resolve(parent.root):resolve(parent.root)
+            const target=parent.kind==='remote'?paths!.resolve(child.root):resolve(child.root)
+            const rel=parent.kind==='remote'?paths!.relative(root,target):relative(root,target)
+            return rel===''||(!rel.startsWith('..')&&!isAbsolute(rel))
+        }
+        const parent=ai.map(tab=>{
+            const env=tab.profile!.options!.env!
+            return {kind:env.ARW_WORKSPACE_KIND==='remote'||env.ARW_LOCAL_WORKSPACE_ROOT?'remote' as const:'local' as const,
+                root:env.ARW_WORKSPACE_ROOT!,host:env.ARW_WORKSPACE_HOST,port:Number(env.ARW_WORKSPACE_PORT)||undefined,user:env.ARW_WORKSPACE_USER}
+        }).find(candidate=>contains(candidate,identity!))
+        if(parent)identity=parent
+    }
     if(identity)selectPaneWorkspace(split,identity)
 }
 
