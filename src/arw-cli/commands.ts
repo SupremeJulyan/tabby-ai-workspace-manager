@@ -22,6 +22,7 @@ export const commands: Record<string, { tool: string; positional?: string[]; fie
 };
 export const help = `Usage: arw workspaces
        arw COMMAND [ARGUMENTS] [--id ID]
+       arw COMMAND --help
        Commands: workspaces, list, read, read-many, search, find, write, edit, create,
                  delete, chmod, move, upload, download, git-pull, git-push, exec, output, batch
 `;
