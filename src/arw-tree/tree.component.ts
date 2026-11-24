@@ -1675,6 +1675,9 @@ export class ArwTreeComponent implements AfterViewInit, OnDestroy {
                 const entry:GitRepositoryView=previous.get(root)??{workspace:repository,name:workspacePath(repository.kind).basename(root)||root,root,
                     expanded:this.collapsed.has(this.repositoryKey(root))?!this.collapsed.get(this.repositoryKey(root)):root===workspace.root,groups:[],error:'',count:0,loading:true,
                     branch:'',branches:[],commits:[],inspector:'',inspectorLoading:false,inspectorError:''}
+                // A refresh may reuse the repository view while SSH has reconnected.
+                // Keep its Git backend bound to the current session-backed workspace.
+                entry.workspace=repository
                 entry.loading=true
                 repositories.push(entry);repositories.sort((a,b)=>a.root.localeCompare(b.root))
                 this.repositories=[...repositories,...[...previous.values()].filter(entry=>!repositories.includes(entry))];this.gitWorkspace=repositories[0]?.workspace;this.render()
